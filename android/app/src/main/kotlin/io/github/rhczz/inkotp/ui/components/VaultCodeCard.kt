@@ -29,6 +29,7 @@ import io.github.rhczz.inkotp.ui.theme.AppType
 import io.github.rhczz.inkotp.ui.theme.LocalInkColors
 
 @OptIn(ExperimentalFoundationApi::class)
+// TODO(EX-001): card grows past 88dp; see docs/exceptions.md before v1.0.0.
 @Composable
 fun VaultCodeCard(
     item: VaultItemUi,
