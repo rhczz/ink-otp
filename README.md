@@ -5,7 +5,11 @@
 
 ## 状态
 
-M0（工程骨架与规格）进行中。设计文档：[docs/design/2FA验证器-技术设计文档.md](docs/design/2FA验证器-技术设计文档.md)。
+- **M0 完成**：工程骨架、平台中立 spec、Python 参考实现、CI/Makefile。
+- **M1 完成**：`:core` 纯 Kotlin 内核（Base32/OTP/URI/模型/JSON/AES-GCM/Argon2id/vault/backup/merge），81 个测试、行覆盖率 **93.4%**，Kotlin↔Python `.2fab` 双向对拍通过。
+- **下一步 M2**：设计系统 + 只读 UI。
+
+设计文档：[docs/design/2FA验证器-技术设计文档.md](docs/design/2FA验证器-技术设计文档.md)。
 
 ## 产品底线
 
