@@ -1,0 +1,475 @@
+[
+  {
+    "name": "standard_totp_uri",
+    "input": "otpauth://totp/GitHub:me%40example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=GitHub&algorithm=SHA1&digits=6&period=30",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "me@example.com",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "account_only_no_issuer",
+    "input": "otpauth://totp/alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": null,
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "issuer_from_label_prefix",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "issuer_query_overrides_label_prefix",
+    "input": "otpauth://totp/OldIssuer:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=NewIssuer",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "NewIssuer",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": [
+        "ISSUER_MISMATCH"
+      ]
+    }
+  },
+  {
+    "name": "issuer_query_matches_label_prefix",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=GitHub",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "issuer_query_only",
+    "input": "otpauth://totp/alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=GitHub",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "url_encoded_at_sign",
+    "input": "otpauth://totp/GitHub:me%40example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=GitHub",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "me@example.com",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "url_encoded_colon_in_issuer",
+    "input": "otpauth://totp/My%3AIssuer:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "My:Issuer",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "url_encoded_colon_in_account",
+    "input": "otpauth://totp/GitHub%3Aalice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": null,
+      "accountName": "GitHub:alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "defaults_algorithm_digits_period",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "lowercase_sha256_8_digits_60_period",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA====&algorithm=sha256&digits=8&period=60",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+      "algorithm": "SHA256",
+      "digits": 8,
+      "period": 60,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "hotp_explicit_counter",
+    "input": "otpauth://hotp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&counter=42",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "hotp",
+      "issuer": "GitHub",
+      "accountName": "me@example.com",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": null,
+      "counter": 42,
+      "warnings": []
+    }
+  },
+  {
+    "name": "hotp_default_counter",
+    "input": "otpauth://hotp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "hotp",
+      "issuer": "GitHub",
+      "accountName": "me@example.com",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": null,
+      "counter": 0,
+      "warnings": []
+    }
+  },
+  {
+    "name": "tolerant_base32_secret",
+    "input": "otpauth://totp/GitHub:alice?secret=gezd%20gnbv-gy3t%20qojq%20gezd%20gnbv%20gy3t%20qojq",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "base32_trailing_padding",
+    "input": "otpauth://totp/GitHub:alice?secret=MZXW6YQ=",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "alice",
+      "secretBase64": "Zm9vYg==",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "bare_base32_secret",
+    "input": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "kind": "bare-secret",
+      "type": "totp",
+      "issuer": null,
+      "accountName": null,
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "needsUserInput": [
+        "issuer",
+        "accountName"
+      ],
+      "warnings": []
+    }
+  },
+  {
+    "name": "image_param_ignored",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&image=https%3A%2F%2Fexample.com%2Ficon.png",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": []
+    }
+  },
+  {
+    "name": "control_characters_stripped",
+    "input": "otpauth://totp/Git%0AHub:al%09ice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "alice",
+      "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "warnings": [
+        "CONTROL_CHARS_STRIPPED"
+      ]
+    }
+  },
+  {
+    "name": "google_migration_routing",
+    "input": "otpauth-migration://offline?data=SGVsbG8",
+    "accept": true,
+    "error": null,
+    "expected": {
+      "kind": "migration",
+      "host": "offline",
+      "dataBase64": "SGVsbG8"
+    }
+  },
+  {
+    "name": "missing_secret",
+    "input": "otpauth://totp/GitHub:alice?issuer=GitHub",
+    "accept": false,
+    "error": "SECRET_MISSING",
+    "expected": null
+  },
+  {
+    "name": "empty_secret",
+    "input": "otpauth://totp/GitHub:alice?secret=",
+    "accept": false,
+    "error": "SECRET_EMPTY",
+    "expected": null
+  },
+  {
+    "name": "invalid_base32_secret",
+    "input": "otpauth://totp/GitHub:alice?secret=MZXW6YTB!",
+    "accept": false,
+    "error": "SECRET_INVALID_BASE32",
+    "expected": null
+  },
+  {
+    "name": "secret_too_long",
+    "input": "otpauth://totp/GitHub:alice?secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "accept": false,
+    "error": "SECRET_TOO_LONG",
+    "expected": null
+  },
+  {
+    "name": "unsupported_algorithm_md5",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=MD5",
+    "accept": false,
+    "error": "ALGORITHM_UNSUPPORTED",
+    "expected": null
+  },
+  {
+    "name": "unsupported_digits_5",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=5",
+    "accept": false,
+    "error": "DIGITS_UNSUPPORTED",
+    "expected": null
+  },
+  {
+    "name": "unsupported_digits_7",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=7",
+    "accept": false,
+    "error": "DIGITS_UNSUPPORTED",
+    "expected": null
+  },
+  {
+    "name": "period_zero",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&period=0",
+    "accept": false,
+    "error": "PERIOD_OUT_OF_RANGE",
+    "expected": null
+  },
+  {
+    "name": "period_301",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&period=301",
+    "accept": false,
+    "error": "PERIOD_OUT_OF_RANGE",
+    "expected": null
+  },
+  {
+    "name": "hotp_negative_counter",
+    "input": "otpauth://hotp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&counter=-1",
+    "accept": false,
+    "error": "COUNTER_NEGATIVE",
+    "expected": null
+  },
+  {
+    "name": "hotp_counter_overflow",
+    "input": "otpauth://hotp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&counter=18446744073709551616",
+    "accept": false,
+    "error": "COUNTER_OVERFLOW",
+    "expected": null
+  },
+  {
+    "name": "hotp_non_numeric_counter",
+    "input": "otpauth://hotp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&counter=abc",
+    "accept": false,
+    "error": "COUNTER_INVALID",
+    "expected": null
+  },
+  {
+    "name": "issuer_label_too_long",
+    "input": "otpauth://totp/IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": false,
+    "error": "LABEL_ISSUER_TOO_LONG",
+    "expected": null
+  },
+  {
+    "name": "account_label_too_long",
+    "input": "otpauth://totp/GitHub:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": false,
+    "error": "LABEL_ACCOUNT_TOO_LONG",
+    "expected": null
+  },
+  {
+    "name": "query_issuer_too_long",
+    "input": "otpauth://totp/alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+    "accept": false,
+    "error": "ISSUER_TOO_LONG",
+    "expected": null
+  },
+  {
+    "name": "empty_label",
+    "input": "otpauth://totp/?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": false,
+    "error": "LABEL_EMPTY",
+    "expected": null
+  },
+  {
+    "name": "empty_account_after_separator",
+    "input": "otpauth://totp/GitHub:?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": false,
+    "error": "LABEL_ACCOUNT_EMPTY",
+    "expected": null
+  },
+  {
+    "name": "unsupported_scheme",
+    "input": "invalid://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": false,
+    "error": "SCHEME_UNSUPPORTED",
+    "expected": null
+  },
+  {
+    "name": "unsupported_host",
+    "input": "otpauth://steam/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": false,
+    "error": "HOST_UNSUPPORTED",
+    "expected": null
+  },
+  {
+    "name": "missing_host",
+    "input": "otpauth:///GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    "accept": false,
+    "error": "HOST_UNSUPPORTED",
+    "expected": null
+  },
+  {
+    "name": "malformed_percent_escape",
+    "input": "otpauth://totp/GitHub:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=%ZZ",
+    "accept": false,
+    "error": "URI_MALFORMED",
+    "expected": null
+  }
+]

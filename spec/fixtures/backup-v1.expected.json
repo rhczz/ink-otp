@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "vaultId": "6f1c2a6e-6f4d-4c1b-9d4e-2a7f0f3f9b21",
+  "createdAt": "2026-11-04T10:00:00Z",
+  "updatedAt": "2026-11-04T10:05:12Z",
+  "settings": {
+    "lockTimeoutSeconds": 30,
+    "hideCodesByDefault": false,
+    "clipboardClearSeconds": 30
+  },
+  "items": [
+    {
+      "id": "0d9a3c1e-8f21-4d6a-9c3e-1234567890ab",
+      "type": "totp",
+      "issuer": "GitHub",
+      "accountName": "me@example.com",
+      "secretB64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+      "algorithm": "SHA1",
+      "digits": 6,
+      "period": 30,
+      "counter": null,
+      "tags": [],
+      "icon": {
+        "kind": "letter",
+        "value": "G",
+        "colorHex": "#24292F"
+      },
+      "sortIndex": 1000,
+      "origin": "qr",
+      "createdAt": "2026-11-04T10:03:00Z",
+      "updatedAt": "2026-11-04T10:03:00Z"
+    },
+    {
+      "id": "7c4b2a10-3d5e-4f6a-8b9c-0d1e2f3a4b5c",
+      "type": "totp",
+      "issuer": "Example Corp",
+      "accountName": "alice@example.com",
+      "secretB64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+      "algorithm": "SHA256",
+      "digits": 8,
+      "period": 60,
+      "counter": null,
+      "tags": [],
+      "icon": {
+        "kind": "letter",
+        "value": "E",
+        "colorHex": "#1F6FEB"
+      },
+      "sortIndex": 2000,
+      "origin": "manual",
+      "createdAt": "2026-11-04T10:04:00Z",
+      "updatedAt": "2026-11-04T10:04:00Z"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "format": "2fab",
+  "formatVersion": 1,
+  "password": "correct horse battery staple",
+  "kdf": {
+    "algorithm": "Argon2id",
+    "version": 19,
+    "mKiB": 65536,
+    "tIter": 3,
+    "pLanes": 2,
+    "saltHex": "000102030405060708090a0b0c0d0e0f",
+    "outputBytes": 32
+  },
+  "nonceHex": "101112131415161718191a1b",
+  "ctLen": 1410,
+  "tagHex": "f92dd4c700b7fbc43273a53544937c03",
+  "file": "backup-v1.2fab",
+  "fileBytes": 1476,
+  "fileSha256": "8f68c9679df531f9e73c36cafe5a84019654d51f775081939b70634f36c040b1",
+  "expected": "backup-v1.expected.json",
+  "plaintextSha256": "d400ad29e91ac39f21d35316942b2bda30db42f0c8634d2092954d3bc0189297"
+}

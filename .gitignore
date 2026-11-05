@@ -1,0 +1,30 @@
+# Gradle / Android
+.gradle/
+.kotlin/
+build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# macOS
+.DS_Store
+
+# Python
+tools/.venv/
+__pycache__/
+*.pyc
+
+# Secrets / local artifacts
+*.p12
+*.pem
+*.bak
