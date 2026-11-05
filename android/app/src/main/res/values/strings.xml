@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">InkOTP</string>
-    <string name="placeholder_title">InkOTP</string>
-    <string name="placeholder_subtitle">Offline two-factor authenticator</string>
-    <string name="placeholder_body">M0 scaffold. The vault, design system and backup flows land in the next milestones.</string>
 </resources>

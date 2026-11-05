@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">InkOTP</string>
-    <string name="placeholder_title">InkOTP</string>
-    <string name="placeholder_subtitle">离线两步验证器</string>
-    <string name="placeholder_body">M0 工程骨架。验证码库、设计系统与备份流程将在后续里程碑完成。</string>
 </resources>

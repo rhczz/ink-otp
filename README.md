@@ -7,7 +7,8 @@
 
 - **M0 完成**：工程骨架、平台中立 spec、Python 参考实现、CI/Makefile。
 - **M1 完成**：`:core` 纯 Kotlin 内核（Base32/OTP/URI/模型/JSON/AES-GCM/Argon2id/vault/backup/merge），81 个测试、行覆盖率 **93.4%**，Kotlin↔Python `.2fab` 双向对拍通过。
-- **下一步 M2**：设计系统 + 只读 UI。
+- **M2 完成**：Quiet Ink 设计系统（tokens/Inter 子集/Material Symbols）、15+ 组件、手写导航、10 个页面 + 首启引导/添加弹层/扫码占位；Roborazzi 42 张 light/dark/font200 渲染。
+- **下一步 M3**：Keystore/生物识别、真实库读写、扫码相机、SAF 备份、剪贴板/FLAG_SECURE，需要真机。
 
 设计文档：[docs/design/2FA验证器-技术设计文档.md](docs/design/2FA验证器-技术设计文档.md)。
 

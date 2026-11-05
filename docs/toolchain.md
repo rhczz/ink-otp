@@ -40,6 +40,12 @@
 - **不用 camera-view**：会拉入 `camera-video`/`media3` 并申请 `ACCESS_NETWORK_STATE`；`camera-compose` 无此问题。
 - **Argon2 用 BouncyCastle**：纯 Java、JVM 可测、与 Python 参考实现逐字节一致；真机若 >3s 再换 argon2kt（接口不变）。
 
+## UI 资产
+
+- **Inter 4.1** 静态字体子集（400/500/600），保留 `tnum`；OFL-1.1，许可证在 `android/app/src/main/assets/licenses/Inter-LICENSE.txt`。总计约 256KB。
+- **Material Symbols Rounded** 36 个矢量图标（Apache-2.0），由 `tools/fetch_material_symbols.py` 从 Google Fonts 拉取并转换为 Android vector；生成物已提交，构建期不联网。
+- 字体/图标都属于提交产物；不要用构建期网络下载。
+
 ## 常用命令
 
 ```bash

@@ -9,6 +9,7 @@
 | `crosscheck.py` | 交叉检查 vectors、fixture、可选 Kotlin 备份 |
 | `check_no_internet.py` | 检查 merged manifest 是否申请网络/存储权限 |
 | `check_design_tokens.py` | 扫描 Kotlin 里的硬编码颜色/字号/圆角 |
+| `fetch_material_symbols.py` | 开发期拉取 Material Symbols SVG 并生成 Android vector（生成物已提交） |
 
 依赖只有两个，版本已锁定：
 
@@ -18,6 +19,16 @@ cryptography==50.0.2
 ```
 
 Python 版本：**3.15**（CI 与本机一致）。
+
+### 图标资产
+
+```bash
+python3 tools/fetch_material_symbols.py
+```
+
+从 Google Fonts 拉取 Material Symbols Rounded 的 24px SVG，转换到
+`android/app/src/main/res/drawable/ic_*.xml`。只在需要新增/更新图标时运行；
+App 构建不联网。
 
 ---
 

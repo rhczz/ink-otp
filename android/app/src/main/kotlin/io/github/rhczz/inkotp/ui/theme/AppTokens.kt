@@ -45,6 +45,7 @@ object AppTokens {
 
     /** Page margin / spacing scale (4dp grid; page values 12/16/20/24/32). */
     object Spacing {
+        val none = 0.dp
         val xs = 4.dp
         val s = 8.dp
         val m = 12.dp
@@ -63,12 +64,74 @@ object AppTokens {
         val pill = 999.dp
     }
 
+    /** Fixed component sizes from the design contract. */
+    object Size {
+        val screenMaxWidth = 560.dp
+        val bottomContentPadding = 96.dp
+        val touchTarget = 48.dp
+        val buttonHeight = 52.dp
+        val textButtonHeight = 48.dp
+        val settingRowHeight = 56.dp
+        val listRowHeight = 72.dp
+        val avatar = 36.dp
+        val unlockButton = 64.dp
+        val countdownRing = 20.dp
+        val searchHeight = 44.dp
+        val codeCardHeight = 88.dp
+        val sheetHandleWidth = 32.dp
+        val sheetHandleHeight = 4.dp
+        val dialogMaxWidth = 320.dp
+        val scanFrame = 240.dp
+        val settingValueMaxWidth = 180.dp
+    }
+
+    /** Eight low-saturation avatar colors (light theme). */
+    object AvatarLight {
+        val slate = AvatarColors(Color(0xFFE7EAF0), Color(0xFF3D4654))
+        val cobalt = AvatarColors(Color(0xFFE6EBFF), Color(0xFF2B4EFF))
+        val teal = AvatarColors(Color(0xFFDEF4F0), Color(0xFF0B6B5B))
+        val amber = AvatarColors(Color(0xFFFAEEDC), Color(0xFF8A5A10))
+        val rose = AvatarColors(Color(0xFFFBE7E9), Color(0xFFA32638))
+        val violet = AvatarColors(Color(0xFFEEE8FB), Color(0xFF5B3FA6))
+        val moss = AvatarColors(Color(0xFFE9F2DE), Color(0xFF4A6B22))
+        val sky = AvatarColors(Color(0xFFE3F1FA), Color(0xFF1D5E86))
+        val all = listOf(slate, cobalt, teal, amber, rose, violet, moss, sky)
+    }
+
+    /** Eight low-saturation avatar colors (dark theme). */
+    object AvatarDark {
+        val slate = AvatarColors(Color(0xFF252A33), Color(0xFFC6CEDA))
+        val cobalt = AvatarColors(Color(0xFF1C2547), Color(0xFFA9B8FF))
+        val teal = AvatarColors(Color(0xFF12312D), Color(0xFF7FE0CC))
+        val amber = AvatarColors(Color(0xFF33270F), Color(0xFFF5C878))
+        val rose = AvatarColors(Color(0xFF331A1F), Color(0xFFF5A3AC))
+        val violet = AvatarColors(Color(0xFF251C3B), Color(0xFFC4B0F5))
+        val moss = AvatarColors(Color(0xFF222C15), Color(0xFFBBD98C))
+        val sky = AvatarColors(Color(0xFF16283A), Color(0xFF9FD0EC))
+        val all = listOf(slate, cobalt, teal, amber, rose, violet, moss, sky)
+    }
+
     /** The only four icon sizes allowed by the design contract. */
     object IconSize {
         val inline = 20.dp
         val control = 24.dp
         val primary = 28.dp
         val state = 48.dp
+    }
+
+    object Border {
+        val hairline = 1.dp
+        val focus = 2.dp
+    }
+
+    object Elevation {
+        val flat = 0.dp
+        val pressed = 1.dp
+    }
+
+    object Alpha {
+        const val scrim = 0.55f
+        const val pressedOverlay = 0.08f
     }
 
     /** The only six motion durations allowed by the design contract. */
