@@ -41,6 +41,30 @@
 | APK | 本机版本5/0.4.2-beta.1，原签名验证、非调试、权限白名单、4 ABI/16 ELF及16 KiB对齐通过；Release存储生命周期检查通过 |
 | 独立审查 | 未发现阻塞问题；确认生产改动仅两页，认证/数据/MainActivity/UiModels代码未改 |
 
-本机完整门禁报告为 `android/build/reports/hidden-copy-quality.json`。首次本机包保留在 `dist/local-0.4.2-beta.1/`，3,118,754 字节，SHA-256 为 `68609156495e28f822cfb488e9a71a21dee6377de7bbe764f8eef2494aa2274b`。远端发布结果仍待本轮实际执行后补充，不能用该本机包替代远端证明。
+本机完整门禁报告为 `android/build/reports/hidden-copy-quality.json`。首次本机包保留在 `dist/local-0.4.2-beta.1/`，3,118,754 字节，SHA-256 为 `68609156495e28f822cfb488e9a71a21dee6377de7bbe764f8eef2494aa2274b`。该目录保留本机验证证据，实际公开文件及其哈希见下一节。
+
+## GitHub 发布与实际下载复核
+
+2026-11-17 20:36（北京时间），[0.4.2-beta.1 Release](https://github.com/rhczz/ink-otp/releases/tag/v0.4.2-beta.1) 已公开，标记为预发布，非草稿。代码和 tag 均为 `cca62c65a784a801bca779f753d44597812f0361`，没有覆盖旧版本。
+
+[主分支 CI](https://github.com/rhczz/ink-otp/actions/runs/44083750006) 与 [tag 发布流水线](https://github.com/rhczz/ink-otp/actions/runs/44083750487) 均成功，后者的 verify/sign/publish 三个 job 全部通过。已独立下载主分支 `verification-reports`，保存摘要至 `dist/ci-0.4.2/quality-gate.json`，实际结果为：
+
+| 远端验证 | 实际结果 |
+|---|---|
+| Core / App | 105 / 154 项，0 失败/错误/跳过 |
+| Core 行 / 分支覆盖率 | 94.503%（1444/1528）/ 70.588%（888/1258） |
+| App 行 / 分支覆盖率 | 82.496%（3332/4039）/ 56.883%（1314/2310） |
+| Debug / Release Lint | 28 / 26 Warning，均 0 Error/Fatal |
+| 质量门禁 | passed=true；未签名 APK 3,106,466 字节，版本为5/0.4.2-beta.1 |
+
+Release 的 APK、SHA256SUMS、build-info.json、release-notes.md 四个文件已实际下载至 `dist/releases/v0.4.2-beta.1/`。复用 `verify_bundle` 通过：文件集合及哈希、tag/源码/仓库/run ID/attempt、版本与说明原文、非调试、权限白名单、4 ABI/16 ELF、16 KiB 对齐、固定签名均匹配。公开签名证书仍为 `f1e8211a3f245bed886a048f8088b16be229072dcf77b65981e6ca5dcf642589`。
+
+实际公开 APK 为 3,113,246 字节，SHA-256：
+
+```text
+37298c6866e3171fb2f3c5e91a7ad361d77a46765c259e98fd660ebf61f65028
+```
+
+通用入口 `dist/InkOTP-0.4.2-beta.1.apk`、对应构建信息和校验和已同步为实际公开文件；首次本机包继续单独保留，不混用哈希。用户可直接覆盖更新，不需要卸载或重建账号库。
 
 未验证：真机复制到其他 App、TalkBack 和升级后的账号保留；待本轮安装包由用户复测。不会将本机测试写成真机验收。
