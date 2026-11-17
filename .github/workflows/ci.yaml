@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          log-accepted-android-sdk-licenses: false
+      - name: Install Android SDK packages
+        run: sdkmanager --install 'platforms;android-37.2' 'build-tools;36.0.0' 'platform-tools'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Install independent reference tools
+        id: dependencies
+        run: make setup
+      - name: Reject committed private keys and local artifacts
+        run: tools/.venv/bin/python tools/quality_gate.py --hygiene-only
+      - name: Gradle tests, coverage, performance, debug and unsigned release
+        run: make ci-gradle
+      - name: Independent format references, policy checks and mutation tests
+        run: make ci-python
+      - name: Enforce report, permission and APK gates
+        if: ${{ always() && steps.dependencies.outcome == 'success' }}
+        run: make ci-quality
+      - name: Keep verified unsigned release for the release workflow
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: inkotp-unsigned-apk
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+            android/app/build/outputs/apk/release/output-metadata.json
+      - name: Keep verification evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verification-reports
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            android/build/reports/
+            android/core/build/reports/
+            android/core/build/test-results/
+            android/core/build/crosscheck/
+            android/core/build/interoperability/
+            android/app/build/reports/
+            android/app/build/test-results/

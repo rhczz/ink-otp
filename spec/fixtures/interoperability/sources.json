@@ -1,0 +1,67 @@
+{
+  "sourceRepository": "https://github.com/beemdevelopment/Aegis",
+  "sourceCommit": "d6f4e5925a97e4e91593f1542085eae03432a759",
+  "description": "Public upstream importer test fixtures, not real user accounts. Source DatabaseImporterTest documents scanning known test vectors into the source apps before exporting. Encryption fixture password: test. Unmodified file contents.",
+  "fixtures": [
+    {
+      "file": "aegis_plain.json",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/aegis_plain.json",
+      "gitBlobSha": "d473216c742ffba8b7f87c82fe0bcd141d8ece37",
+      "password": null
+    },
+    {
+      "file": "aegis_encrypted.json",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/aegis_encrypted.json",
+      "gitBlobSha": "39b09604334c6f939657e41a1b37be9f197772a6",
+      "password": "test"
+    },
+    {
+      "file": "2fas_authenticator.json",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/2fas_authenticator.json",
+      "gitBlobSha": "eb4cd07d9a388cd6d6a164a4bd83ddbc960ef2ff",
+      "password": null
+    },
+    {
+      "file": "2fas_authenticator_plain.2fas",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/2fas_authenticator_plain.2fas",
+      "gitBlobSha": "8719a72e91ca3f83dca5bbae0023817c9c833444",
+      "password": null
+    },
+    {
+      "file": "2fas_authenticator_encrypted.2fas",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/2fas_authenticator_encrypted.2fas",
+      "gitBlobSha": "8979e560676b9b30e2668e2015d06142f875882b",
+      "password": "test"
+    },
+    {
+      "file": "2fas_authenticator_plain_v3.2fas",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/2fas_authenticator_plain_v3.2fas",
+      "gitBlobSha": "2c0db7746b66374c9449c88666a8f4c517b8167c",
+      "password": null
+    },
+    {
+      "file": "2fas_authenticator_encrypted_v3.2fas",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/2fas_authenticator_encrypted_v3.2fas",
+      "gitBlobSha": "e4c7953b33fe81edae80902424cf6b295d27d952",
+      "password": "test"
+    },
+    {
+      "file": "2fas_authenticator_plain_v4.2fas",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/2fas_authenticator_plain_v4.2fas",
+      "gitBlobSha": "013fadc31c9b187926483927a8abaaf172adf965",
+      "password": null
+    },
+    {
+      "file": "2fas_authenticator_encrypted_v4.2fas",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/2fas_authenticator_encrypted_v4.2fas",
+      "gitBlobSha": "d064d8759fd4b45dc48de9105ba8f4ebabf9a29b",
+      "password": "test"
+    },
+    {
+      "file": "plain.txt",
+      "source": "https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/resources/com/beemdevelopment/aegis/importers/plain.txt",
+      "gitBlobSha": "da79bfd8b949af497c05f6ecc8e0fa3b38005a0d",
+      "password": null
+    }
+  ]
+}

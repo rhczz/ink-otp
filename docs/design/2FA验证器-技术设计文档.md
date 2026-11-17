@@ -4,8 +4,8 @@ aliases:
   - Authenticator Design Doc
   - 两步验证器设计文档
 created: 2026-11-04
-updated: 2026-11-05
-version: 0.8
+updated: 2026-11-17
+version: 0.10
 status: implementation-ready
 platforms:
   - Android 8.0+（Kotlin + Jetpack Compose）— v1.0 首发，唯一实施平台
@@ -21,7 +21,7 @@ tags:
 
 # InkOTP · 2FA 验证器技术设计文档（v1.0 Android 首发）
 
-> **状态**：v0.8（implementation-ready）｜ **日期**：2026-11-05 ｜ **仓库**：`/Users/renhc/projects/java/ink-otp` ｜ **文档**：`docs/design/2FA验证器-技术设计文档.md`
+> **状态**：v0.10（M4 标准互通与系统验证实施中）｜ **日期**：2026-11-17 ｜ **仓库**：`/Users/renhc/projects/java/ink-otp` ｜ **文档**：`docs/design/2FA验证器-技术设计文档.md`
 > **权威性**：本文件是 InkOTP 的**权威规格**；`spec/` 是平台中立数据契约的可执行副本。Obsidian vault 内的同名副本只是**快照**，冲突时以仓库版本为准。
 > **范围**：**v1.0 只做 Android**（Kotlin + Jetpack Compose）；iOS 规格保留为 Phase 2 参考，本期不实施。应用名 **InkOTP**，applicationId `io.github.rhczz.inkotp`，许可证 **GPL-3.0**。
 > **说明**：本文是设计与规格文档，文中代码片段是接口骨架/示意（不一定可直接编译），不是成品实现。设计与实现同仓管理：文档在 `docs/`，平台中立规格在 `spec/`，代码在 `android/`。
@@ -172,6 +172,37 @@ tags:
 | ADR-018 | **截图测试用 Roborazzi 1.77 + Robolectric 4.17（JVM）**，不再使用旧 JVM 截图方案 | 其他 JVM 截图库；仪器化截图 | Robolectric 生态活跃、与 AGP 9.5/Kotlin 2.2 兼容；JVM 上跑，无需模拟器 | v1.0 基线仅保存在本地（不入库、CI 不比对）；CI 只验证编译/单测，跨 OS 像素确定性建立后再启用基线门禁 |
 | ADR-019 | **只设一个恢复口令**：库的口令通道与 `.2fab` 备份加密共用同一个口令 | 库口令与备份口令分开 | 降低认知负担与"备份口令忘了"的概率；两处使用同一 KDF/参数 | **修改口令不会更新已导出的旧备份**；UI 必须提示"旧备份仍用旧口令"；导出前校验口令通道存在 |
 | ADR-020 | **引导与密钥策略**：口令可跳过，但跳过即进入**设备绑定降级模式**（Keystore 包装、不要求用户认证），并常驻警告；**生物识别必须先设口令**才能开启；设置口令后移除设备绑定包装 | 强制设口令；允许纯生物识别 | 避免"生物识别变更/换机导致永久锁死"；设备绑定模式给出可用但明确有损的路径 | 跳过口令的用户换机/重装必丢数据，UI 强提示；生物识别入口在无口令时禁用并解释原因 |
+
+
+### M3 实施决策（2026-11-17）
+
+| 编号 | 决策 | 原因与边界 |
+|---|---|---|
+| ADR-021 | 解锁会话仅在内存保留 DEK/KEK；生物识别 Keystore 信封包装二者，设备绑定信封只包装 DEK | v1 的包装 AAD 包含 vaultNonce，每次保存需更新包装认证；避免缓存恢复口令。平台信封用 DataStore 保存密文，不进入可移植格式；锁定清除会话材料。生物识别仍每次强认证，无口令不能开启。 |
+| ADR-022 | 本机开发和自动测试后交付 APK，由用户安装真机验收、反馈迭代 | 用户已确认自用内测方式。M3 可先交付待真机确认的内测包；真实硬件与灾备验收仍需记录证据，不能视为已完成。每次修改和问题排查在 docs/changes/ 记录。 |
+
+后续兼容性与交互决策：
+
+| 编号 | 决策 | 原因与边界 |
+|---|---|---|
+| ADR-023 | `setUnlockedDeviceRequired(true)` 仅在 Android 15 / API 35 及以上启用；较旧系统操作设备密钥前检查 Keyguard 锁定状态 | Android 官方记录 API 31–34 的该标记可能因移除锁屏而删除密钥，使无口令用户丢失数据；生物识别仍要求每次强认证。本项取代下文旧的 API 28 守卫口径。 |
+| ADR-024 | 自动后台锁定立即清除库会话；刚复制的验证码按剪贴板策略继续短暂保留，便于切换 App 粘贴；手动锁定立即清理本 App 剪贴板 | 原“任何锁定都清剪贴板”与默认后台立即锁定组合后，正常跨 App 复制无法使用。默认 30 秒清理为尽力行为，敏感标记与不误清其它应用的规则不变。 |
+
+恢复口令设置后移除设备绑定包装；不启用生物识别时使用 password-only。修改口令不改变旧备份。备份导入需要生成新的本地 DEK，清除旧生物识别信封；锁定与认证失败不得留下可访问的 UI 库内容。
+
+
+### M4 标准机制、系统验证与性能（2026-11-17）
+
+本轮需求由用户明确提出，取代旧版把常见备份互通全部后置 P1 的范围安排。具体实现与结果见 `docs/changes/2026-11-17-m4-standards-auth-performance.md`。
+
+| 编号 | 决策 | 原因与边界 |
+|---|---|---|
+| ADR-025 | 成熟标准优先；本轮增加主流验证器格式双向交换和 otpauth 文本，旧 .2fab v1 继续可读 | 生态互通由官方格式/独立夹具验证，不宣称通用加密备份标准；格式矩阵和映射见 spec/interoperability.md。明文交换需显式确认。 |
+| ADR-026 | 新增独立持久的“每次进入时验证身份”策略，使用 Android 官方 BiometricPrompt/Keyguard 与认证绑定包装 | API30+允许强生物识别或设备凭据；26–29采用标准锁屏凭据兼容路径。不能收集手机锁屏密码，也不能用普通恢复口令静默绕过已开启的系统策略。冷启动、后台返回、旋转、选择器及失效恢复都要测试。 |
+| ADR-028 | GitHub 分支/PR 与 tag 发布复用同一套真实门禁；tag、源码、APK 版本与固定证书必须一致 | 标准 workflow 位于 .github/workflows，用户指定的两个 .github YAML 为实际读取配置。CI 不接触 Secrets，单独签名与发布 job；拒绝重复 Release 和版本回退，报告真实覆盖率和硬件待测项。 |
+| ADR-027 | 私有数据遵循标准卸载生命周期；前台按需刷新、按 OTP 周期缓存，增加真实性能/覆盖率报告 | 不写公共隐蔽工作目录，不依赖卸载钩子；外部备份仍归用户。资源诊断只按需运行，本机基准与真机指标分别记录。 |
+
+系统验证策略保留恢复口令作为灾备材料。密钥失效后恢复需标准系统确认与恢复口令；更改口令或导入不得静默关闭策略。手机锁屏凭据与应用恢复口令不是同一个密码。
 
 ---
 
@@ -503,7 +534,7 @@ val spec = KeyGenParameterSpec.Builder(
             // timeout = 0 → 每次使用都认证；只接受 BIOMETRIC_STRONG
             setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
         }
-        if (Build.VERSION.SDK_INT >= 28) {
+        if (Build.VERSION.SDK_INT >= 35) {
             setUnlockedDeviceRequired(true)
         }
         if (Build.VERSION.SDK_INT >= 28 && hasStrongBox()) {
@@ -525,7 +556,7 @@ val spec = KeyGenParameterSpec.Builder(
     .setKeySize(256)
     .setUserAuthenticationRequired(false)   // 不要求用户认证
     .apply {
-        if (Build.VERSION.SDK_INT >= 28) setUnlockedDeviceRequired(true)
+        if (Build.VERSION.SDK_INT >= 35) setUnlockedDeviceRequired(true)
     }
     .build()
 ```
@@ -534,10 +565,10 @@ val spec = KeyGenParameterSpec.Builder(
 
 - **模式 A** 用该 Keystore 密钥（AES-GCM）包装 DEK，密文存 `DataStore`；每次解密需 `BiometricPrompt.CryptoObject(cipher)`。`Cipher` 只有在认证成功后 `doFinal` 才可用。
 - **`AUTH_BIOMETRIC_STRONG`**：API 30+ 用 `setUserAuthenticationParameters(0, …)`（timeout=0 表示每次使用认证）；API 26–29 用 `setUserAuthenticationRequired(true)`。**不要**用 `setUserAuthenticationValidityDurationSeconds` 做"一段时间免认证"，与本设计不符。
-- **`setUnlockedDeviceRequired(true)`**：API 28+，要求设备处于解锁状态才能使用该密钥；26–27 需 `Build.VERSION` 守卫后跳过。
-- **StrongBox**：API 28+ 且 `FEATURE_STRONGBOX_KEYSTORE` 时先尝试 `setIsStrongBoxBacked(true)`；捕获 `StrongBoxUnavailableException`/生成失败后**回退到普通 TEE**，不得让流程失败。
-- **失效处理**：`KeyPermanentlyInvalidatedException` → 删除别名 → 提示"生物识别已变更，请用恢复口令解锁"；口令成功后重建模式 A 并重新包装 DEK。**没有口令时这一步无解**，所以模式 A 必须先设口令（ADR-020）。
-- **模式 B**：解密不弹 `BiometricPrompt`；用于"跳过口令"的用户。UI 必须常驻降级警告；用户一旦设置口令，立刻生成模式 A 密钥、重新包装 DEK，并**删除模式 B 别名**。
+- **`setUnlockedDeviceRequired(true)`**：按 ADR-023，仅 API 35+ 启用，避免旧系统已知的密钥丢失问题；较旧系统在设备密钥操作入口检查 Keyguard 锁定状态。详见 Android 官方 KeyGenParameterSpec.Builder 文档。
+- **StrongBox**：API 28+ 且 `FEATURE_STRONGBOX_KEYSTORE` 时先尝试 `setIsStrongBoxBacked(true)`；捕获 `StrongBoxUnavailableException`/生成失败后**回退到普通 Keystore（实际硬件安全等级待真机确认）**，不得让流程失败。
+- **失效处理**：`KeyPermanentlyInvalidatedException` → 删除别名 → 提示"生物识别已变更，请用恢复口令解锁"；口令成功后在设置中重新开启模式 A 并重新包装会话材料（EX-006）。**没有口令时这一步无解**，所以模式 A 必须先设口令（ADR-020）。
+- **模式 B**：解密不弹 `BiometricPrompt`；用于"跳过口令"的用户。UI 必须常驻降级警告；用户一旦设置口令，立刻生成模式 A 密钥、重新包装 DEK，并**删除模式 B 别名**；未选择开启生物识别时进入 `password-only`。
 - **`password-only`**：用户拒绝任何设备包装（或无强生物识别且不愿降级）时，不存包装 DEK，每次解锁都输口令；`wrapMode=password-only`。
 - 包装后的 DEK 存 `DataStore`（`iv` + 密文 + `wrapMode`），**不存明文**；Keystore 密钥不参与备份、换机不存在 → 因此库文件必须排除系统自动备份（ADR-012），避免"恢复出密文但解不开"。
 
@@ -560,7 +591,7 @@ stateDiagram-v2
 | 生物识别通过（模式 A） | 解开 DEK → 解密库 → 进入列表（目标 < 300ms） |
 | 降级设备绑定（模式 B，无口令） | 直接解开、不弹认证；列表顶部**常驻警告**"未设恢复口令 · 换机/重装将丢失"；设置页主行动为"设置恢复口令" |
 | 用户取消/失败 | 停留锁屏，提供"用恢复口令"入口；连续失败不清数据 |
-| 生物识别变更（ACL 失效） | 提示"生物识别已更新，请用恢复口令解锁"；口令成功后**自动重建模式 A** 并重新包装 DEK |
+| 生物识别变更（ACL 失效） | 提示"生物识别已更新，请用恢复口令解锁"；口令成功后可在设置中重新开启生物识别并包装会话材料（M3 内测暂不自动重绑，见 EX-006） |
 | 未设置口令（用户跳过） | 仅允许模式 B；首次启动强提示；**导出备份前强制设置口令**；设置口令后立即删除模式 B 别名并切换模式 A（ADR-020） |
 | 设备无生物识别 | 默认口令模式；如需设备凭据（`DEVICE_CREDENTIAL`）必须先设口令，并在设置页标注安全等级 |
 | 从备份恢复后 | 备份**不含 DEK**；导入时生成新的本地 DEK 重建库与设备包装（见 §7.4），提示"建议重新开启生物识别" |
@@ -653,10 +684,10 @@ stateDiagram-v2
 
 **导出**：解锁库 → 检查口令通道（无口令则**先设置恢复口令**，同时退出降级模式）→ 校准 KDF 参数 → `Argon2id(口令, 新盐) → KEK` → 用 KEK 直接 `AES-256-GCM` 加密库 JSON → 组装 50B 头部（含盐与 nonce）→ 原子写临时文件 → 交给系统分享/文件导出 → 提示"把文件放到可信位置，不要发到聊天工具"。**全程不写入 DEK，也不需要设备包装。**
 
-**导入**：选文件 → **先校验头部**（magic/版本/参数上限）→ 输入口令 → `Argon2id` 派生 KEK（显示进度，可取消）→ GCM 验证解密 → **校验库 JSON schema** → 预览（账号数量、issuer 列表、创建时间）→ 用户选择 **合并** 或 **替换** → **生成新的本地 DEK** → 用新 DEK + 新 `vaultNonce` 加密写入本机库（原子替换）→ 用导入口令建立口令通道、按用户选择重建设备包装（开启生物识别 → 模式 A；否则 `password-only`；不再使用模式 B）→ 提示"建议重新开启生物识别"。
+**导入**：选文件 → **先校验头部**（magic/版本/参数上限）→ 输入口令 → `Argon2id` 派生 KEK（显示进度，可取消）→ GCM 验证解密 → **校验库 JSON schema** → 预览（账号数量、issuer 列表、创建时间）→ 用户选择 **合并** 或 **替换** → **生成新的本地 DEK** → 用新 DEK + 新 `vaultNonce` 加密写入本机库（原子替换）→ 保留本机当前恢复口令通道，移除旧设备包装并进入 `password-only`（需用户重新开启生物识别；不再使用模式 B）→ 提示"建议重新开启生物识别"。
 
 - **不会复用备份中的任何密钥**：备份没有 DEK；导入必然生成新 DEK。
-- 导入后本地口令 = 该备份口令（一个口令，ADR-019）；用户可在设置里修改，旧备份仍用旧口令。
+- v0.9 / ADR-022：导入前先创建本机库并设置恢复口令；备份口令仅用于打开所选文件，导入后保留本机当前恢复口令。界面必须明确说明这两个步骤，避免导入旧备份时静默改掉现有库口令。旧备份仍使用原导出口令。
 - 导入失败（口令错/损坏/超限）不得留下半成品库；原子替换保证旧库不变。
 
 **合并规则**：去重键 = `(type, issuer.lowercased(), accountName.lowercased(), SHA256(secret))`；同键冲突时让用户选择"保留本地 / 覆盖本地 / 都保留（自动加后缀）"。合并后重新分配 `sortIndex`。
@@ -775,7 +806,7 @@ TOTP(secret, unixSeconds, digits=6, period=30, hashAlg=SHA1):
 |---|---|
 | 单次验证码计算 | < 1ms（HMAC + 截断，纯 CPU） |
 | 100 条列表全量计算 | < 10ms（按需计算可视项，勿全局定时刷新） |
-| 倒计时刷新 | 250ms 粒度，仅刷新可见项 |
+| 倒计时刷新 | M4：前台每秒更新；按 moving factor 缓存；锁定/后台无轮询（EX-007） |
 
 ---
 
@@ -1389,7 +1420,7 @@ flowchart TD
 | 空态 | 图标 + 「还没有账号」+ 说明；主按钮「扫描二维码」+ 文本按钮「手动添加」 |
 | 错误 | 库损坏：全屏状态页，图标 + 说明 + 「从备份恢复」主按钮（不直接跳删除） |
 | 无障碍 | 卡片读法：「GitHub，账号 me@example.com，验证码 1 2 3 4 5 6，剩余 28 秒，点按复制」；倒计时不做每秒播报 |
-| 性能 | 只对可视项计算验证码；倒计时 250ms 粒度 |
+| 性能 | M4：前台单 ticker 每秒更新；按模型与 moving factor 缓存 OTP，后台/锁定停止（EX-007） |
 
 #### 11.7.3 条目详情 / 编辑
 
@@ -1547,7 +1578,7 @@ flowchart TD
 - **FLAG_SECURE**：仅 release 打开；debug 变体关闭，否则截图测试/设计评审全部黑屏。
 - **动效**：`animateFloatAsState`、`AnimatedVisibility`、`animateItem`；时长常量走 `MotionTokens`；尊重系统动画缩放。
 - **触觉**：`LocalHapticFeedback`，映射见 11.8。
-- **列表性能**：`LazyColumn` + 稳定 `key` + `contentType`；验证码只算可见项；倒计时用单一 ticker 驱动可见项。
+- **列表性能**：`LazyColumn` + 稳定 `key` + `contentType`；M4 使用按周期缓存的全库投影（EX-007）；倒计时用单一前台 ticker 每秒更新，后台与锁定不运行。
 - **截图测试**：**Roborazzi 1.77 + Robolectric 4.17**（JVM，无模拟器）覆盖 light/dark × fontScale 1.0/1.3/2.0 × 关键页；v1.0 基线只保存在本地，**CI 仅跑构建/单测、不比对基线**（ADR-018）；跨 OS 像素确定性建立后再纳入门禁。
 - **一致性门**：用自定义 Lint/Detekt 规则或评审脚本检查硬编码色值/字号/圆角/时长（对应 11.0.7 的 G1–G5）。
 - **禁止**：XML 布局混用（v1 纯 Compose）、在 ViewModel 里写动画、在 composable 里读硬编码颜色。
@@ -1646,7 +1677,7 @@ flowchart TD
 | 模型 | schema 升级链、未知字段容错、排序键重排 |
 | 加密 | 同一明文两次加密 nonce 不同；错误 key/nonce 失败；AAD 篡改失败 |
 
-覆盖率目标：`:core` 模块 ≥ 90%，关键加密与备份路径 100%。
+覆盖率目标：`:core` 模块 ≥ 90%，关键加密与备份路径 100%。App 同时输出真实行/分支覆盖率，缺口与硬件不可模拟部分须记录，不能用目标代替实测。
 
 ### 13.2 属性测试 / fuzz
 
@@ -1784,7 +1815,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 ## 18. 工程约束与变更治理（防漂移）
 
 > 前 17 章回答"要做什么、怎么做"；本章规定"**不许偏离成什么样**"。任何与本章冲突的代码、设计、PR，一律以本章 + 设计文档为准；例外必须走 18.3 的流程，否则视为缺陷。
-> **当前状态（2026-11-05）**：仓库已创建（`/Users/renhc/projects/java/ink-otp`），JDK 25、Android SDK 37.2、Gradle Wrapper 9.8.2 已就绪；**M0 进行中**，当前无真机连接。环境细节见附录 F。
+> **当前状态（2026-11-05）**：仓库已创建（`/Users/renhc/projects/java/ink-otp`），JDK 25、Android SDK 37.2、Gradle Wrapper 9.8.2 已就绪；**M2 已完成，M3 内测实现中**；真机测试由用户安装 APK 后反馈。环境细节见附录 F。
 
 ### 18.1 总原则
 
@@ -1871,7 +1902,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 
 | 对象 | 当前版本 | 规则 |
 |---|---|---|
-| 设计文档 | **v0.8（implementation-ready）** | 每次实质变更 +0.1 并记录附录 G |
+| 设计文档 | **v0.10（M4 标准互通、系统验证与性能完善）** | 每次实质变更 +0.1 并记录附录 G |
 | Design Language | **v1.0（冻结）** | 变更走 §11.0.9，升 v1.x；页面不得私自扩展 |
 | 备份格式 | **v1（`.2fab`）** | 布局变更 = `formatVersion + 1` + 迁移 + 双实现测试（C-08、C-27） |
 | 库文件格式 | **v1（`vault.bin`）** | 布局变更 = `version + 1` + `spec/vault-format.md` + 双实现测试（C-27） |
@@ -2101,7 +2132,9 @@ interface VaultRepository {
 - [ ] 真机检查表（13.4）逐项通过（**不用模拟器替代**）
 - [ ] 第 18 章硬约束（C-01~C-28）逐项核对通过，且无未登记的临时方案
 
-### F. 实现工作区与环境现状（M0）
+### F. 实现工作区与环境现状（2026-11-05 历史快照）
+
+此节保留 M0 建仓时的环境与交接记录。当前进度与本次验证以 README、docs/toolchain.md 及 docs/changes/ 为准。
 
 > 本仓库同时承载文档与实现：`docs/` 权威文档、`spec/` 平台中立规格、`tools/` Python 参考实现、`android/` Gradle 工程、`ios/` Phase 2 占位。设计文档已从仓库根移入 `docs/design/`；**M0 进行中**。
 
@@ -2158,3 +2191,12 @@ interface VaultRepository {
 | 0.6 | 2026-11-05 | 环境就绪更新：JDK 25（Temurin）与 Android SDK 已安装；**不装模拟器**，测试策略确定为真机 + JVM 单元测试 + JVM 截图测试；附录 F 环境表与 §13.4 自动化策略同步 | — |
 | 0.7 | 2026-11-05 | 新增第 18 章 **工程约束与变更治理（防漂移）**：25 条硬约束（C-01~C-25）、ADR/文档优先变更流程、多套版本兼容策略、8 道可检查门禁、违规与临时方案规则、ADR/例外/PR 模板；附录顺延为第 19 章，DoD 增补约束核对项 | — |
 | 0.8 | 2026-11-05 | 按 M0 批准计划更新为 **implementation-ready**：关闭 Q2/Q8（GPL-3.0、InkOTP / `io.github.rhczz.inkotp`）；新增 ADR-015~020（BC Argon2、工具链、扫码、Roborazzi、单一口令、引导/密钥策略）；新增 §6.2.1 `vault.bin` 布局、两种 Keystore 模式与降级解锁状态机；**修正 §7 备份不含 DEK 的矛盾**；§4.3/§10 对齐真实仓库与 `:core`/`:app`；§11 修复字号/圆角/动效 token 违规、截图方案改为 Roborazzi、加入引导策略；§12–§15 更新依赖/测试/指标/里程碑；§18 增加 C-26~C-28 与可执行门禁；附录 B/E/F/G 同步 | — |
+
+
+2026-11-17 · v0.9：追加 ADR-021/022，明确会话密钥、APK 内测交付与 docs/changes/ 记录规则；M3 尚未完成真机验收。
+
+
+ADR-023 技术依据：[Android 官方 unlockedDeviceRequired 兼容性说明](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder#setUnlockedDeviceRequired(boolean))。
+
+
+2026-11-17 · v0.10：用户确认继续 M4，追加 ADR-025~027，标准互通、每次进入系统认证及性能/资源验证纳入本轮。

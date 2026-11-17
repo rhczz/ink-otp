@@ -42,13 +42,18 @@ fun OnboardingScreen(
     onSetPassword: (String) -> Unit,
     onEnableBiometric: () -> Unit,
     onFinish: () -> Unit,
+    onScan: () -> Unit = onFinish,
+    onManual: () -> Unit = onFinish,
+    passwordSet: Boolean = true,
+    biometricAvailable: Boolean = true,
 ) {
     val colors = LocalInkColors.current
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var confirmVisible by remember { mutableStateOf(false) }
-    val valid = password.length >= 8 && password == confirm
+    var acknowledged by remember { mutableStateOf(false) }
+    val valid = password.length >= 8 && password == confirm && acknowledged
 
     Column(
         modifier = Modifier
@@ -113,6 +118,10 @@ fun OnboardingScreen(
                         onToggleVisibility = { confirmVisible = !confirmVisible },
                         error = if (confirm.isNotEmpty() && password != confirm) "两次输入不一致" else null,
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(checked = acknowledged, onCheckedChange = { acknowledged = it })
+                        Text("我已了解：遗忘恢复口令将无法恢复备份", style = AppType.caption, color = colors.inkSecondary)
+                    }
                 }
                 2 -> {
                     InkIcon(R.drawable.ic_fingerprint, size = AppTokens.IconSize.state, tint = colors.ink)
@@ -120,7 +129,7 @@ fun OnboardingScreen(
                     Text(text = "开启生物识别", style = AppType.title, color = colors.ink, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(AppTokens.Spacing.s))
                     Text(
-                        text = "日常解锁更快。生物识别失败或变更时，仍可用恢复口令。",
+                        text = if (!passwordSet) "请先设置恢复口令，才能开启生物识别。" else if (!biometricAvailable) "设备没有可用的强生物识别，可继续使用恢复口令。" else "日常解锁更快。生物识别失败或变更时，仍可用恢复口令。",
                         style = AppType.body,
                         color = colors.inkSecondary,
                         textAlign = TextAlign.Center,
@@ -144,19 +153,19 @@ fun OnboardingScreen(
         when (page) {
             0 -> InkPrimaryButton(text = "继续", onClick = onNext)
             1 -> {
-                InkPrimaryButton(text = "设置恢复口令", onClick = { onSetPassword(password) }, enabled = valid)
+                InkPrimaryButton(text = "设置恢复口令", onClick = { val submitted = password; password = ""; confirm = ""; onSetPassword(submitted) }, enabled = valid)
                 Spacer(Modifier.height(AppTokens.Spacing.s))
                 InkTextButton(text = "稍后设置（安全性降低）", onClick = onSkipPassword, color = colors.inkSecondary)
             }
             2 -> {
-                InkPrimaryButton(text = "开启", onClick = onEnableBiometric)
+                InkPrimaryButton(text = "开启", onClick = onEnableBiometric, enabled = passwordSet && biometricAvailable)
                 Spacer(Modifier.height(AppTokens.Spacing.s))
                 InkTextButton(text = "只使用口令", onClick = onNext, color = colors.inkSecondary)
             }
             else -> {
-                InkPrimaryButton(text = "扫描二维码", onClick = onFinish)
+                InkPrimaryButton(text = "扫描二维码", onClick = onScan)
                 Spacer(Modifier.height(AppTokens.Spacing.s))
-                InkSecondaryButton(text = "手动添加", onClick = onFinish)
+                InkSecondaryButton(text = "手动添加", onClick = onManual)
                 Spacer(Modifier.height(AppTokens.Spacing.s))
                 InkTextButton(text = "稍后添加", onClick = onFinish, color = colors.inkSecondary)
             }

@@ -53,21 +53,46 @@ object VaultCodec {
         kdf: Kdf = Argon2Kdf(),
         aead: Aead = JceAead(),
     ): ByteArray {
+        val salt = if (password != null) random.bytes(SALT_LEN) else null
+        val kek = if (password != null) kdf.deriveKey(password, salt!!, kdfParams) else null
+        return try {
+            sealWithKey(model, dek, kek, salt, if (password != null) kdfParams else null, random, aead)
+        } finally {
+            SecretBytes.wipe(kek)
+        }
+    }
+
+    /**
+     * Save an unlocked session without retaining its passphrase. The KEK and
+     * salt stay stable for the session; both GCM nonces must be fresh on every
+     * save because the password-wrap AAD includes the vault nonce.
+     */
+    fun sealWithKey(
+        model: VaultModel,
+        dek: ByteArray,
+        kek: ByteArray? = null,
+        salt: ByteArray? = null,
+        kdfParams: KdfParams? = null,
+        random: RandomSource = SecureRandomSource(),
+        aead: Aead = JceAead(),
+    ): ByteArray {
         require(dek.size == DEK_LEN) { "DEK must be 32 bytes" }
+        require((kek == null) == (salt == null) && (kek == null) == (kdfParams == null)) {
+            "password key, salt and parameters must be supplied together"
+        }
+        require(kek == null || kek.size == DEK_LEN) { "KEK must be 32 bytes" }
+        require(salt == null || (salt.size == SALT_LEN && salt.any { it != 0.toByte() })) { "invalid salt" }
         val json = VaultJson.encode(model)
-        require(json.size in 1..MAX_CT) { "vault JSON is too large" }
-        val salt = ByteArray(SALT_LEN)
-        val dekNonce = ByteArray(NONCE_LEN)
-        val vaultNonce = random.bytes(NONCE_LEN)
-        var kek: ByteArray? = null
         try {
+            require(json.size in 1..MAX_CT) { "vault JSON is too large" }
+            val headerSalt = salt ?: ByteArray(SALT_LEN)
+            val dekNonce = ByteArray(NONCE_LEN)
+            val vaultNonce = random.bytes(NONCE_LEN)
             val header: ByteArray
-            if (password != null) {
-                random.bytes(SALT_LEN).copyInto(salt)
+            if (kek != null) {
                 random.bytes(NONCE_LEN).copyInto(dekNonce)
                 val prefix = ByteArray(PREFIX_LEN)
-                writePrefix(prefix, hasPassword = true, kdfParams, salt, dekNonce, vaultNonce)
-                kek = kdf.deriveKey(password, salt, kdfParams)
+                writePrefix(prefix, hasPassword = true, kdfParams, headerSalt, dekNonce, vaultNonce)
                 val wrapped = aead.encrypt(kek, dekNonce, dek, prefix)
                 if (wrapped.size != WRAPPED_DEK_LEN + WRAPPED_TAG_LEN) {
                     throw IllegalStateException("unexpected wrapped DEK length")
@@ -78,7 +103,7 @@ object VaultCodec {
                 writeU32(header, PREFIX_LEN + WRAPPED_DEK_LEN + WRAPPED_TAG_LEN, json.size)
             } else {
                 val prefix = ByteArray(PREFIX_LEN)
-                writePrefix(prefix, hasPassword = false, null, salt, dekNonce, vaultNonce)
+                writePrefix(prefix, hasPassword = false, null, headerSalt, dekNonce, vaultNonce)
                 header = ByteArray(PREFIX_LEN + 4)
                 prefix.copyInto(header, 0)
                 writeU32(header, PREFIX_LEN, json.size)
@@ -87,7 +112,7 @@ object VaultCodec {
             if (ctAndTag.size != json.size + TAG_LEN) throw IllegalStateException("unexpected AEAD length")
             return header + ctAndTag
         } finally {
-            SecretBytes.wipe(json, kek)
+            SecretBytes.wipe(json)
         }
     }
 
@@ -204,18 +229,25 @@ object VaultCodec {
         val header = parseHeader(bytes)
         if (!header.hasPassword) fail(VaultError.VLT_E_FLAGS)
         val params = header.kdfParams ?: fail(VaultError.VLT_E_KDF_PARAMS)
-        val wrapped = header.wrappedDekCiphertext!! + header.wrappedDekTag!!
-        val aad = bytes.copyOfRange(0, PREFIX_LEN)
         var kek: ByteArray? = null
         try {
             kek = kdf.deriveKey(password, header.salt, params)
-            return try {
-                aead.decrypt(kek, header.dekNonce, wrapped, aad)
-            } catch (_: AeadException) {
-                fail(VaultError.VLT_E_WRAP_AUTH)
-            }
+            return unwrapDekWithKey(bytes, kek, aead)
         } finally {
             SecretBytes.wipe(kek)
+        }
+    }
+
+    /** Authenticate the retained session KEK against the current v1 header. */
+    fun unwrapDekWithKey(bytes: ByteArray, kek: ByteArray, aead: Aead = JceAead()): ByteArray {
+        require(kek.size == DEK_LEN) { "KEK must be 32 bytes" }
+        val header = parseHeader(bytes)
+        if (!header.hasPassword) fail(VaultError.VLT_E_FLAGS)
+        return try {
+            aead.decrypt(kek, header.dekNonce, header.wrappedDekCiphertext!! + header.wrappedDekTag!!,
+                bytes.copyOfRange(0, PREFIX_LEN))
+        } catch (_: AeadException) {
+            fail(VaultError.VLT_E_WRAP_AUTH)
         }
     }
 

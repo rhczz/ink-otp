@@ -24,7 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import io.github.rhczz.inkotp.R
-import io.github.rhczz.inkotp.ui.components.AppTextField
+import io.github.rhczz.inkotp.ui.components.SecretTextField
 import io.github.rhczz.inkotp.ui.components.InkIcon
 import io.github.rhczz.inkotp.ui.components.InkPrimaryButton
 import io.github.rhczz.inkotp.ui.components.InkTextButton
@@ -40,7 +40,10 @@ fun UnlockScreen(
     onPasswordSubmit: (String) -> Unit,
 ) {
     val colors = LocalInkColors.current
-    var passwordMode by remember { mutableStateOf(false) }
+    var passwordMode by remember(state.biometricAvailable, state.degraded, state.systemAuthenticationRequired, state.systemRecoveryRequired) {
+        mutableStateOf(state.systemRecoveryRequired || (!state.systemAuthenticationRequired && !state.biometricAvailable && !state.degraded))
+    }
+    var passwordVisible by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
 
     Column(
@@ -59,10 +62,10 @@ fun UnlockScreen(
             tint = colors.inkSecondary,
         )
         Spacer(Modifier.height(AppTokens.Spacing.xxl))
-        Text(text = "解锁以查看验证码", style = AppType.section, color = colors.ink)
+        Text(text = if (state.systemRecoveryRequired) "重新绑定手机验证" else "解锁以查看验证码", style = AppType.section, color = colors.ink)
         Spacer(Modifier.height(AppTokens.Spacing.s))
         Text(
-            text = "生物识别不会上传任何数据",
+            text = if (state.systemRecoveryRequired) "先输入应用恢复口令，再完成手机系统验证" else if (state.systemAuthenticationRequired) "使用手机的指纹、人脸或锁屏密码验证身份" else if (state.degraded) "设备绑定模式" else if (state.biometricAvailable) "生物识别不会上传任何数据" else "请输入本机恢复口令",
             style = AppType.label,
             color = colors.inkSecondary,
             textAlign = TextAlign.Center,
@@ -70,17 +73,18 @@ fun UnlockScreen(
         Spacer(Modifier.height(AppTokens.Spacing.xxxl))
 
         if (passwordMode) {
-            AppTextField(
+            SecretTextField(
                 value = password,
                 onValueChange = { password = it },
-                label = "恢复口令",
+                label = if (state.systemAuthenticationRequired) "应用恢复口令（随后需系统验证）" else "恢复口令",
                 modifier = Modifier.fillMaxWidth(),
-                keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                visible = passwordVisible,
+                onToggleVisibility = { passwordVisible = !passwordVisible },
             )
             Spacer(Modifier.height(AppTokens.Spacing.l))
-            InkPrimaryButton(text = "解锁", onClick = { onPasswordSubmit(password) })
+            InkPrimaryButton(text = if (state.systemAuthenticationRequired) "验证并重新绑定" else "解锁", onClick = { val submitted = password; password = ""; onPasswordSubmit(submitted) })
             Spacer(Modifier.height(AppTokens.Spacing.s))
-            InkTextButton(text = "改用生物识别", onClick = { passwordMode = false }, color = colors.inkSecondary)
+            if (state.biometricAvailable || state.systemAuthenticationRequired) InkTextButton(text = if (state.systemAuthenticationRequired) "使用系统验证" else "改用生物识别", onClick = { passwordMode = false }, color = colors.inkSecondary)
         } else {
             Box(
                 modifier = Modifier
@@ -92,15 +96,15 @@ fun UnlockScreen(
             ) {
                 InkIcon(
                     icon = R.drawable.ic_fingerprint,
-                    contentDescription = "解锁，需要生物识别",
+                    contentDescription = if (state.systemAuthenticationRequired) "使用系统验证解锁" else "解锁，需要生物识别",
                     size = AppTokens.IconSize.primary,
                     tint = colors.ink,
                 )
             }
             Spacer(Modifier.height(AppTokens.Spacing.m))
-            Text(text = "轻触解锁", style = AppType.label, color = colors.inkSecondary)
+            Text(text = if (state.systemAuthenticationRequired) "轻触进行系统验证" else "轻触解锁", style = AppType.label, color = colors.inkSecondary)
             Spacer(Modifier.height(AppTokens.Spacing.l))
-            InkTextButton(text = "使用恢复口令", onClick = { passwordMode = true })
+            if (!state.degraded) InkTextButton(text = if (state.systemAuthenticationRequired) "用恢复口令重新绑定" else "使用恢复口令", onClick = { passwordMode = true })
         }
 
         if (state.error != null) {

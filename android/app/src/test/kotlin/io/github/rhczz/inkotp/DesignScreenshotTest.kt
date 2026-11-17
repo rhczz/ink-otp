@@ -82,6 +82,18 @@ class DesignScreenshotTest {
                 onPasswordSubmit = {},
             )
         },
+        ScreenshotCase("unlock-system-auth") {
+            UnlockScreen(
+                state = DemoData.unlockState.copy(systemAuthenticationRequired = true),
+                onUnlock = {}, onPasswordSubmit = {},
+            )
+        },
+        ScreenshotCase("unlock-system-recovery") {
+            UnlockScreen(
+                state = DemoData.unlockState.copy(systemAuthenticationRequired = true, systemRecoveryRequired = true),
+                onUnlock = {}, onPasswordSubmit = {},
+            )
+        },
         ScreenshotCase("onboarding-0") {
             OnboardingScreen(0, {}, null, {}, {}, {}, {})
         },
@@ -147,6 +159,13 @@ class DesignScreenshotTest {
         },
         ScreenshotCase("diagnostics") {
             DiagnosticsScreen(state = DemoData.diagnosticsState, onBack = {}, onRefresh = {})
+        },
+        ScreenshotCase("diagnostics-resources") {
+            DiagnosticsScreen(state = DemoData.diagnosticsState.copy(resources = listOf(
+                "进程内存 PSS" to "54.00 MiB", "Java 堆使用" to "12.00 MiB / 256.00 MiB",
+                "原生堆" to "8.00 MiB", "私有文件逻辑大小" to "0.02 MiB",
+                "本次采样" to "8 ms / 12 个目录项", "最近操作（含验证等待）" to "导入 · 350 ms",
+            )), onBack = {}, onRefresh = {})
         },
         ScreenshotCase("about") {
             AboutScreen(onBack = {})

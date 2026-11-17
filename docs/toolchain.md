@@ -72,3 +72,10 @@ make verify
 - Roborazzi 在 JDK 25 下需要 `--add-exports java.base/jdk.internal.access=ALL-UNNAMED` 与 `--add-opens java.base/java.io=ALL-UNNAMED`（已写入 `app/build.gradle.kts`）。
 - Gradle 9.8.2 对 AGP/KGP 的 `Configuration.setVisible` 有弃用警告（Gradle 11 前需升级 AGP），不影响当前构建。
 - Roborazzi 截图基线暂为本机 macOS 口径；CI 暂不验图。
+
+
+## 2026-11-17 M3 本机复核
+
+沿用上述 JDK 25 / Gradle 9.8.2 / AGP 9.5.0 / SDK 37.2，M3 的完整测试、Debug/Release Lint 与已签名 Release 构建通过。SDK、JDK 无需重新安装。没有检出 Android Studio，也没有模拟器或 adb 可见真机；本次硬件测试由用户安装内测 APK 后完成。
+
+本地签名与构建使用 `make beta`，私钥和配置由 `tools/build_local_beta.py` 创建并复用，位置见根 README。参数策略、设备能力和真机结果不能混为一谈；详见 [M3 验证记录](changes/2026-11-17-m3-local-beta.md)。

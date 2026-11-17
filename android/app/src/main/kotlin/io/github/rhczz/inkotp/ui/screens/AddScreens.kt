@@ -94,11 +94,15 @@ fun AddSheetPreview() {
 fun ManualAddScreen(
     onBack: () -> Unit,
     onSave: (issuer: String, account: String, secret: String) -> Unit,
+    initialInput: String = "",
 ) {
     val colors = LocalInkColors.current
     var issuer by remember { mutableStateOf("") }
     var account by remember { mutableStateOf("") }
-    var secret by remember { mutableStateOf("") }
+    var secret by remember(initialInput) { mutableStateOf(initialInput) }
+    var algorithm by remember { mutableStateOf("SHA1") }
+    var digits by remember { mutableStateOf(6) }
+    var period by remember { mutableStateOf("30") }
     var secretVisible by remember { mutableStateOf(false) }
     var secretError by remember { mutableStateOf<String?>(null) }
 
@@ -112,7 +116,7 @@ fun ManualAddScreen(
             Spacer(Modifier.height(AppTokens.Spacing.l))
             AppTextField(value = issuer, onValueChange = { issuer = it }, label = "服务名（可选）")
             Spacer(Modifier.height(AppTokens.Spacing.l))
-            AppTextField(value = account, onValueChange = { account = it }, label = "账号")
+            AppTextField(value = account, onValueChange = { account = it }, label = "账号（链接可自动读取）")
             Spacer(Modifier.height(AppTokens.Spacing.l))
             SecretTextField(
                 value = secret,
@@ -120,7 +124,7 @@ fun ManualAddScreen(
                     secret = it
                     secretError = null
                 },
-                label = "密钥（Base32）",
+                label = "密钥（Base32）或 otpauth 链接",
                 visible = secretVisible,
                 onToggleVisibility = { secretVisible = !secretVisible },
                 error = secretError,
@@ -135,17 +139,17 @@ fun ManualAddScreen(
             SectionHeader("高级")
             Row(modifier = Modifier.fillMaxWidth()) {
                 Text(text = "算法", style = AppType.body, color = colors.inkSecondary, modifier = Modifier.weight(1f))
-                Text(text = "SHA1", style = AppType.body, color = colors.ink)
+                InkTextButton(text = algorithm, onClick = { algorithm = when (algorithm) { "SHA1" -> "SHA256"; "SHA256" -> "SHA512"; else -> "SHA1" } })
             }
             Spacer(Modifier.height(AppTokens.Spacing.m))
             Row(modifier = Modifier.fillMaxWidth()) {
                 Text(text = "位数", style = AppType.body, color = colors.inkSecondary, modifier = Modifier.weight(1f))
-                Text(text = "6 位", style = AppType.body, color = colors.ink)
+                InkTextButton(text = "$digits 位", onClick = { digits = if (digits == 6) 8 else 6 })
             }
             Spacer(Modifier.height(AppTokens.Spacing.m))
             Row(modifier = Modifier.fillMaxWidth()) {
                 Text(text = "周期", style = AppType.body, color = colors.inkSecondary, modifier = Modifier.weight(1f))
-                Text(text = "30 秒", style = AppType.body, color = colors.ink)
+                AppTextField(value = period, onValueChange = { period = it.filter(Char::isDigit).take(3) }, label = "秒（1–300）", modifier = Modifier.weight(1f), keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
             }
 
             Spacer(Modifier.height(AppTokens.Spacing.xxxl))
@@ -155,7 +159,13 @@ fun ManualAddScreen(
                     if (secret.isBlank()) {
                         secretError = "请输入密钥"
                     } else {
-                        onSave(issuer, account, secret)
+                        val submitted = if (secret.contains("://")) secret else {
+                            val p = period.toIntOrNull()
+                            if (p == null || p !in 1..300) { secretError = "周期需要在 1 到 300 秒之间"; return@InkPrimaryButton }
+                            if (account.isBlank()) { secretError = "请输入账号名称"; return@InkPrimaryButton }
+                            "otpauth://totp/${android.net.Uri.encode(account)}?secret=${android.net.Uri.encode(secret)}&algorithm=$algorithm&digits=$digits&period=$p"
+                        }
+                        onSave(issuer, account, submitted)
                     }
                 },
             )

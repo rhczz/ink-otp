@@ -31,8 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.SnackbarHostState
 import io.github.rhczz.inkotp.R
@@ -59,13 +57,15 @@ fun VaultListScreen(
     onAdd: () -> Unit,
     onSettings: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    onCopy: (VaultItemUi) -> Unit = {},
+    onLock: () -> Unit = {},
 ) {
     val colors = LocalInkColors.current
-    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var searching by remember { mutableStateOf(false) }
     var copiedId by remember { mutableStateOf<String?>(null) }
+    var revealed by remember(state.items.map { it.id to it.code }) { mutableStateOf(setOf<String>()) }
 
     LaunchedEffect(copiedId) {
         if (copiedId != null) {
@@ -90,6 +90,7 @@ fun VaultListScreen(
         ScreenScaffold(
             title = "验证码",
             actions = {
+                InkIconButton(icon = R.drawable.ic_lock, contentDescription = "立即锁定", onClick = onLock, tint = colors.ink)
                 InkIconButton(
                     icon = R.drawable.ic_search,
                     contentDescription = "搜索",
@@ -163,10 +164,15 @@ fun VaultListScreen(
                     ) {
                         items(items = visibleItems, key = { it.id }) { item ->
                             VaultCodeCard(
-                                item = item,
+                                item = item.copy(hidden = item.hidden && item.id !in revealed),
                                 copied = copiedId == item.id,
                                 onClick = {
-                                    clipboard.setText(AnnotatedString(item.code))
+                                    if (item.type != "totp") return@VaultCodeCard
+                                    if (item.hidden && item.id !in revealed) {
+                                        revealed = revealed + item.id
+                                        return@VaultCodeCard
+                                    }
+                                    onCopy(item)
                                     copiedId = item.id
                                     scope.launch {
                                         snackbarHostState.showSnackbar("已复制 · 剩余 ${item.remainingSeconds} 秒")

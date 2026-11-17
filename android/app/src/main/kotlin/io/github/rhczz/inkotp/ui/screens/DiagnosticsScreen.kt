@@ -100,6 +100,24 @@ fun DiagnosticsScreen(
 
             Spacer(Modifier.height(AppTokens.Spacing.xxl))
             InkPrimaryButton(text = "重新计算全部验证码", onClick = onRefresh)
+
+            SectionHeader("性能与资源")
+            Text(
+                text = "仅在你点击刷新时采样，不在后台监控。PSS、堆和文件大小是不同统计口径，不能直接相加。",
+                style = AppType.caption,
+                color = colors.inkSecondary,
+            )
+            state.resources.forEach { (label, value) ->
+                Spacer(Modifier.height(AppTokens.Spacing.m))
+                Text(label, style = AppType.caption, color = colors.inkSecondary)
+                Text(value, style = AppType.body, color = colors.ink)
+            }
+            Spacer(Modifier.height(AppTokens.Spacing.l))
+            InkPrimaryButton(
+                text = if (state.resourceSampling) "正在采样…" else "刷新资源统计",
+                onClick = onRefresh,
+                enabled = !state.resourceSampling,
+            )
         }
     }
 }

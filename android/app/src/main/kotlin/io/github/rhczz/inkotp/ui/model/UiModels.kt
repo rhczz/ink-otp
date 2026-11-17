@@ -10,6 +10,7 @@ data class VaultItemUi(
     val period: Int = 30,
     val hidden: Boolean = false,
     val type: String = "totp",
+    val algorithm: String = "SHA1",
 )
 
 data class VaultListUiState(
@@ -25,6 +26,8 @@ data class UnlockUiState(
     val error: String? = null,
     val biometricAvailable: Boolean = true,
     val degraded: Boolean = false,
+    val systemAuthenticationRequired: Boolean = false,
+    val systemRecoveryRequired: Boolean = false,
 )
 
 data class ItemDetailUiState(
@@ -42,10 +45,13 @@ data class SettingsUiState(
     val themeMode: String = "system",
     val passwordSet: Boolean = true,
     val lastBackupAt: String? = "11-05 09:30",
+    val systemAuthenticationEnabled: Boolean = false,
 )
 
 data class DiagnosticsUiState(
     val deviceTime: String = "2026-11-05 16:38:12",
     val autoTime: Boolean = true,
     val driftDetected: Boolean = false,
+    val resources: List<Pair<String, String>> = emptyList(),
+    val resourceSampling: Boolean = false,
 )

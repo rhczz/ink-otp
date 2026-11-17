@@ -42,7 +42,7 @@ fun AboutScreen(onBack: () -> Unit) {
             )
             Spacer(Modifier.height(AppTokens.Spacing.m))
             Text(text = "InkOTP", style = AppType.title, color = colors.ink)
-            Text(text = "0.1.0 · M2", style = AppType.caption, color = colors.inkSecondary)
+            Text(text = "${io.github.rhczz.inkotp.BuildConfig.VERSION_NAME} · 内测版", style = AppType.caption, color = colors.inkSecondary)
             Spacer(Modifier.height(AppTokens.Spacing.l))
             Text(
                 text = "完全离线的两步验证器。不申请网络权限，不收集数据；种子只以密文落盘。",

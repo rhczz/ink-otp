@@ -3,6 +3,9 @@
 .kotlin/
 build/
 local.properties
+local-signing.properties
+.local-signing/
+dist/
 *.apk
 *.aab
 *.jks

@@ -1,190 +1,353 @@
 package io.github.rhczz.inkotp.ui.navigation
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.tween
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import io.github.rhczz.inkotp.ui.components.InkBottomSheet
-import io.github.rhczz.inkotp.ui.demo.DemoData
-import io.github.rhczz.inkotp.ui.model.SettingsUiState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
+import io.github.rhczz.inkotp.BuildConfig
+import io.github.rhczz.inkotp.app.VaultViewModel
+import io.github.rhczz.inkotp.core.backup.MergeConflictPolicy
+import io.github.rhczz.inkotp.core.interchange.InterchangeCodec
+import io.github.rhczz.inkotp.core.interchange.InterchangeFormat
+import io.github.rhczz.inkotp.core.interchange.InterchangeException
+import io.github.rhczz.inkotp.platform.*
+import io.github.rhczz.inkotp.ui.components.*
+import io.github.rhczz.inkotp.ui.model.UnlockUiState
+import io.github.rhczz.inkotp.ui.model.VaultItemUi
 import io.github.rhczz.inkotp.ui.model.VaultListUiState
-import io.github.rhczz.inkotp.ui.screens.AboutScreen
-import io.github.rhczz.inkotp.ui.screens.AddSheetContent
-import io.github.rhczz.inkotp.ui.screens.DiagnosticsScreen
-import io.github.rhczz.inkotp.ui.screens.ItemDetailScreen
-import io.github.rhczz.inkotp.ui.screens.ManualAddScreen
-import io.github.rhczz.inkotp.ui.screens.OnboardingScreen
-import io.github.rhczz.inkotp.ui.screens.ScanPlaceholderScreen
-import io.github.rhczz.inkotp.ui.screens.SettingsScreen
-import io.github.rhczz.inkotp.ui.screens.UnlockScreen
-import io.github.rhczz.inkotp.ui.screens.VaultListScreen
+import io.github.rhczz.inkotp.ui.screens.*
 import io.github.rhczz.inkotp.ui.theme.AppTokens
+import io.github.rhczz.inkotp.ui.theme.AppType
+import io.github.rhczz.inkotp.ui.theme.LocalInkColors
+import java.time.LocalDate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-sealed interface Screen {
-    data object Unlock : Screen
-    data object Onboarding : Screen
-    data object List : Screen
-    data object Detail : Screen
-    data object ManualAdd : Screen
-    data object Scan : Screen
-    data object Settings : Screen
-    data object Diagnostics : Screen
-    data object About : Screen
-}
+private enum class Screen { List, Detail, ManualAdd, Scan, Settings, Diagnostics, About }
+private enum class PasswordTask { Change, Export, Import }
 
 @Composable
-fun InkApp() {
-    var screen by remember { mutableStateOf<Screen>(Screen.Unlock) }
-    val backStack = remember { mutableStateListOf<Screen>() }
-    var onboardingPage by remember { mutableStateOf(0) }
-    var listState by remember { mutableStateOf<VaultListUiState>(DemoData.listState) }
-    var settingsState by remember { mutableStateOf<SettingsUiState>(DemoData.settingsState) }
-    var showAddSheet by remember { mutableStateOf(false) }
-    var selectedItem by remember { mutableStateOf(DemoData.items.first()) }
+fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Boolean) {
+    val session = viewModel.state
+    val sessionToken = viewModel.sessionToken
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val colors = LocalInkColors.current
+    var screen by remember { mutableStateOf(Screen.List) }
+    val stack = remember { mutableStateListOf<Screen>() }
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    var query by remember { mutableStateOf("") }
+    var addSheet by remember { mutableStateOf(false) }
+    var setup by rememberSaveable { mutableStateOf(false) }
+    var setupPage by rememberSaveable { mutableStateOf(0) }
+    var skipPassword by remember { mutableStateOf(false) }
+    var passwordTask by remember { mutableStateOf<PasswordTask?>(null) }
+    var scannedInput by remember { mutableStateOf("") }
+    var importUri by remember { mutableStateOf<Uri?>(null) }
+    var exportPickerToken by rememberSaveable { mutableStateOf<Long?>(null) }
+    var importPickerToken by rememberSaveable { mutableStateOf<Long?>(null) }
+    var imagePickerToken by rememberSaveable { mutableStateOf<Long?>(null) }
+    var fileBusy by remember { mutableStateOf(false) }
+    var fileJob by remember { mutableStateOf<Job?>(null) }
+    var fileRequest by remember { mutableLongStateOf(0L) }
+    var observedSessionToken by remember { mutableLongStateOf(sessionToken) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var replaceConfirm by remember { mutableStateOf(false) }
+    var chooseExportFormat by remember { mutableStateOf(false) }
+    var exportFormat by remember { mutableStateOf(InterchangeFormat.AEGIS_ENCRYPTED) }
+    var importFormat by remember { mutableStateOf<InterchangeFormat?>(null) }
+    var exportReviewToken by rememberSaveable { mutableStateOf<Long?>(null) }
 
-    fun navigate(next: Screen) {
-        backStack.add(screen)
-        screen = next
+    fun cancelFileOperation() {
+        fileRequest++
+        fileJob?.cancel()
+        fileJob = null
+        fileBusy = false
     }
-
-    fun back() {
-        if (backStack.isNotEmpty()) {
-            screen = backStack.removeAt(backStack.lastIndex)
+    fun launchFileOperation(token: Long, failure: String, cleanup: () -> Unit = {}, operation: suspend () -> Unit) {
+        if (!viewModel.isCurrentSession(token)) { cleanup(); return }
+        cancelFileOperation()
+        val request = ++fileRequest
+        fileBusy = true
+        fileJob = scope.launch {
+            try { operation() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (viewModel.isCurrentSession(token)) viewModel.report(if (error is QrImageReadException || error is InterchangeException) error.message ?: failure else failure)
+            } finally {
+                if (fileRequest == request) { fileBusy = false; fileJob = null }
+            }
+        }.also { job -> job.invokeOnCompletion { cleanup() } }
+    }
+    fun navigate(next: Screen) { stack.add(screen); screen = next }
+    fun back() { cancelFileOperation(); scannedInput = ""; screen = if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) else Screen.List }
+    fun copy(item: VaultItemUi) {
+        if (item.type == "totp" && viewModel.isCurrentSession(sessionToken)) security.copyCode(item.code, viewModel.state.settings.clipboardClearSeconds)
+    }
+    fun requirePassword(action: () -> Unit) {
+        if (!viewModel.isCurrentSession(sessionToken)) return
+        if (viewModel.state.passwordSet) action() else {
+            viewModel.report("请先设置恢复口令，才能备份或恢复账号")
+            passwordTask = PasswordTask.Change
+        }
+    }
+    val createBackup = rememberLauncherForActivityResult(ExportDocumentContract()) { uri ->
+        val token = exportPickerToken
+        exportPickerToken = null
+        val accepted = token != null && viewModel.endPicker(token)
+        val ticket = if (accepted) viewModel.takeExport(token!!) else null
+        if (uri != null && ticket != null) {
+            launchFileOperation(ticket.sessionToken, "备份未能写入，请检查保存位置和空间后重试", cleanup = { ticket.bytes.fill(0) }) {
+                BackupFiles.write(context, uri, ticket.bytes)
+                if (viewModel.backupWritten(ticket)) {
+                    message = if (ticket.format.plaintext) "明文迁移文件已保存。它包含可读取的账号密钥，请妥善管理并在迁移后自行清理不需要的副本。"
+                        else "${ticket.format.displayName()}已保存，可用当前恢复口令打开。"
+                }
+            }
+        } else {
+            ticket?.bytes?.fill(0)
+            token?.let(viewModel::discardExport)
+            if (uri != null) viewModel.report("这次导出已失效，文件尚未写入。请解锁后重新导出备份。")
+        }
+    }
+    fun launchExport(token: Long) {
+        val description = viewModel.describeExport(token)
+        if (description == null) { viewModel.report("导出已失效，请重新操作"); return }
+        exportReviewToken = null
+        exportPickerToken = viewModel.beginPicker()
+        val filename = "inkotp-${LocalDate.now()}.${description.format.extension.trimStart('.')}"
+        try { createBackup.launch(ExportDocumentRequest(filename, description.format.documentMime())) }
+        catch (_: RuntimeException) {
+            viewModel.endPicker(token); viewModel.discardExport(token); exportPickerToken = null
+            viewModel.report("无法打开系统文件选择器，请检查系统文件应用后重新导出")
         }
     }
 
-    BackHandler(enabled = backStack.isNotEmpty()) { back() }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-    ) {
-        AnimatedContent(
-            targetState = screen,
-            transitionSpec = {
-                (fadeIn(tween(AppTokens.Motion.PAGE_MS)) +
-                    slideInVertically(tween(AppTokens.Motion.PAGE_MS)) { it / 24 })
-                    .togetherWith(fadeOut(tween(AppTokens.Motion.PAGE_MS)))
-            },
-            label = "screen",
-        ) { target ->
-            when (target) {
-                Screen.Unlock -> UnlockScreen(
-                    state = DemoData.unlockState,
-                    onUnlock = {
-                        backStack.clear()
-                        screen = Screen.List
-                    },
-                    onPasswordSubmit = {
-                        backStack.clear()
-                        screen = Screen.List
-                    },
-                )
-
-                Screen.Onboarding -> OnboardingScreen(
-                    page = onboardingPage,
-                    onNext = {
-                        if (onboardingPage < 3) onboardingPage++ else {
-                            backStack.clear()
-                            screen = Screen.List
+    val chooseBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val token = importPickerToken
+        importPickerToken = null
+        val accepted = token != null && viewModel.endPicker(token)
+        if (uri != null) {
+            if (accepted) {
+                launchFileOperation(token!!, "文件无法读取或不是支持的验证器备份") {
+                    val bytes = BackupFiles.read(context, uri)
+                    var transferred = false
+                    try {
+                        val format = withContext(Dispatchers.Default) { InterchangeCodec.detect(bytes) }
+                        if (viewModel.isCurrentSession(token)) {
+                            if (format.requiresPassword) { importUri = uri; importFormat = format; passwordTask = PasswordTask.Import }
+                            else { viewModel.previewImport(bytes, "") { importUri = null; importFormat = null }; transferred = true }
                         }
-                    },
-                    onBack = {
-                        if (onboardingPage > 0) onboardingPage-- else back()
-                    },
-                    onSkipPassword = { onboardingPage = 2 },
-                    onSetPassword = { onboardingPage = 2 },
-                    onEnableBiometric = { onboardingPage = 3 },
-                    onFinish = {
-                        backStack.clear()
-                        screen = Screen.List
-                    },
-                )
-
-                Screen.List -> VaultListScreen(
-                    state = listState,
-                    onQueryChange = { listState = listState.copy(query = it) },
-                    onOpenItem = { selectedItem = it; navigate(Screen.Detail) },
-                    onAdd = { showAddSheet = true },
-                    onSettings = { navigate(Screen.Settings) },
-                    onOpenDiagnostics = { navigate(Screen.Diagnostics) },
-                )
-
-                Screen.Detail -> ItemDetailScreen(
-                    item = selectedItem,
-                    secretBase32 = DemoData.detailState.secretBase32,
-                    onBack = { back() },
-                    onDelete = { back() },
-                    onSave = { _, _ -> back() },
-                )
-
-                Screen.ManualAdd -> ManualAddScreen(
-                    onBack = { back() },
-                    onSave = { _, _, _ -> back() },
-                )
-
-                Screen.Scan -> ScanPlaceholderScreen(
-                    onBack = { back() },
-                    onManual = { navigate(Screen.ManualAdd) },
-                )
-
-                Screen.Settings -> SettingsScreen(
-                    state = settingsState,
-                    onBack = { back() },
-                    onBiometricChange = { settingsState = settingsState.copy(biometricEnabled = it) },
-                    onLockTimeoutChange = { settingsState = settingsState.copy(lockTimeoutSeconds = it) },
-                    onHideCodesChange = { settingsState = settingsState.copy(hideCodesByDefault = it) },
-                    onClipboardChange = { settingsState = settingsState.copy(clipboardClearSeconds = it) },
-                    onDiagnostics = { navigate(Screen.Diagnostics) },
-                    onAbout = { navigate(Screen.About) },
-                    onOnboarding = {
-                        onboardingPage = 0
-                        navigate(Screen.Onboarding)
-                    },
-                )
-
-                Screen.Diagnostics -> DiagnosticsScreen(
-                    state = DemoData.diagnosticsState,
-                    onBack = { back() },
-                    onRefresh = {},
-                )
-
-                Screen.About -> AboutScreen(onBack = { back() })
-            }
-        }
-
-        if (showAddSheet) {
-            InkBottomSheet(onDismiss = { showAddSheet = false }) {
-                AddSheetContent(
-                    onScan = {
-                        showAddSheet = false
-                        navigate(Screen.Scan)
-                    },
-                    onGallery = {
-                        showAddSheet = false
-                        navigate(Screen.ManualAdd)
-                    },
-                    onManual = {
-                        showAddSheet = false
-                        navigate(Screen.ManualAdd)
-                    },
-                )
-            }
+                    } finally { if (!transferred) bytes.fill(0) }
+                }
+            } else viewModel.report("库已锁定，请解锁后重新选择备份")
         }
     }
+    val chooseImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val token = imagePickerToken
+        imagePickerToken = null
+        val accepted = token != null && viewModel.endPicker(token)
+        if (uri != null && accepted) {
+            launchFileOperation(token!!, "图片无法读取，请重新选择或手动输入") {
+                val input = readQrImage(context, uri)
+                if (viewModel.isCurrentSession(token)) { scannedInput = input; navigate(Screen.ManualAdd) }
+            }
+        } else if (uri != null) viewModel.report("这次图片选择已失效，请解锁后重新选择")
+    }
+    fun gallery() {
+        if (!viewModel.isCurrentSession(sessionToken)) return
+        val token = viewModel.beginPicker()
+        imagePickerToken = token
+        try { chooseImage.launch("image/*") }
+        catch (_: RuntimeException) { viewModel.endPicker(token); imagePickerToken = null; viewModel.report("无法打开系统图片选择器，请使用手动输入") }
+    }
+    fun importBackup() = requirePassword {
+        val token = viewModel.beginPicker()
+        importPickerToken = token
+        try { chooseBackup.launch(arrayOf("*/*")) }
+        catch (_: RuntimeException) {
+            viewModel.endPicker(token); importPickerToken = null; viewModel.report("无法打开系统文件选择器，请检查系统文件应用")
+        }
+    }
+
+    LaunchedEffect(session.ready, session.exists, session.unlocked, session.passwordSet, setup, setupPage) {
+        if (session.ready && !session.exists) setup = true
+        if (session.ready && session.exists && !session.unlocked) setup = false
+        if (session.unlocked && session.exists && setup && setupPage < 2) setupPage = if (session.passwordSet) 2 else 3
+    }
+    LaunchedEffect(sessionToken, session.unlocked, session.biometricEnabled, session.clearClipboardOnLock, session.systemAuthenticationRequired) {
+        if (session.biometricEnabled && setupPage == 2) setupPage = 3
+        if (observedSessionToken != sessionToken || !session.unlocked) {
+            if (session.clearClipboardOnLock) security.clearClipboard()
+            cancelFileOperation()
+            stack.clear(); screen = Screen.List; selectedId = null; query = ""; addSheet = false
+            scannedInput = ""; passwordTask = null; importUri = null; importFormat = null; replaceConfirm = false; chooseExportFormat = false; exportReviewToken = null
+            exportPickerToken = null; importPickerToken = null; imagePickerToken = null
+            observedSessionToken = sessionToken
+        }
+    }
+    LaunchedEffect(foreground, session.ready, session.busy, session.unlocked, session.systemAuthenticationRequired, sessionToken) {
+        if (foreground && session.ready && !session.busy && !session.unlocked && session.systemAuthenticationRequired) {
+            viewModel.requestAutomaticSystemAuthentication(security)
+        }
+    }
+
+    val secure = !BuildConfig.DEBUG || passwordTask != null || screen == Screen.ManualAdd || setup || !session.unlocked
+    DisposableEffect(secure, security) {
+        security.secureScreen(secure)
+        onDispose { security.secureScreen(!BuildConfig.DEBUG) }
+    }
+    DisposableEffect(Unit) { onDispose { fileRequest++; fileJob?.cancel() } }
+    BackHandler(enabled = session.unlocked && !setup && stack.isNotEmpty() && !session.busy) { back() }
+
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        when {
+            !session.ready -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = colors.accent) }
+            setup && (!session.exists || session.unlocked) -> OnboardingScreen(page = setupPage,
+                onNext = { setupPage = if (setupPage == 0) 1 else 3 },
+                onBack = if (setupPage == 1 && !session.exists) ({ setupPage = 0 }) else null,
+                onSkipPassword = { skipPassword = true }, onSetPassword = viewModel::initialize,
+                onEnableBiometric = { viewModel.biometric(true, security) },
+                onFinish = { setup = false; screen = Screen.List },
+                onScan = { setup = false; screen = Screen.Scan }, onManual = { setup = false; screen = Screen.ManualAdd },
+                passwordSet = session.passwordSet, biometricAvailable = security.canUseBiometrics())
+            !session.unlocked -> UnlockScreen(
+                state = UnlockUiState(error = session.error, biometricAvailable = session.biometricEnabled && security.canUseBiometrics(), degraded = !session.passwordSet,
+                    systemAuthenticationRequired = session.systemAuthenticationRequired, systemRecoveryRequired = session.systemRecoveryRequired),
+                onUnlock = { viewModel.unlock(security) }, onPasswordSubmit = { viewModel.unlockPassword(it, security) })
+            else -> when (screen) {
+                Screen.List -> VaultListScreen(
+                    state = VaultListUiState(items = session.items, query = query, backupReminder = session.backupReminder, clockWarning = session.clockWarning, passwordWarning = !session.passwordSet),
+                    onQueryChange = { query = it }, onOpenItem = { selectedId = it.id; navigate(Screen.Detail) }, onAdd = { addSheet = true },
+                    onSettings = { navigate(Screen.Settings) }, onOpenDiagnostics = { navigate(Screen.Diagnostics) }, onCopy = ::copy,
+                    onLock = { security.clearClipboard(); viewModel.lock() })
+                Screen.Detail -> {
+                    val item = session.items.firstOrNull { it.id == selectedId }
+                    if (item == null) LaunchedEffect(Unit) { back() } else ItemDetailScreen(item = item, secretBase32 = "", onBack = ::back,
+                        onDelete = { viewModel.delete(item.id, ::back) }, onSave = { issuer, account -> viewModel.edit(item.id, issuer, account, ::back) },
+                        onCopy = { copy(item) }, onMoveUp = { viewModel.move(item.id, -1) }, onMoveDown = { viewModel.move(item.id, 1) })
+                }
+                Screen.ManualAdd -> ManualAddScreen(onBack = ::back, initialInput = scannedInput,
+                    onSave = { issuer, account, input -> viewModel.add(issuer, account, input) { scannedInput = ""; stack.clear(); screen = Screen.List } })
+                Screen.Scan -> ScanScreen(onBack = ::back, onDetected = { scannedInput = it; screen = Screen.ManualAdd },
+                    onGallery = ::gallery, onManual = { scannedInput = ""; screen = Screen.ManualAdd })
+                Screen.Settings -> SettingsScreen(state = session.settings, onBack = ::back,
+                    onBiometricChange = { viewModel.biometric(it, security) },
+                    onSystemAuthenticationChange = { viewModel.systemAuthentication(it, security) },
+                    onLockTimeoutChange = { seconds -> viewModel.settings { it.copy(lockTimeoutSeconds = seconds) } },
+                    onHideCodesChange = { hidden -> viewModel.settings { it.copy(hideCodesByDefault = hidden) } },
+                    onClipboardChange = { seconds -> viewModel.settings { it.copy(clipboardClearSeconds = seconds) } },
+                    onDiagnostics = { navigate(Screen.Diagnostics) }, onAbout = { navigate(Screen.About) },
+                    onOnboarding = { message = "添加账号可使用列表右下角的加号。设置恢复口令后可导出加密备份，换机时先创建本机库，再从设置中导入。" },
+                    onPassword = { passwordTask = PasswordTask.Change }, onExport = { requirePassword { chooseExportFormat = true } }, onImport = ::importBackup,
+                    onLock = { security.clearClipboard(); viewModel.lock() })
+                Screen.Diagnostics -> DiagnosticsScreen(state = viewModel.diagnostics(), onBack = ::back, onRefresh = viewModel::refreshClock)
+                Screen.About -> AboutScreen(onBack = ::back)
+            }
+        }
+        if (addSheet && session.unlocked) InkBottomSheet(onDismiss = { addSheet = false }) {
+            AddSheetContent(onScan = { addSheet = false; navigate(Screen.Scan) }, onGallery = { addSheet = false; gallery() },
+                onManual = { addSheet = false; scannedInput = ""; navigate(Screen.ManualAdd) })
+        }
+        if (!foreground) Box(Modifier.fillMaxSize().background(colors.surface))
+        if (session.busy || fileBusy) Box(Modifier.fillMaxSize().background(colors.scrim)
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
+            contentAlignment = Alignment.Center) { CircularProgressIndicator(color = colors.accent) }
+    }
+    if (foreground && skipPassword) InkConfirmDialog("暂不设置恢复口令？", "这台设备仍会加密保存账号，但换机或重装将无法恢复。你可以稍后在设置中补设恢复口令。", "暂时跳过",
+        { skipPassword = false; viewModel.initialize(null) }, { skipPassword = false })
+    if (foreground) passwordTask?.let { task ->
+        VaultPasswordDialog(
+            title = when (task) { PasswordTask.Change -> if (session.passwordSet) "修改恢复口令" else "设置恢复口令"; PasswordTask.Export -> if (exportFormat.plaintext) "导出迁移文件" else "导出加密备份"; PasswordTask.Import -> "打开加密备份" },
+            message = when (task) {
+                PasswordTask.Change -> "口令至少 8 个字符，建议使用较长短语。修改不会更新旧备份，旧备份仍使用原口令。"
+                PasswordTask.Export -> "所选格式：${exportFormat.displayName()}。请输入本机当前恢复口令，验证后准备导出。"
+                PasswordTask.Import -> "已识别：${importFormat?.displayName() ?: "验证器备份"}。请输入该文件的备份密码；本机当前恢复口令保持不变。"
+            }, requireCurrent = task == PasswordTask.Change && session.passwordSet,
+            newPassword = task == PasswordTask.Change, busy = session.busy || fileBusy,
+            onDismiss = { if (!session.busy && !fileBusy) { passwordTask = null; importUri = null } },
+            onConfirm = { current, password -> when (task) {
+                PasswordTask.Change -> viewModel.setPassword(current, password) { passwordTask = null; message = "恢复口令已更新。旧备份仍使用原来的口令，建议重新导出备份。" }
+                PasswordTask.Export -> viewModel.export(password, exportFormat) { token ->
+                    if (!viewModel.isCurrentSession(token)) { viewModel.discardExport(token); return@export }
+                    passwordTask = null
+                    val description = viewModel.describeExport(token)
+                    if (description?.warnings?.isNotEmpty() == true) exportReviewToken = token else launchExport(token)
+                }
+                PasswordTask.Import -> {
+                    val uri = importUri
+                    if (uri != null) {
+                        val token = sessionToken
+                        launchFileOperation(token, "备份无法读取或超过 12 MiB，请重新选择文件") {
+                            val bytes = BackupFiles.read(context, uri)
+                            if (viewModel.isCurrentSession(token)) {
+                                viewModel.previewImport(bytes, password) { passwordTask = null; importUri = null; importFormat = null }
+                            } else bytes.fill(0)
+                        }
+                    }
+                }
+            } })
+    }
+    if (foreground && chooseExportFormat && session.unlocked) BackupFormatDialog(
+        onConfirm = { format -> exportFormat = format; chooseExportFormat = false; passwordTask = PasswordTask.Export },
+        onDismiss = { chooseExportFormat = false },
+    )
+    exportReviewToken?.let { token ->
+        val description = viewModel.describeExport(token)
+        if (foreground && description != null) InkConfirmDialog(
+            title = if (description.format.plaintext) "导出含明文密钥的迁移文件？" else "确认备份兼容性",
+            message = description.warnings.joinToString("\n\n"),
+            confirmText = "了解并导出", onConfirm = { launchExport(token) },
+            onDismiss = { exportReviewToken = null; viewModel.discardExport(token) },
+        )
+    }
+
+    if (foreground && session.importNames != null) AlertDialog(
+        onDismissRequest = { if (!session.busy) viewModel.cancelImport() }, properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
+        shape = RoundedCornerShape(AppTokens.Radius.sheet), containerColor = colors.surface,
+        title = { Text("导入 ${session.importNames.size} 个账号", style = AppType.section) },
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+            Text("${session.importConflicts} 个账号与本机重复。合并保留本机设置和恢复口令。", style = AppType.body)
+            session.importFormat?.let { name ->
+                Text("格式：${runCatching { InterchangeFormat.valueOf(name).displayName() }.getOrDefault(name)}", style = AppType.caption)
+            }
+            session.importWarnings.forEach { warning ->
+                Spacer(Modifier.height(AppTokens.Spacing.s))
+                Text(warning, style = AppType.caption, color = colors.warning)
+            }
+            Spacer(Modifier.height(AppTokens.Spacing.m))
+            session.importNames.take(50).forEach { Text(it, style = AppType.caption) }
+            if (session.importNames.size > 50) Text("其余 ${session.importNames.size - 50} 个账号也将导入", style = AppType.caption)
+            Spacer(Modifier.height(AppTokens.Spacing.l))
+            InkPrimaryButton("合并，重复时保留本机", { viewModel.confirmImport(MergeConflictPolicy.KEEP_LOCAL, false) }, enabled = !session.busy)
+            InkSecondaryButton("合并，重复时使用备份", { viewModel.confirmImport(MergeConflictPolicy.OVERWRITE_LOCAL, false) }, enabled = !session.busy)
+            InkSecondaryButton("合并，重复时两个都保留", { viewModel.confirmImport(MergeConflictPolicy.KEEP_BOTH, false) }, enabled = !session.busy)
+            InkSecondaryButton("替换本机全部账号…", { replaceConfirm = true }, enabled = !session.busy)
+        } }, confirmButton = {}, dismissButton = { TextButton(enabled = !session.busy, onClick = viewModel::cancelImport) { Text("取消") } })
+    if (foreground && replaceConfirm) InkConfirmDialog("替换本机全部账号？", "本机现有账号将被这份备份替换。建议先导出本机备份。", "替换",
+        { replaceConfirm = false; viewModel.confirmImport(MergeConflictPolicy.KEEP_LOCAL, true) }, { replaceConfirm = false }, destructive = true)
+    val alert = session.error ?: session.notice ?: message
+    if (foreground && alert != null && (session.unlocked || setup || message != null)) AlertDialog(
+        onDismissRequest = { viewModel.clearError(); viewModel.clearNotice(); message = null },
+        containerColor = colors.surface, shape = RoundedCornerShape(AppTokens.Radius.sheet),
+        title = { Text(if (session.error != null) "操作未完成" else "提示", style = AppType.section) },
+        text = { Text(alert, style = AppType.body) },
+        confirmButton = { TextButton(onClick = { viewModel.clearError(); viewModel.clearNotice(); message = null }) { Text("知道了") } })
 }

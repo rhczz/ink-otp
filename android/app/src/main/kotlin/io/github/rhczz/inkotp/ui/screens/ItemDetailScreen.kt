@@ -18,7 +18,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import io.github.rhczz.inkotp.R
 import io.github.rhczz.inkotp.ui.components.AppTextField
@@ -27,7 +26,6 @@ import io.github.rhczz.inkotp.ui.components.CountdownLabel
 import io.github.rhczz.inkotp.ui.components.InkCard
 import io.github.rhczz.inkotp.ui.components.InkConfirmDialog
 import io.github.rhczz.inkotp.ui.components.InkDivider
-import io.github.rhczz.inkotp.ui.components.InkIcon
 import io.github.rhczz.inkotp.ui.components.InkIconButton
 import io.github.rhczz.inkotp.ui.components.InkPrimaryButton
 import io.github.rhczz.inkotp.ui.components.InkSecondaryButton
@@ -38,7 +36,6 @@ import io.github.rhczz.inkotp.ui.model.VaultItemUi
 import io.github.rhczz.inkotp.ui.theme.AppTokens
 import io.github.rhczz.inkotp.ui.theme.AppType
 import io.github.rhczz.inkotp.ui.theme.LocalInkColors
-import kotlinx.coroutines.delay
 
 @Composable
 fun ItemDetailScreen(
@@ -47,19 +44,23 @@ fun ItemDetailScreen(
     onBack: () -> Unit,
     onDelete: () -> Unit,
     onSave: (issuer: String, account: String) -> Unit,
+    onCopy: () -> Unit = {},
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {},
 ) {
     val colors = LocalInkColors.current
-    var editing by remember { mutableStateOf(false) }
-    var issuer by remember { mutableStateOf(item.issuer.orEmpty()) }
-    var account by remember { mutableStateOf(item.accountName) }
-    var showSecret by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
+    val isHotp = item.type == "hotp"
+    var editing by remember(item.id) { mutableStateOf(false) }
+    var issuer by remember(item.id, item.issuer) { mutableStateOf(item.issuer.orEmpty()) }
+    var account by remember(item.id, item.accountName) { mutableStateOf(item.accountName) }
+    var revealed by remember(item.id, item.code, item.period, item.hidden) { mutableStateOf(false) }
+    var previousRemaining by remember(item.id) { mutableStateOf(item.remainingSeconds) }
+    var confirmDelete by remember(item.id) { mutableStateOf(false) }
 
-    LaunchedEffect(showSecret) {
-        if (showSecret) {
-            delay(10_000)
-            showSecret = false
-        }
+    LaunchedEffect(item.remainingSeconds) {
+        // Two adjacent periods can produce the same code; a countdown reset must still hide it.
+        if (item.remainingSeconds > previousRemaining) revealed = false
+        previousRemaining = item.remainingSeconds
     }
 
     ScreenScaffold(
@@ -88,7 +89,7 @@ fun ItemDetailScreen(
                 .padding(bottom = AppTokens.Size.bottomContentPadding),
         ) {
             Spacer(Modifier.height(AppTokens.Spacing.l))
-            InkCard {
+            InkCard(onClick = if (item.hidden && !isHotp) ({ revealed = !revealed }) else null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -106,16 +107,34 @@ fun ItemDetailScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    CountdownLabel(remainingSeconds = item.remainingSeconds, period = item.period)
+                    if (!isHotp) {
+                        CountdownLabel(remainingSeconds = item.remainingSeconds, period = item.period)
+                    }
                 }
                 Spacer(Modifier.height(AppTokens.Spacing.m))
-                CodeText(
-                    code = item.code,
-                    digits = item.digits,
-                    hidden = item.hidden,
-                    style = AppType.codeDetail,
-                    color = colors.ink,
-                )
+                if (isHotp) {
+                    Text(
+                        text = "此版本暂不生成 HOTP 验证码，账号信息会保留。",
+                        style = AppType.body,
+                        color = colors.inkSecondary,
+                    )
+                } else {
+                    CodeText(
+                        code = item.code,
+                        digits = item.digits,
+                        hidden = item.hidden && !revealed,
+                        style = AppType.codeDetail,
+                        color = colors.ink,
+                    )
+                    if (item.hidden) {
+                        Text(
+                            text = if (revealed) "本轮验证码已显示，更新后自动隐藏" else "轻触显示本轮验证码",
+                            style = AppType.caption,
+                            color = colors.inkSecondary,
+                            modifier = Modifier.padding(top = AppTokens.Spacing.s),
+                        )
+                    }
+                }
             }
 
             if (editing) {
@@ -141,42 +160,21 @@ fun ItemDetailScreen(
                 InkDivider()
                 DetailRow(label = "类型", value = if (item.type == "hotp") "HOTP" else "TOTP")
                 InkDivider()
-                DetailRow(label = "算法", value = "SHA1")
+                DetailRow(label = "算法", value = item.algorithm)
                 InkDivider()
                 DetailRow(label = "位数", value = "${item.digits} 位")
-                InkDivider()
-                DetailRow(label = "周期", value = "${item.period} 秒")
-
-                SectionHeader("密钥")
-                InkCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = if (showSecret) secretBase32 else "•••• •••• •••• ••••",
-                            style = AppType.body.copy(
-                                fontFeatureSettings = "tnum",
-                                fontWeight = FontWeight.Medium,
-                            ),
-                            color = colors.ink,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        InkTextButton(
-                            text = if (showSecret) "隐藏" else "显示",
-                            onClick = { showSecret = !showSecret },
-                        )
-                    }
-                    if (showSecret) {
-                        Text(
-                            text = "10 秒后自动隐藏；请勿截图或分享。",
-                            style = AppType.caption,
-                            color = colors.inkSecondary,
-                            modifier = Modifier.padding(top = AppTokens.Spacing.xs),
-                        )
-                    }
+                if (!isHotp) {
+                    InkDivider()
+                    DetailRow(label = "周期", value = "${item.period} 秒")
                 }
 
                 SectionHeader("操作")
+                InkPrimaryButton(text = "复制验证码", onClick = onCopy, enabled = !isHotp)
+                Spacer(Modifier.height(AppTokens.Spacing.s))
+                InkSecondaryButton(text = "向上移动", onClick = onMoveUp)
+                Spacer(Modifier.height(AppTokens.Spacing.s))
+                InkSecondaryButton(text = "向下移动", onClick = onMoveDown)
+                Spacer(Modifier.height(AppTokens.Spacing.s))
                 InkTextButton(
                     text = "删除此账号",
                     onClick = { confirmDelete = true },
