@@ -51,7 +51,7 @@
 
 ## 安装包与仍需手机验证的范围
 
-本地交付 `dist/InkOTP-0.4.1-beta.1.apk`，3,118,754 字节，SHA-256：
+最初本地交付的 APK 为 3,118,754 字节，现保留于 `dist/local-0.4.1-beta.1/InkOTP-0.4.1-beta.1.apk`，SHA-256：
 
 ```text
 ddc552b3eb0815876cd3f551fb03b4e00da00e9519c26b291cca7980fae90255
@@ -59,8 +59,8 @@ ddc552b3eb0815876cd3f551fb03b4e00da00e9519c26b291cca7980fae90255
 
 公开签名证书 SHA-256 与 0.4.0 一致，为 `f1e8211a3f245bed886a048f8088b16be229072dcf77b65981e6ca5dcf642589`。versionCode 从 3 升至 4，数据格式和旧备份用例保持不变；这是覆盖升级的静态/自动检查依据，实际保留手机数据的安装升级仍未验证。不要卸载后再安装来代替升级测试。
 
-`dist/local-0.4.1-beta.1/` 包含 APK、SHA256SUMS、build-info.json 和 release-notes.md；构建说明明确标记本地工作区构建，未创建 tag、未推送或发布 GitHub Release。完整本地门禁证据在 `android/build/reports/phone-feedback-quality.json`。签名配置和私钥没有提交或分发。
+`dist/local-0.4.1-beta.1/` 包含首次本地交付的 APK、SHA256SUMS、build-info.json 和 release-notes.md；构建说明明确标记本地工作区构建，彼时尚未创建 tag 或发布 GitHub Release。完整本地门禁证据在 `android/build/reports/phone-feedback-quality.json`。签名配置和私钥没有提交或分发。
 
-交付后用户询问 0.4.1 是否已发布，已只读复核远端：GitHub Release 列表和 `v0.4*` tag 均只有 `v0.4.0-beta.1`，没有 0.4.1 正式、预发布或草稿 Release。本轮修复仍在本地工作区，尚未提交推送，因此没有触发 tag 发布流程。
+交付后用户询问 0.4.1 是否已发布，当时只读复核远端只有 `v0.4.0-beta.1`，修复尚未提交推送。用户随后明确要求发布，现已完成远端 CI、固定签名、GitHub Release 和下载复核，见 [0.4.1 发布记录](2026-11-17-release-0.4.1.md)。`dist/InkOTP-0.4.1-beta.1.apk` 通用入口已同步为实际公开文件，最终哈希以发布记录及其 SHA256SUMS 为准。
 
 未验证：真机原生指纹样式、失败触觉与 Keystore 硬件授权、厂商兼容、连续点击帧连续性、后台返回、相册取消/选图、保留已有账号的覆盖升级和真实手机性能。系统成功授权在本地测试中有模拟部分，不能当作硬件验收。已同步 [手机专项清单](../testing/m4-phone-test.md)，等待用户安装反馈；M3/M4 真机专项未标记完成。
