@@ -11,7 +11,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,15 +52,7 @@ fun ItemDetailScreen(
     var editing by remember(item.id) { mutableStateOf(false) }
     var issuer by remember(item.id, item.issuer) { mutableStateOf(item.issuer.orEmpty()) }
     var account by remember(item.id, item.accountName) { mutableStateOf(item.accountName) }
-    var revealed by remember(item.id, item.code, item.period, item.hidden) { mutableStateOf(false) }
-    var previousRemaining by remember(item.id) { mutableStateOf(item.remainingSeconds) }
     var confirmDelete by remember(item.id) { mutableStateOf(false) }
-
-    LaunchedEffect(item.remainingSeconds) {
-        // Two adjacent periods can produce the same code; a countdown reset must still hide it.
-        if (item.remainingSeconds > previousRemaining) revealed = false
-        previousRemaining = item.remainingSeconds
-    }
 
     ScreenScaffold(
         title = "条目详情",
@@ -89,7 +80,7 @@ fun ItemDetailScreen(
                 .padding(bottom = AppTokens.Size.bottomContentPadding),
         ) {
             Spacer(Modifier.height(AppTokens.Spacing.l))
-            InkCard(onClick = if (item.hidden && !isHotp) ({ revealed = !revealed }) else null) {
+            InkCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -122,18 +113,10 @@ fun ItemDetailScreen(
                     CodeText(
                         code = item.code,
                         digits = item.digits,
-                        hidden = item.hidden && !revealed,
+                        hidden = item.hidden,
                         style = AppType.codeDetail,
                         color = if (item.remainingSeconds <= 5) colors.warning else colors.ink,
                     )
-                    if (item.hidden) {
-                        Text(
-                            text = if (revealed) "本轮验证码已显示，更新后自动隐藏" else "轻触显示本轮验证码",
-                            style = AppType.caption,
-                            color = colors.inkSecondary,
-                            modifier = Modifier.padding(top = AppTokens.Spacing.s),
-                        )
-                    }
                 }
             }
 

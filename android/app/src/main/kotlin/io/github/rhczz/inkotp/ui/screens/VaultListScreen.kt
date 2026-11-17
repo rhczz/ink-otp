@@ -65,7 +65,6 @@ fun VaultListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var searching by remember { mutableStateOf(false) }
     var copiedId by remember { mutableStateOf<String?>(null) }
-    var revealed by remember(state.items.map { it.id to it.code }) { mutableStateOf(setOf<String>()) }
 
     LaunchedEffect(copiedId) {
         if (copiedId != null) {
@@ -164,14 +163,10 @@ fun VaultListScreen(
                     ) {
                         items(items = visibleItems, key = { it.id }) { item ->
                             VaultCodeCard(
-                                item = item.copy(hidden = item.hidden && item.id !in revealed),
+                                item = item,
                                 copied = copiedId == item.id,
                                 onClick = {
                                     if (item.type != "totp") return@VaultCodeCard
-                                    if (item.hidden && item.id !in revealed) {
-                                        revealed = revealed + item.id
-                                        return@VaultCodeCard
-                                    }
                                     onCopy(item)
                                     copiedId = item.id
                                     scope.launch {

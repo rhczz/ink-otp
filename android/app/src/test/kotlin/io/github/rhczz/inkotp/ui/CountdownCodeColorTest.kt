@@ -9,11 +9,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
 import io.github.rhczz.inkotp.ui.components.VaultCodeCard
 import io.github.rhczz.inkotp.ui.components.groupCode
@@ -47,7 +48,7 @@ class CountdownCodeColorTest {
         verifyCountdownColors(detail = true)
 
     @Test
-    fun hiddenCodesStayHiddenAndRevealedDetailsKeepTheExpiryColor() {
+    fun hiddenCodesKeepTheExpiryColorWithoutRevealingDigits() {
         val current = mutableStateOf(Case(item = item(8).copy(hidden = true, remainingSeconds = 6)))
         show { current.value }
 
@@ -58,8 +59,9 @@ class CountdownCodeColorTest {
             assertTextColor(hiddenCode(8), AppTokens.Light.warning)
             compose.onNodeWithText("1234 5678").assertDoesNotExist()
             if (detail) {
-                compose.onNodeWithText("轻触显示本轮验证码").performClick()
-                assertTextColor("1234 5678", AppTokens.Light.warning)
+                compose.onNodeWithText(hiddenCode(8)).performTouchInput { click() }
+                assertTextColor(hiddenCode(8), AppTokens.Light.warning)
+                compose.onNodeWithText("1234 5678").assertDoesNotExist()
             }
             compose.runOnIdle { current.value = current.value.copy(item = current.value.item.copy(remainingSeconds = 30)) }
             assertTextColor(hiddenCode(8), AppTokens.Light.ink)

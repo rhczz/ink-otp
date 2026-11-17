@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onFirst
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
 import io.github.rhczz.inkotp.ui.model.SettingsUiState
 import io.github.rhczz.inkotp.ui.model.VaultItemUi
 import io.github.rhczz.inkotp.ui.screens.ItemDetailScreen
@@ -55,15 +57,15 @@ class M3ScreenInteractionTest {
     }
 
     @Test
-    fun revealedCodeIsHiddenAgainWhenTheCountdownStartsANewPeriod() {
+    fun hiddenCodeStaysHiddenAfterTouchAndWhenTheCountdownStartsANewPeriod() {
         val current = mutableStateOf(item().copy(hidden = true, remainingSeconds = 2))
         showScreen { detail(current.value) }
         compose.onNodeWithContentDescription("验证码已隐藏").assertIsDisplayed()
 
-        compose.onNodeWithText("轻触显示本轮验证码").performClick()
+        compose.onNodeWithContentDescription("验证码已隐藏").performTouchInput { click() }
 
-        compose.onNodeWithText("1234 5678").assertIsDisplayed()
-        compose.onNodeWithContentDescription("验证码已隐藏").assertDoesNotExist()
+        compose.onNodeWithText("1234 5678").assertDoesNotExist()
+        compose.onNodeWithContentDescription("验证码已隐藏").assertIsDisplayed()
 
         // Keep the digits identical: even a rare repeated code must respect the new-period policy.
         compose.runOnIdle { current.value = current.value.copy(remainingSeconds = 30) }

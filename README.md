@@ -11,6 +11,7 @@
 - **M3 内测实现**：已接入真实库、口令/设备密钥、生物识别、账号增删改与排序、真实出码、相机/图片扫码、SAF 备份、自动锁定及剪贴板保护。本机自动验证后交付 APK，由用户安装真机测试；当前不宣称 M3 真机验收完成。
 - **M4 内测完善**：新增每次进入的系统身份验证、Aegis/2FAS/otpauth 双向交换、标准卸载与迁移配置检查、按周期缓存和按需资源诊断。结果见 [M4 记录](docs/changes/2026-11-17-m4-standards-auth-performance.md)，升级与试用见 [M4 手机说明](docs/testing/m4-phone-test.md)。真机性能与各厂商认证行为仍待验证。
 - **0.4.1 手机反馈修复**：系统认证入口、全应用操作进度防闪屏、末五秒验证码颜色及相册权限核查，见 [修复记录](docs/changes/2026-11-17-phone-feedback-fixes.md)。
+- **0.4.2 隐藏复制修复**：隐藏状态下点击复制始终保留圆点和隐藏读屏，认证规则保持既有设置，见 [记录](docs/changes/2026-11-17-hidden-copy-and-device-lock.md)。
 - 每次修改与排查记录在 [docs/changes/](docs/changes/README.md)。本次实现与验证见 [M3 记录](docs/changes/2026-11-17-m3-local-beta.md)，手机安装和测试见 [内测说明](docs/testing/m3-phone-test.md)。
 
 设计文档：[docs/design/2FA验证器-技术设计文档.md](docs/design/2FA验证器-技术设计文档.md)。
