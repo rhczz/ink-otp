@@ -28,3 +28,5 @@ GitHub 连接器确认目标为用户的公开仓库 `rhczz/ink-otp`。SSH 可�
 本地 Python 全部 42 项测试通过，其中质量门禁 12 项、发布工具 23 项、存储配置 7 项。缺失报告、测试失败/跳过、覆盖率不足、APK 超限、ELF 对齐退化、缺失签名材料、错误证书、版本/历史/哈希异常都会受控失败。两份工作流通过 actionlint 1.7.12；只精确忽略它尚未识别、已核对官方文档支持的 concurrency.queue 字段。
 
 完整 App 流程新增口令弹窗与明文迁移确认/取消测试；定位并验证了 Robolectric #8460 的非默认 411dp 测试屏宽与 Dialog 内输入框约束循环，功能回归改用 320dp 后两项通过，生产安全旗标、滚动和字段未因测试改动。完整本地 CI 已通过：core 105 / App 129 项，零失败、错误和跳过；core 行/分支 94.503% / 70.588%，App 79.647% / 53.771%。Debug/Release 构建与 Lint 无 Error/Fatal，未签名通用 APK 3106466 字节，4 ABI / 16 native ELF、16 KiB ZIP 与 LOAD 段、版本与权限均通过。真实 quality-gate.json 的 passed 为 true。远端 CI 和 tag 发布结果在实际执行后补充。
+
+真实本地发布流水线也已通过：读取同一份 CI unsigned APK，按固定证书执行 zipalign → apksigner → 验签 → 哈希/身份/版本检查，生成 `dist/InkOTP-0.4.0-beta.1.apk`，并确认临时私钥文件被清理。此处是本机流水线验证，不是远端 Release 成功证明。
