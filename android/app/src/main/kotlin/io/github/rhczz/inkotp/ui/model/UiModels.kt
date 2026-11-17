@@ -28,6 +28,7 @@ data class UnlockUiState(
     val degraded: Boolean = false,
     val systemAuthenticationRequired: Boolean = false,
     val systemRecoveryRequired: Boolean = false,
+    val recoveryPasswordRequested: Boolean = false,
 )
 
 data class ItemDetailUiState(

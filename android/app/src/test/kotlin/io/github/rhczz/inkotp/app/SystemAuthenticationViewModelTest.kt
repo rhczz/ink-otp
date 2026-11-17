@@ -29,6 +29,9 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 import org.robolectric.shadows.ShadowSystemClock
+import org.robolectric.shadow.api.Shadow
+import org.robolectric.shadows.ShadowBiometricManager
+import org.robolectric.shadows.ShadowBiometricPrompt
 import java.io.IOException
 import java.time.Duration
 import java.util.UUID
@@ -142,7 +145,7 @@ class SystemAuthenticationViewModelTest {
         seedSystemVault()
         val vm = viewModel()
         val security = noLockScreenSecurity()
-        vm.requestAutomaticSystemAuthentication(security)
+        vm.requestAutomaticAuthentication(security)
         pumpUntil("failed OS verification") { !vm.state.busy && vm.state.error != null }
         val attempts = keys.decryptAttempts
         assertEquals(1, attempts)
@@ -150,24 +153,74 @@ class SystemAuthenticationViewModelTest {
         assertNull(repository.model)
 
         // A recreated Activity owns a new helper but the VM remembers this generation's attempt.
-        vm.requestAutomaticSystemAuthentication(noLockScreenSecurity())
+        vm.requestAutomaticAuthentication(noLockScreenSecurity())
         shadowOf(Looper.getMainLooper()).idle()
 
         assertEquals(attempts, keys.decryptAttempts)
         assertFalse(vm.state.unlocked)
     }
 
+    @Test fun ordinaryBiometricModeAutomaticallyRequestsTheSystemPromptOnlyOncePerLockedSession() {
+        seedPasswordVault()
+        runBlocking {
+            repository.unlockPassword(password.toCharArray())
+            repository.enable(repository.prepareEnable())
+            repository.lock()
+        }
+        val vm = viewModel()
+        assertTrue(vm.state.biometricEnabled)
+
+        vm.requestAutomaticAuthentication(noLockScreenSecurity())
+        pumpUntil("ordinary biometric automatic attempt") { keys.decryptAttempts == 1 && !vm.state.busy }
+
+        assertFalse(vm.state.unlocked)
+        assertNotNull(vm.state.error)
+        vm.requestAutomaticAuthentication(noLockScreenSecurity())
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("rotation must not automatically repeat a failed prompt", 1, keys.decryptAttempts)
+
+        vm.unlock(noLockScreenSecurity())
+        pumpUntil("explicit retry remains possible") { keys.decryptAttempts == 2 && !vm.state.busy }
+        assertFalse(vm.state.unlocked)
+    }
+
+    @Test fun negativeSystemButtonPublishesRecoveryIntentWithoutUnlockingOrRepeatingThePrompt() {
+        seedPasswordVault()
+        runBlocking {
+            repository.unlockPassword(password.toCharArray())
+            repository.enable(repository.prepareEnable())
+            repository.lock()
+        }
+        val vm = viewModel()
+        val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup().get()
+        Shadow.extract<ShadowBiometricManager>(activity.getSystemService(android.hardware.biometrics.BiometricManager::class.java)).setCanAuthenticate(true)
+        val security = DeviceSecurity(activity).also(securityServices::add)
+
+        vm.requestAutomaticAuthentication(security)
+        pumpUntil("ordinary system prompt") { ShadowBiometricPrompt.getCurrentPrompt() != null }
+        ShadowBiometricPrompt.authenticateCurrentSessionWithError(androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON, "使用恢复口令")
+        pumpUntil("negative button recovery intent") { !vm.state.busy && vm.state.recoveryPasswordRequested }
+
+        assertFalse(vm.state.unlocked)
+        assertTrue(vm.state.items.isEmpty())
+        assertNull(repository.model)
+        vm.requestAutomaticAuthentication(security)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(1, keys.decryptAttempts)
+        assertNull(ShadowBiometricPrompt.getCurrentPrompt())
+    }
+
     @Test fun aFreshVmDoesNotInheritThePreviousProcessAutomaticAttemptMarker() {
         seedSystemVault()
         val vm = viewModel()
-        vm.requestAutomaticSystemAuthentication(noLockScreenSecurity())
+        vm.requestAutomaticAuthentication(noLockScreenSecurity())
         pumpUntil("first process attempt") { !vm.state.busy && vm.state.error != null }
         store.clear()
         pumpUntil("first process closed") { repository.model == null }
         store = ViewModelStore()
 
         val restarted = viewModel(VaultRepository(files, envelopes, keys, kdfParams = KdfParams(8192, 1, 1)))
-        restarted.requestAutomaticSystemAuthentication(noLockScreenSecurity())
+        restarted.requestAutomaticAuthentication(noLockScreenSecurity())
         pumpUntil("fresh process attempt") { !restarted.state.busy && restarted.state.error != null }
 
         assertEquals(2, keys.decryptAttempts)
@@ -229,6 +282,7 @@ class SystemAuthenticationViewModelTest {
     private fun noLockScreenSecurity(): DeviceSecurity {
         val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup().get()
         shadowOf(activity.getSystemService(KeyguardManager::class.java)).setIsDeviceSecure(false)
+        Shadow.extract<ShadowBiometricManager>(activity.getSystemService(android.hardware.biometrics.BiometricManager::class.java)).setCanAuthenticate(false)
         return DeviceSecurity(activity).also(securityServices::add)
     }
 

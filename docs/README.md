@@ -4,6 +4,8 @@
 
 当前安装与手机验证见 [M4 手机说明](testing/m4-phone-test.md)，备份支持版本及独立验证依据见 [交换规格](../spec/interoperability.md)。
 
+0.4 手机反馈修复见 [系统指纹入口、闪屏与到期颜色](changes/2026-11-17-phone-feedback-fixes.md)，交互回归范围见 [Android 交互契约](../spec/android-interaction.md)。
+
 每次修改、功能开发及问题排查都记录在 [开发与问题记录](changes/README.md)。当前 M3 交付方式和实现计划见 [M3 内测版记录](changes/2026-11-17-m3-local-beta.md)。
 
 | 文档 | 内容 |

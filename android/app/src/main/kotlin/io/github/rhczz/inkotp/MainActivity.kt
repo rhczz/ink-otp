@@ -40,7 +40,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         if (!isChangingConfigurations && ::vault.isInitialized) {
-            if (::security.isInitialized && security.isSystemAuthenticationInProgress) vault.onSystemAuthenticationBackground()
+            if (::security.isInitialized && security.isAuthenticationInProgress) vault.onSystemAuthenticationBackground()
             else vault.onBackground()
         }
         super.onStop()

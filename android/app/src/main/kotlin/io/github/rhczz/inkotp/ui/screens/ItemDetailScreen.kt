@@ -124,7 +124,7 @@ fun ItemDetailScreen(
                         digits = item.digits,
                         hidden = item.hidden && !revealed,
                         style = AppType.codeDetail,
-                        color = colors.ink,
+                        color = if (item.remainingSeconds <= 5) colors.warning else colors.ink,
                     )
                     if (item.hidden) {
                         Text(

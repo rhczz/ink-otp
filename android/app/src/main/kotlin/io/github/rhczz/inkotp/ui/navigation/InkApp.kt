@@ -14,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
@@ -203,9 +202,11 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
             observedSessionToken = sessionToken
         }
     }
-    LaunchedEffect(foreground, session.ready, session.busy, session.unlocked, session.systemAuthenticationRequired, sessionToken) {
-        if (foreground && session.ready && !session.busy && !session.unlocked && session.systemAuthenticationRequired) {
-            viewModel.requestAutomaticSystemAuthentication(security)
+    LaunchedEffect(foreground, session.ready, session.busy, session.unlocked, session.systemAuthenticationRequired,
+        session.biometricEnabled, session.systemRecoveryRequired, sessionToken) {
+        if (foreground && session.ready && !session.busy && !session.unlocked &&
+            (session.systemAuthenticationRequired || session.biometricEnabled)) {
+            viewModel.requestAutomaticAuthentication(security)
         }
     }
 
@@ -230,7 +231,8 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                 passwordSet = session.passwordSet, biometricAvailable = security.canUseBiometrics())
             !session.unlocked -> UnlockScreen(
                 state = UnlockUiState(error = session.error, biometricAvailable = session.biometricEnabled && security.canUseBiometrics(), degraded = !session.passwordSet,
-                    systemAuthenticationRequired = session.systemAuthenticationRequired, systemRecoveryRequired = session.systemRecoveryRequired),
+                    systemAuthenticationRequired = session.systemAuthenticationRequired, systemRecoveryRequired = session.systemRecoveryRequired,
+                    recoveryPasswordRequested = session.recoveryPasswordRequested),
                 onUnlock = { viewModel.unlock(security) }, onPasswordSubmit = { viewModel.unlockPassword(it, security) })
             else -> when (screen) {
                 Screen.List -> VaultListScreen(
@@ -267,9 +269,11 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                 onManual = { addSheet = false; scannedInput = ""; navigate(Screen.ManualAdd) })
         }
         if (!foreground) Box(Modifier.fillMaxSize().background(colors.surface))
-        if (session.busy || fileBusy) Box(Modifier.fillMaxSize().background(colors.scrim)
-            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
-            contentAlignment = Alignment.Center) { CircularProgressIndicator(color = colors.accent) }
+        OperationBusyOverlay(
+            busy = session.busy || fileBusy,
+            operationKey = session.operationId to fileRequest,
+            authenticationInProgress = security.isAuthenticationInProgress || !foreground,
+        )
     }
     if (foreground && skipPassword) InkConfirmDialog("暂不设置恢复口令？", "这台设备仍会加密保存账号，但换机或重装将无法恢复。你可以稍后在设置中补设恢复口令。", "暂时跳过",
         { skipPassword = false; viewModel.initialize(null) }, { skipPassword = false })

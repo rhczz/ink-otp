@@ -53,7 +53,8 @@ class SystemAuthenticationScreenTest {
 
         compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
         compose.onNodeWithText("请输入手机密码", substring = true).assertDoesNotExist()
-        compose.onNodeWithContentDescription("使用系统验证解锁").assertIsDisplayed().performClick()
+        compose.onNodeWithText("使用系统验证").assertIsDisplayed().performClick()
+        compose.onNodeWithText("轻触进行系统验证").assertDoesNotExist()
 
         compose.runOnIdle {
             assertEquals(1, unlocks)
@@ -77,6 +78,27 @@ class SystemAuthenticationScreenTest {
 
         compose.runOnIdle { assertEquals(listOf("a test application recovery phrase"), submitted) }
         compose.onNode(hasSetTextAction()).assertTextEquals("")
+    }
+
+    @Test fun negativeSystemButtonShowsTheRecoveryFormAndRetryCallsTheSystemImmediately() {
+        val state = mutableStateOf(UnlockUiState(biometricAvailable = true))
+        var unlocks = 0
+        showScreen {
+            UnlockScreen(state = state.value, onUnlock = { unlocks++ }, onPasswordSubmit = {})
+        }
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+
+        compose.runOnIdle { state.value = state.value.copy(recoveryPasswordRequested = true) }
+
+        compose.onNodeWithText("恢复口令", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNode(hasSetTextAction()).performTextInput("recovery phrase stays visible")
+        compose.runOnIdle { state.value = state.value.copy(recoveryPasswordRequested = false) }
+        compose.onNodeWithContentDescription("显示密钥").performClick()
+        compose.onNode(hasSetTextAction()).assertTextEquals("recovery phrase stays visible")
+        compose.onNodeWithText("使用系统验证").performClick()
+
+        compose.runOnIdle { assertEquals(1, unlocks) }
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
     }
 
     @Test fun settingsRequireARecoveryPhraseAndSystemPolicyPreventsChangingTheOldLockGrace() {

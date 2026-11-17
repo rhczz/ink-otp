@@ -19,6 +19,9 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -41,9 +44,9 @@ class DeviceSecurity(activity: FragmentActivity) {
     private var activePrompt: BiometricPrompt? = null
     private var activeAuthentication: CancellableContinuation<*>? = null
     private var activeCredentialLauncher: ActivityResultLauncher<Intent>? = null
-    private var systemAuthenticationInProgress = false
     private var closed = false
-    val isSystemAuthenticationInProgress: Boolean get() = systemAuthenticationInProgress
+    var isAuthenticationInProgress by mutableStateOf(false)
+        private set
 
     fun canUseBiometrics(): Boolean = !closed &&
         BiometricManager.from(appContext).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
@@ -57,23 +60,27 @@ class DeviceSecurity(activity: FragmentActivity) {
     }
 
     suspend fun authenticateSystem(request: SystemAuthRequest, title: String): SystemAuthProof =
-        withContext(Dispatchers.Main.immediate) {
+        runAuthentication {
             if (!canUseSystemAuthentication()) throw BiometricAuthenticationException("请先在手机系统设置中启用锁屏 PIN、密码或图案。")
-            if (systemAuthenticationInProgress || activeAuthentication != null) {
-                throw BiometricAuthenticationException("已有身份验证正在进行，请先完成或取消。")
-            }
-            systemAuthenticationInProgress = true
-            try {
-                withTimeout(120_000L) {
-                    if (Build.VERSION.SDK_INT >= 30) {
-                        val cipher = request.cipher ?: throw BiometricAuthenticationException("验证请求已失效，请重新操作。")
-                        SystemAuthProof(request, authenticateCipher(cipher, title, allowCredential = true))
-                    } else confirmDeviceCredential(request, title)
-                }
-            } catch (_: TimeoutCancellationException) {
-                throw BiometricAuthenticationException("系统身份验证已超时，账号仍保持锁定，请重试。", cancelled = true)
-            } finally { systemAuthenticationInProgress = false }
+            if (Build.VERSION.SDK_INT >= 30) {
+                val cipher = request.cipher ?: throw BiometricAuthenticationException("验证请求已失效，请重新操作。")
+                SystemAuthProof(request, authenticateCipher(cipher, title, allowCredential = true))
+            } else confirmDeviceCredential(request, title)
         }
+
+    /** Both OS authentication paths own the same bounded, observable lifecycle exemption. */
+    private suspend fun <T> runAuthentication(operation: suspend () -> T): T = withContext(Dispatchers.Main.immediate) {
+        if (closed) throw BiometricAuthenticationException("页面已关闭，请重新打开后解锁。")
+        if (isAuthenticationInProgress || activeAuthentication != null) {
+            throw BiometricAuthenticationException("已有身份验证正在进行，请先完成或取消。")
+        }
+        isAuthenticationInProgress = true
+        try {
+            withTimeout(120_000L) { operation() }
+        } catch (_: TimeoutCancellationException) {
+            throw BiometricAuthenticationException("系统身份验证已超时，请重试。", cancelled = true)
+        } finally { isAuthenticationInProgress = false }
+    }
 
     @Suppress("DEPRECATION")
     private suspend fun confirmDeviceCredential(request: SystemAuthRequest, title: String): SystemAuthProof =
@@ -117,7 +124,9 @@ class DeviceSecurity(activity: FragmentActivity) {
         }
 
     /** Returns only the Cipher authorized by a successful strong biometric prompt. */
-    suspend fun authenticate(cipher: Cipher, title: String): Cipher = authenticateCipher(cipher, title, allowCredential = false)
+    suspend fun authenticate(cipher: Cipher, title: String): Cipher = runAuthentication {
+        authenticateCipher(cipher, title, allowCredential = false)
+    }
 
     private suspend fun authenticateCipher(cipher: Cipher, title: String, allowCredential: Boolean): Cipher = withContext(Dispatchers.Main.immediate) {
         val host = activity
@@ -145,7 +154,7 @@ class DeviceSecurity(activity: FragmentActivity) {
                     detach()
                     if (!continuation.isActive) return
                     val authorizedCipher = result.cryptoObject?.cipher
-                    if (authorizedCipher == null) {
+                    if (authorizedCipher == null || authorizedCipher !== cipher) {
                         continuation.resumeWithException(
                             BiometricAuthenticationException("认证未授权密钥操作，请使用恢复口令。"),
                         )
@@ -172,6 +181,7 @@ class DeviceSecurity(activity: FragmentActivity) {
                                 "生物识别暂不可用，请使用恢复口令。"
                             },
                             cancelled = cancelled,
+                            recoveryPasswordRequested = !allowCredential && errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON,
                         ),
                     )
                 }
@@ -287,6 +297,7 @@ class DeviceSecurity(activity: FragmentActivity) {
         activeAuthentication?.cancel()
         activeAuthentication = null
         activePrompt = null
+        isAuthenticationInProgress = false
         prompt?.cancelAuthentication()
         activeCredentialLauncher?.unregister()
         activeCredentialLauncher = null
@@ -312,6 +323,7 @@ class DeviceSecurity(activity: FragmentActivity) {
 class BiometricAuthenticationException(
     message: String,
     val cancelled: Boolean = false,
+    val recoveryPasswordRequested: Boolean = false,
 ) : IllegalStateException(message)
 
 /** Kept only in memory; neither requests nor proofs belong in SavedState or backup files. */

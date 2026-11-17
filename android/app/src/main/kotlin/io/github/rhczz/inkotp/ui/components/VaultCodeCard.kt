@@ -46,7 +46,7 @@ fun VaultCodeCard(
         animationSpec = tween(AppTokens.Motion.HIGHLIGHT_MS),
         label = "code-card-background",
     )
-    val codeColor = if (item.remainingSeconds <= 5) colors.inkSecondary else colors.ink
+    val codeColor = if (item.type == "totp" && item.remainingSeconds <= 5) colors.warning else colors.ink
 
     Row(
         modifier = modifier

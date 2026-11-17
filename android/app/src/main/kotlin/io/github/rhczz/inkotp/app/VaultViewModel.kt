@@ -56,6 +56,7 @@ data class SessionUiState(
     val exists: Boolean = false,
     val unlocked: Boolean = false,
     val busy: Boolean = false,
+    val operationId: Long = 0L,
     val passwordSet: Boolean = false,
     val biometricEnabled: Boolean = false,
     val items: List<VaultItemUi> = emptyList(),
@@ -69,6 +70,7 @@ data class SessionUiState(
     val clearClipboardOnLock: Boolean = true,
     val systemAuthenticationRequired: Boolean = false,
     val systemRecoveryRequired: Boolean = false,
+    val recoveryPasswordRequested: Boolean = false,
     val importFormat: String? = null,
     val importWarnings: List<String> = emptyList(),
     val resources: ResourceSnapshot? = null,
@@ -144,7 +146,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     private fun perform(requireUnlocked: Boolean = true, kind: OperationKind = OperationKind.SAVE, cleanup: () -> Unit = {}, operation: suspend (Long) -> Unit) {
         if (state.busy || (requireUnlocked && !state.unlocked)) { cleanup(); return }
         val token = generation
-        state = state.copy(busy = true, error = null)
+        state = state.copy(busy = true, error = null, operationId = state.operationId + 1L, recoveryPasswordRequested = false)
         reconcileTicker()
         val started = SystemClock.elapsedRealtime()
         activeOperation = viewModelScope.launch {
@@ -171,6 +173,7 @@ class VaultViewModel internal constructor(application: Application, private val 
                                 settings = state.settings.copy(systemAuthenticationEnabled = required))
                         }
                         if (token == generation) state = state.copy(error = safeMessage(e), ready = true,
+                            recoveryPasswordRequested = e is BiometricAuthenticationException && e.recoveryPasswordRequested,
                             systemRecoveryRequired = state.systemRecoveryRequired ||
                                 (e is VaultAccessException && e.code == VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED))
                     }
@@ -226,8 +229,9 @@ class VaultViewModel internal constructor(application: Application, private val 
     fun unlockPassword(password: String) = unlockPassword(password, null)
 
     /** Activity recreation does not repeat a cancelled prompt; a new process gets a fresh attempt. */
-    fun requestAutomaticSystemAuthentication(security: DeviceSecurity) {
-        if (!foreground || !state.ready || state.busy || state.unlocked || !state.systemAuthenticationRequired ||
+    fun requestAutomaticAuthentication(security: DeviceSecurity) {
+        if (!foreground || !state.ready || state.busy || state.unlocked || state.systemRecoveryRequired ||
+            !(state.systemAuthenticationRequired || state.biometricEnabled) ||
             automaticAuthenticationGeneration == generation) return
         automaticAuthenticationGeneration = generation
         unlock(security)
@@ -433,6 +437,7 @@ class VaultViewModel internal constructor(application: Application, private val 
         pendingExport?.bytes?.fill(0)
         pendingExport = null
         state = state.copy(unlocked = false, busy = false, items = emptyList(), importNames = null, error = null,
+            recoveryPasswordRequested = false,
             clearClipboardOnLock = clearClipboard, samplingResources = false, resources = null, importWarnings = emptyList(), importFormat = null)
         viewModelScope.launch {
             gate.withLock {

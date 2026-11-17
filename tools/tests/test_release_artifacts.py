@@ -24,6 +24,21 @@ class ReleaseArtifactsTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.version = {"version_name": "0.4.0-beta.1", "version_code": 3}
+        # Release scenarios use a fixed source tree, independent of the app's next version.
+        source_temp = tempfile.TemporaryDirectory()
+        self.addCleanup(source_temp.cleanup)
+        source_root = Path(source_temp.name)
+        (source_root / ".github").mkdir()
+        (source_root / ".github/release.yaml").write_text((ROOT / ".github/release.yaml").read_text())
+        version_source = source_root / release.VERSION_SOURCE
+        version_source.parent.mkdir(parents=True)
+        version_source.write_text('versionCode = 3\nversionName = "0.4.0-beta.1"\n')
+        notes = source_root / "docs/releases/0.4.0-beta.1.md"
+        notes.parent.mkdir(parents=True)
+        notes.write_text("# Release test notes\n")
+        source_tree = patch.object(release, "ROOT", source_root)
+        source_tree.start()
+        self.addCleanup(source_tree.stop)
 
     def test_tag_must_exactly_match_the_literal_android_version(self):
         self.assertTrue(release.validate_tag("v0.4.0-beta.1", self.version))

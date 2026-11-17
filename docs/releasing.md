@@ -1,6 +1,6 @@
 # InkOTP 版本发布
 
-自动发布的入口是推送 `v{versionName}` tag。例如当前源码为 `versionName = "0.4.0-beta.1"`、`versionCode = 3`，只接受 `v0.4.0-beta.1`。普通分支推送和 PR 运行质量检查；手动执行 Release 工作流也只运行 CI，不签名、不创建 Release。
+自动发布的入口是推送 `v{versionName}` tag。例如当前源码为 `versionName = "0.4.1-beta.1"`、`versionCode = 4`，只接受 `v0.4.1-beta.1`。普通分支推送和 PR 运行质量检查；手动执行 Release 工作流也只运行 CI，不签名、不创建 Release。0.4.1 手机反馈修复已完成本机交付，用户随后明确要求发布，执行与远端验证见 [发布记录](changes/2026-11-17-release-0.4.1.md)。
 
 ## 工作流与配置
 

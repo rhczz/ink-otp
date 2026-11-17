@@ -8,6 +8,7 @@
 | `otpauth-cases.json` | `otpauth://` 解析器的 40 个一致性用例与错误码 |
 | `backup-format.md` | 可移植加密备份 `.2fab` v1（已冻结） |
 | `vault-format.md` | 设备本地加密库 `vault.bin` v1（已冻结） |
+| `android-interaction.md` | Android 系统认证、无闪屏操作反馈、验证码到期及相册授权回归边界 |
 | `fixtures/` | 固定参数、可复现的 `.2fab` 测试夹具 |
 
 > 规则：**不要手改 `vectors.json` 或 `fixtures/`**。它们由 `tools/reference_totp.py` / `tools/reference_backup.py` 生成；手改会与生成器、`crosscheck` 和 Kotlin 单测三方不一致。
