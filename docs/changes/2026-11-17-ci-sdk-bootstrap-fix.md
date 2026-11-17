@@ -1,6 +1,6 @@
 # 修复 GitHub CI 的 Android SDK 初始化
 
-日期：2026-11-17。状态：配置已修复，远端待验证。关联原记录：[GitHub 质量门禁与 tag 发布](2026-11-17-ci-and-release.md)。
+日期：2026-11-17。状态：修复已通过真实远端 CI。关联原记录：[GitHub 质量门禁与 tag 发布](2026-11-17-ci-and-release.md)。
 
 ## 为什么需要修复
 
@@ -23,4 +23,5 @@
 - 核对通过：两个 workflow 中共三个 `setup-android` 调用都只初始化 `platform-tools`，且均关闭许可证正文日志；Action SHA 和后续 SDK 安装指令未变。
 - `actionlint 1.7.12` 通过；沿用原发布配置中已确认的精确忽略，只排除该版本尚不识别的 `concurrency.queue` 字段诊断。其余诊断没有忽略。
 - `git diff --check` 通过。
-- 远端修复结果未验证，Android 37.2 平台下载与完整项目测试尚需新 run 确认；不能将静态检查当成远端运行成功。本轮没有运行 Gradle、提交或推送，由主任务完成推送并跟进远端。
+- 修复提交 `c471105` 的 [远端 CI 44061979850](https://github.com/rhczz/ink-otp/actions/runs/44061979850) 全部通过：SDK 初始化、Android 37.2 下载、Gradle 构建/测试、独立对拍、质量门禁和报告上传均成功。
+- 下载远端 quality-gate.json 核对 `passed: true`；core 105 / App 129 项，行覆盖率 94.503% / 79.647%。实际远端结果证明该初始化修复有效。

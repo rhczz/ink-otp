@@ -4,9 +4,9 @@
 
 | 日期 | 记录 | 状态 |
 |---|---|---|
-| 2026-11-17 | [修复 GitHub CI 的 Android SDK 初始化](2026-11-17-ci-sdk-bootstrap-fix.md) | 配置已修复，远端待验证 |
-| 2026-11-17 | [GitHub 质量门禁与 tag 发布](2026-11-17-ci-and-release.md) | 本地验证与远端执行收口中 |
-| 2026-11-17 | [M4：标准互通、每次进入验证与性能收口](2026-11-17-m4-standards-auth-performance.md) | 功能已实现，手机专项待测 |
+| 2026-11-17 | [修复 GitHub CI 的 Android SDK 初始化](2026-11-17-ci-sdk-bootstrap-fix.md) | 真实远端 CI 通过 |
+| 2026-11-17 | [GitHub 质量门禁与 tag 发布](2026-11-17-ci-and-release.md) | 默认分支 CI、tag 发布及下载复核通过 |
+| 2026-11-17 | [M4：标准互通、每次进入验证与性能收口](2026-11-17-m4-standards-auth-performance.md) | 0.4.0-beta.1 已发布，手机专项待测 |
 | 2026-11-17 | [M3：从演示界面接入真实验证器](2026-11-17-m3-local-beta.md) | 用户初步试用正常，专项验收待补 |
 | 2026-11-17 | [架构、数据存储、密钥保护与卸载清理](2026-11-17-architecture-storage-and-uninstall.md) | 已核对源码、APK 与 Android 规则 |
 
