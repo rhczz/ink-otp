@@ -4,6 +4,7 @@
 
 | 日期 | 记录 | 状态 |
 |---|---|---|
+| 2026-11-18 | [InkOTP 官网与隐私声明](2026-11-18-official-website.md) | 本机网页验证通过，域名待部署 |
 | 2026-11-18 | [InkOTP 0.5 Android 公测](2026-11-18-android-public-beta-0.5.md) | 本机门禁通过，真机专项待验证 |
 | 2026-11-18 | [Android 进门验证、隐私与设置修复](2026-11-18-android-entry-privacy-and-settings.md) | 本机验证通过，真机待复测 |
 | 2026-11-17 | [隐藏复制修复与无恢复口令锁定核查](2026-11-17-hidden-copy-and-device-lock.md) | 0.4.2-beta.1 已发布并下载验签，隐藏复制待手机复测 |
