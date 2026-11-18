@@ -21,6 +21,7 @@
 ## 发布边界
 
 - 用户使用更新后的部署目录覆盖网站。正式域名须能匿名打开中文 HTML，并与 APK 内正文一致。当前域名未解析，公网访问和应用市场审核均待验证。域名托管由用户操作。 [华为隐私政策链接规范](https://developer.huawei.com/consumer/cn/doc/App/50128/)
+- 关于页直接显示安装包的实际版本，避免正式提交包携带旧版公测标签。 [华为应用审核指南](https://developer.huawei.com/consumer/cn/doc/App/50104/)
 - 当前产品适用于单机分发流程，申报仍以后台和最终核准为准。处理隐私请求时遵守适用的回复期限。华为审核指南中无承诺时限的上限为 15 个工作日。 [单机应用核准指引](https://developer.huawei.com/consumer/cn/doc/App/50130/) · [华为审核指南](https://developer.huawei.com/consumer/cn/doc/doccenter-submission/50104/)
 - 对外分发 APK 时保留其精确提交和可取得的对应源码。后续实质修改政策正文时，网站和下一份签名包一并更新。 [GPL-3.0 第 6 节](https://www.gnu.org/licenses/gpl-3.0.html)
 

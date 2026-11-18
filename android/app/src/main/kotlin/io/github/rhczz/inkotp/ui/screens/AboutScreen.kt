@@ -52,7 +52,7 @@ fun AboutScreen(onBack: () -> Unit, onPrivacy: (() -> Unit)? = null) {
             )
             Spacer(Modifier.height(AppTokens.Spacing.m))
             Text(text = "InkOTP", style = AppType.title, color = colors.ink)
-            Text(text = "${io.github.rhczz.inkotp.BuildConfig.VERSION_NAME} · 公测版", style = AppType.caption, color = colors.inkSecondary)
+            Text(text = io.github.rhczz.inkotp.BuildConfig.VERSION_NAME, style = AppType.caption, color = colors.inkSecondary)
             Spacer(Modifier.height(AppTokens.Spacing.l))
             Text(
                 text = "离线两步验证器。验证码密钥由应用在本机处理，保存在加密库中。",
