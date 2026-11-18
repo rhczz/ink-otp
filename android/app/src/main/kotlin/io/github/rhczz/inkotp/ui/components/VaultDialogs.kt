@@ -21,6 +21,9 @@ import io.github.rhczz.inkotp.ui.theme.LocalInkColors
 fun VaultPasswordDialog(title: String, message: String, requireCurrent: Boolean = false,
     newPassword: Boolean = false, busy: Boolean = false,
     onConfirm: (current: String, password: String) -> Unit, onDismiss: () -> Unit,
+    onCancelBusy: (() -> Unit)? = null,
+    cancelling: Boolean = false,
+    confirmText: String = "确认",
 ) {
     val colors = LocalInkColors.current
     var current by remember { mutableStateOf("") }
@@ -28,7 +31,8 @@ fun VaultPasswordDialog(title: String, message: String, requireCurrent: Boolean 
     var confirm by remember { mutableStateOf("") }
     var visible by remember { mutableStateOf(false) }
     var acknowledged by remember { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = { if (!busy) onDismiss() },
+    val cancel = if (busy) onCancelBusy else onDismiss
+    AlertDialog(onDismissRequest = { cancel?.invoke() },
         properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
         shape = RoundedCornerShape(AppTokens.Radius.sheet), containerColor = colors.surface,
         title = { Text(title, style = AppType.section) },
@@ -52,7 +56,7 @@ fun VaultPasswordDialog(title: String, message: String, requireCurrent: Boolean 
         } },
         confirmButton = { TextButton(enabled = !busy && password.isNotEmpty() && (!newPassword || (password == confirm && acknowledged)) && (!requireCurrent || current.isNotEmpty()),
             onClick = { val old = current; val supplied = password; current = ""; password = ""; confirm = ""; onConfirm(old, supplied) }
-        ) { Text(if (busy) "处理中…" else "确认", style = AppType.button) } },
-        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("取消", style = AppType.button) } },
+        ) { Text(if (cancelling) "正在取消…" else if (busy) "处理中…" else confirmText, style = AppType.button) } },
+        dismissButton = { TextButton(enabled = cancel != null, onClick = { cancel?.invoke() }) { Text("取消", style = AppType.button) } },
     )
 }

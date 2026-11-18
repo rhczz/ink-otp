@@ -4,16 +4,15 @@ InkOTP 保管用户的 2FA 种子，安全问题是最高优先级。
 
 ## 报告漏洞
 
-- **不要**在公开 issue 中披露漏洞细节、secret、备份文件或可利用样本。
-- 仓库启用 GitHub 后，请使用 **GitHub Security Advisories**（Security → Report a vulnerability）私下报告。
-- 在建立私密渠道前，请通过维护者的 GitHub 账号 `rhczz` 联系并只说明“需要安全联系方式”，不要附带利用细节。
+- 通过 GitHub 的私密表单提交问题，注明应用版本、影响和使用公开测试账号复现的步骤。 [私下报告漏洞](https://github.com/rhczz/ink-otp/security/advisories/new)
+- 公开 issue 仅用于普通问题。请在反馈里省略真实密钥、验证码、恢复口令、备份文件和可利用样本。
 
 ## 支持范围
 
 | 版本 | 支持 |
 |---|---|
-| v1.0.x | 是 |
-| 更早/未发布 | 否 |
+| 0.5.0-beta.1（当前 Android 公测） | 接收安全报告 |
+| 更早的内测版 | 请在当前公测复核并注明原版本 |
 
 ## 设计承诺
 

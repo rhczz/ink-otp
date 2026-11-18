@@ -39,6 +39,31 @@ class AtomicVaultFilesTest {
         assertArrayEquals(original, AtomicVaultFiles(path).read())
     }
 
+    @Test fun restorePreservesAnExactPrivateCopyBeforeReplacingTheActiveFile() {
+        val path = File(temporary.root, "vault.bin")
+        val original = "corrupted or unusable ciphertext".toByteArray()
+        val restored = "restored ciphertext".toByteArray()
+        val storage = AtomicVaultFiles(path)
+        storage.write(original)
+        storage.replaceKeepingOriginal(restored)
+
+        assertArrayEquals(original, File(temporary.root, "vault.pre-restore.bin").readBytes())
+        assertArrayEquals(restored, storage.read())
+    }
+
+    @Test fun failedRestoreWriteLeavesTheOriginalActiveAndItsPrivateCopyReadable() {
+        val path = File(temporary.root, "vault.bin")
+        val original = "unusable original ciphertext".toByteArray()
+        AtomicVaultFiles(path).write(original)
+        val abandoningWriter = AtomicVaultFiles(path) { _, output -> output.close() }
+
+        assertThrows(IOException::class.java) {
+            abandoningWriter.replaceKeepingOriginal("restored ciphertext".toByteArray())
+        }
+        assertArrayEquals(original, AtomicVaultFiles(path).read())
+        assertArrayEquals(original, File(temporary.root, "vault.pre-restore.bin").readBytes())
+    }
+
     @Test fun silentlyAbandonedFirstWriteDoesNotCreateACommittedVault() {
         val path = File(temporary.root, "vault.bin")
         val abandoningWriter = AtomicVaultFiles(path) { _, output -> output.close() }

@@ -18,6 +18,9 @@ internal interface VaultFiles {
     fun exists(): Boolean
     fun read(): ByteArray
     fun write(bytes: ByteArray)
+    fun replaceKeepingOriginal(bytes: ByteArray) {
+        throw IOException("vault preservation is unavailable")
+    }
 }
 
 internal class AtomicVaultFiles(
@@ -55,6 +58,13 @@ internal class AtomicVaultFiles(
             try { file.failWrite(output) } catch (_: Exception) { /* Preserve the commit failure. */ }
             throw failure
         }
+    }
+
+    override fun replaceKeepingOriginal(bytes: ByteArray) {
+        val original = read()
+        val snapshot = File(base.parentFile, "${base.nameWithoutExtension}.pre-restore.bin")
+        AtomicVaultFiles(snapshot).write(original)
+        write(bytes)
     }
 
     private companion object { const val MAX_FILE_BYTES = 12 * 1024 * 1024 }

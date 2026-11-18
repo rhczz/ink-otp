@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
 import io.github.rhczz.inkotp.ui.theme.InkTheme
@@ -122,14 +123,25 @@ class OperationBusyOverlayTest {
         assertEquals(2, backs)
     }
 
-    private fun show(dark: Boolean = false) {
+    @Test fun aSlowDecodeCanBeCancelledWithoutClickingThePageBehindIt() {
+        var cancelled = 0
+        show(onCancel = { cancelled++ })
+        start()
+        advance(320)
+        compose.onNodeWithText("取消").performTouchInput { click() }
+
+        assertEquals(1, cancelled)
+        assertEquals(0, clicks)
+    }
+
+    private fun show(dark: Boolean = false, onCancel: (() -> Unit)? = null) {
         compose.setContent {
             dispatcher = requireNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
             InkTheme(darkTheme = dark) {
                 BackHandler { backs++ }
                 Box(Modifier.fillMaxSize().background(LocalInkColors.current.bg)) {
                     Text("保持原页面", Modifier.fillMaxSize().clickable { clicks++ })
-                    OperationBusyOverlay(busy.value, operation.value, authentication.value)
+                    OperationBusyOverlay(busy.value, operation.value, authentication.value, onCancel)
                 }
             }
         }

@@ -50,7 +50,10 @@ fun AddSheetContent(
     onGallery: () -> Unit,
     onManual: () -> Unit,
 ) {
-    SheetContent(title = "添加验证码") {
+    SheetContent(
+        title = "添加验证码",
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+    ) {
         SheetActionRow(
             icon = R.drawable.ic_qr_code_scanner,
             title = "扫码添加",

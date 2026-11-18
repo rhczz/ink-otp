@@ -4,7 +4,15 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Both launcher entries also use the opacity of this artwork for themed icons. -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,24 L78,33 L78,55 C78,69 68,80 54,85 C40,80 30,69 30,55 L30,33 Z" />
+        android:fillColor="@color/ic_launcher_mark"
+        android:pathData="M38,29 H58 L48,42 H31 Q28,42 30,39 L35,31 Q36,29 38,29 Z
+            M30,47 H44 L54,61 H27 Q24,61 25,58 L27,49 Q28,47 30,47 Z
+            M52,47 H78 Q80,47 81,49 L83,58 Q84,61 81,61 H62 Z
+            M31,66 H53 L43,79 H38 Q36,79 35,77 L29,69 Q27,66 31,66 Z
+            M60,66 H77 Q80,66 79,69 L74,77 Q73,79 70,79 H50 Z" />
+    <path
+        android:fillColor="@color/ic_launcher_accent"
+        android:pathData="M65,29 H70 Q73,29 74,31 L79,39 Q81,42 78,42 H55 Z" />
 </vector>

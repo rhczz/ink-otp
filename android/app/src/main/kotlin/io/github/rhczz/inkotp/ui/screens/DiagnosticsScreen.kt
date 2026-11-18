@@ -1,5 +1,8 @@
 package io.github.rhczz.inkotp.ui.screens
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,12 +15,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import io.github.rhczz.inkotp.R
 import io.github.rhczz.inkotp.ui.components.InkCard
 import io.github.rhczz.inkotp.ui.components.InkIcon
 import io.github.rhczz.inkotp.ui.components.InkPrimaryButton
+import io.github.rhczz.inkotp.ui.components.InkTextButton
 import io.github.rhczz.inkotp.ui.components.ScreenScaffold
 import io.github.rhczz.inkotp.ui.components.SectionHeader
 import io.github.rhczz.inkotp.ui.model.DiagnosticsUiState
@@ -33,6 +42,8 @@ fun DiagnosticsScreen(
     onRefreshResources: () -> Unit,
 ) {
     val colors = LocalInkColors.current
+    val context = LocalContext.current
+    var settingsUnavailable by remember { mutableStateOf(false) }
     ScreenScaffold(title = "诊断", onBack = onBack) {
         Column(
             modifier = Modifier
@@ -49,20 +60,27 @@ fun DiagnosticsScreen(
                     color = colors.ink,
                     modifier = Modifier.padding(top = AppTokens.Spacing.xs),
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = AppTokens.Spacing.s),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    InkIcon(
-                        icon = if (state.autoTime) R.drawable.ic_check_circle else R.drawable.ic_warning,
-                        contentDescription = null,
-                        size = AppTokens.IconSize.inline,
-                        tint = if (state.autoTime) colors.success else colors.warning,
-                    )
-                    Spacer(Modifier.width(AppTokens.Spacing.xs))
+                Text(
+                    text = if (state.autoTime) "自动设置时间：已开启" else "自动设置时间：未开启",
+                    style = AppType.label,
+                    color = colors.inkSecondary,
+                    modifier = Modifier.padding(top = AppTokens.Spacing.s),
+                )
+                InkTextButton(
+                    text = "打开系统日期与时间设置",
+                    onClick = {
+                        settingsUnavailable = try {
+                            context.startActivity(Intent(Settings.ACTION_DATE_SETTINGS))
+                            false
+                        } catch (_: ActivityNotFoundException) {
+                            true
+                        }
+                    },
+                )
+                if (settingsUnavailable) {
                     Text(
-                        text = if (state.autoTime) "自动设置时间：已开启" else "自动设置时间：未开启",
-                        style = AppType.label,
+                        text = "请从手机设置中手动打开日期与时间。",
+                        style = AppType.caption,
                         color = colors.inkSecondary,
                     )
                 }
@@ -90,14 +108,14 @@ fun DiagnosticsScreen(
 
             SectionHeader("验证码对不上？")
             Text(
-                text = "按顺序检查以下项目",
+                text = "请核对以下项目",
                 style = AppType.caption,
                 color = colors.inkSecondary,
             )
-            ChecklistItem("设备时间是否准确（含时区）", state.autoTime)
-            ChecklistItem("是否选对了账号/服务", true)
-            ChecklistItem("服务是否要求使用备用码而非 TOTP", true)
-            ChecklistItem("密钥是否手动输入错误", true)
+            ChecklistItem("核对设备日期、时间和时区")
+            ChecklistItem("核对验证码对应的服务与账号")
+            ChecklistItem("确认服务要求验证码还是备用码")
+            ChecklistItem("确认手动输入的密钥与服务提供的一致")
 
             Spacer(Modifier.height(AppTokens.Spacing.xxl))
             InkPrimaryButton(text = "重新计算全部验证码", onClick = onRecalculate)
@@ -124,17 +142,17 @@ fun DiagnosticsScreen(
 }
 
 @Composable
-private fun ChecklistItem(text: String, ok: Boolean) {
+private fun ChecklistItem(text: String) {
     val colors = LocalInkColors.current
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = AppTokens.Spacing.s),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         InkIcon(
-            icon = if (ok) R.drawable.ic_check_circle else R.drawable.ic_help,
+            icon = R.drawable.ic_help,
             contentDescription = null,
             size = AppTokens.IconSize.inline,
-            tint = if (ok) colors.success else colors.inkSecondary,
+            tint = colors.inkSecondary,
         )
         Spacer(Modifier.width(AppTokens.Spacing.m))
         Text(text = text, style = AppType.body, color = colors.ink)

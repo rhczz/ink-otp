@@ -2,7 +2,7 @@
 
 标准流程与生态兼容原则见 [标准机制与互通](standards-and-interoperability.md)。M4 本轮范围见 [实施与验证记录](changes/2026-11-17-m4-standards-auth-performance.md)。
 
-当前安装与手机验证见 [M4 手机说明](testing/m4-phone-test.md)，备份支持版本及独立验证依据见 [交换规格](../spec/interoperability.md)。
+当前安装和真机验收见 [0.5 Android 公测指南](testing/0.5-public-beta.md)，备份支持版本及独立验证依据见 [交换规格](../spec/interoperability.md)。
 
 0.4 手机反馈修复见 [系统指纹入口、闪屏与到期颜色](changes/2026-11-17-phone-feedback-fixes.md)，交互回归范围见 [Android 交互契约](../spec/android-interaction.md)。
 

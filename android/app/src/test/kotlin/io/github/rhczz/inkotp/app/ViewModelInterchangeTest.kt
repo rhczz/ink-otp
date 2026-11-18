@@ -9,10 +9,13 @@ import androidx.test.core.app.ApplicationProvider
 import io.github.rhczz.inkotp.core.backup.MergeConflictPolicy
 import io.github.rhczz.inkotp.core.crypto.Kdf
 import io.github.rhczz.inkotp.core.crypto.KdfParams
+import io.github.rhczz.inkotp.core.interchange.ImportedVault
 import io.github.rhczz.inkotp.core.interchange.InterchangeCodec
 import io.github.rhczz.inkotp.core.interchange.InterchangeFormat
 import io.github.rhczz.inkotp.data.*
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -127,14 +130,71 @@ class ViewModelInterchangeTest {
         assertEquals(1, repository.model!!.items.size)
     }
 
-    private fun unlocked(): VaultViewModel {
+    @Test fun firstRunRestorePreviewsAnIndependentBackupBeforeWritingAnyVault() {
+        val vm = createViewModel()
+        vm.beginPicker(forRestore = true).let { assertTrue(vm.endPicker(it)) }
+        val input = backupText()
+        vm.previewImport(input, "", forRestore = true) {}
+        pumpUntil { !vm.state.busy }
+
+        assertNull(files.bytes)
+        assertEquals(1, vm.state.restoreAccountCount)
+        assertNull(vm.state.importNames)
+
+        vm.confirmBackupRestore(password, null)
+        pumpUntil { !vm.state.busy }
+        assertNull(vm.state.error)
+        assertTrue(vm.state.unlocked)
+        assertEquals("remote", repository.model!!.items.single().accountName)
+        assertNull(vm.state.restoreAccountCount)
+    }
+
+    @Test fun cancellingAStillComputingImportDiscardsTheLateResultAndKeepsTheVault() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        var decoded: ImportedVault? = null
+        val vm = unlocked(decode = { bytes, chars ->
+            started.countDown()
+            check(release.await(10, TimeUnit.SECONDS))
+            InterchangeCodec.decode(bytes, chars).also { decoded = it }
+        })
+        val original = files.bytes!!.copyOf()
+        val input = backupText()
+        var callbacks = 0
+        vm.previewImport(input, "") { callbacks++ }
+        try {
+            assertTrue(started.await(10, TimeUnit.SECONDS))
+            vm.cancelImport()
+            assertTrue(vm.state.importCancelling)
+        } finally { release.countDown() }
+        pumpUntil { !vm.state.busy }
+
+        assertNull(vm.state.importNames)
+        assertNull(vm.state.error)
+        assertEquals(0, callbacks)
+        assertTrue(decoded!!.model.items.single().secret.all { it == 0.toByte() })
+        assertTrue(input.all { it == 0.toByte() })
+        assertArrayEquals(original, files.bytes)
+        assertEquals("local", repository.model!!.items.single().accountName)
+    }
+
+    private fun backupText() =
+        "otpauth://totp/Example:remote?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example".toByteArray()
+
+    private fun createViewModel(decode: (ByteArray, CharArray?) -> ImportedVault = InterchangeCodec::decode): VaultViewModel {
         val app = ApplicationProvider.getApplicationContext<Application>()
         app.getSharedPreferences("vault_metadata", 0).edit().clear().commit()
         val factory = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST") override fun <T : ViewModel> create(modelClass: Class<T>): T = VaultViewModel(app, repository) as T
+            @Suppress("UNCHECKED_CAST") override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                VaultViewModel(app, repository, decodeImport = decode) as T
         }
         val vm = ViewModelProvider(store, factory)[VaultViewModel::class.java]
         pumpUntil { vm.state.ready && !vm.state.busy }
+        return vm
+    }
+
+    private fun unlocked(decode: (ByteArray, CharArray?) -> ImportedVault = InterchangeCodec::decode): VaultViewModel {
+        val vm = createViewModel(decode)
         vm.initialize(password)
         pumpUntil { !vm.state.busy }
         assertTrue(vm.state.unlocked)

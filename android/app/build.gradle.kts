@@ -26,8 +26,8 @@ android {
         applicationId = "io.github.rhczz.inkotp"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.4.3-beta.1"
+        versionCode = 7
+        versionName = "0.5.0-beta.1"
     }
 
     buildFeatures {

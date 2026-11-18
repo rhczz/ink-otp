@@ -21,6 +21,7 @@ import io.github.rhczz.inkotp.data.VaultRepository
 import io.github.rhczz.inkotp.data.VaultAccessException
 import io.github.rhczz.inkotp.data.VaultAccessError
 import io.github.rhczz.inkotp.core.interchange.InterchangeCodec
+import io.github.rhczz.inkotp.core.interchange.ImportedVault
 import io.github.rhczz.inkotp.core.interchange.InterchangeFormat
 import io.github.rhczz.inkotp.core.interchange.InterchangeException
 import io.github.rhczz.inkotp.perf.OtpProjectionCache
@@ -42,6 +43,7 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
@@ -65,6 +67,7 @@ data class SessionUiState(
     val settings: SettingsUiState = SettingsUiState(passwordSet = false, lastBackupAt = null),
     val backupReminder: Boolean = true,
     val clockWarning: Boolean = false,
+    val clockDriftDetected: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
     val importNames: List<String>? = null,
@@ -75,6 +78,10 @@ data class SessionUiState(
     val recoveryPasswordRequested: Boolean = false,
     val importFormat: String? = null,
     val importWarnings: List<String> = emptyList(),
+    val importDecoding: Boolean = false,
+    val importCancelling: Boolean = false,
+    val backupRestoreActive: Boolean = false,
+    val restoreAccountCount: Int? = null,
     val resources: ResourceSnapshot? = null,
     val samplingResources: Boolean = false,
 )
@@ -88,6 +95,7 @@ data class ExportDescription(val format: InterchangeFormat, val warnings: List<S
 /** The only owner of a decrypted repository. UI state never contains OTP seeds. */
 class VaultViewModel internal constructor(application: Application, private val repository: VaultRepository,
     private val wallClockMillis: () -> Long = System::currentTimeMillis,
+    private val decodeImport: (ByteArray, CharArray?) -> ImportedVault = InterchangeCodec::decode,
 ) : AndroidViewModel(application) {
     constructor(application: Application) : this(application, VaultRepository(application))
     private val gate = Mutex()
@@ -102,6 +110,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     private var pickerInFlight = false
     private var pickerGeneration: Long? = null
     private var pickerDeadline: Long? = null
+    private var pickerForRestore = false
     private val projection = OtpProjectionCache()
     private var tickerJob: Job? = null
     private var codeRecalculationJob: Job? = null
@@ -137,7 +146,11 @@ class VaultViewModel internal constructor(application: Application, private val 
                         }
                         if (foreground && isCurrentSession(token)) {
                             val sample = drift.sample(wallClockMillis(), SystemClock.elapsedRealtime())
-                            state = state.copy(items = items, clockWarning = state.clockWarning || sample.drifted || !automaticTime())
+                            state = state.copy(
+                                items = items,
+                                clockWarning = state.clockWarning || sample.drifted || !automaticTime(),
+                                clockDriftDetected = state.clockDriftDetected || sample.drifted,
+                            )
                         }
                     }
                 }
@@ -146,60 +159,72 @@ class VaultViewModel internal constructor(application: Application, private val 
         }
     }
 
-    private fun perform(requireUnlocked: Boolean = true, kind: OperationKind = OperationKind.SAVE, cleanup: () -> Unit = {}, operation: suspend (Long) -> Unit) {
+    private fun perform(
+        requireUnlocked: Boolean = true,
+        kind: OperationKind = OperationKind.SAVE,
+        cleanup: () -> Unit = {},
+        refreshAfter: Boolean = true,
+        decodingImport: Boolean = false,
+        operation: suspend (Long) -> Unit,
+    ) {
         if (state.busy || (requireUnlocked && !state.unlocked)) { cleanup(); return }
         val token = generation
-        state = state.copy(busy = true, error = null, operationId = state.operationId + 1L, recoveryPasswordRequested = false)
+        state = state.copy(busy = true, error = null, operationId = state.operationId + 1L,
+            recoveryPasswordRequested = false, importDecoding = decodingImport)
         reconcileTicker()
         val started = SystemClock.elapsedRealtime()
-        activeOperation = viewModelScope.launch {
-            gate.withLock {
-                try {
-                    if (token != generation) return@withLock
-                    withContext(Dispatchers.IO) { operation(token) }
-                    if (token == generation) refresh(token) else withContext(Dispatchers.IO) { repository.lock() }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    if (token == generation) {
-                        if (!state.unlocked) {
-                            withContext(Dispatchers.IO) { repository.lock() }
-                            refreshLockedMetadata(token)
-                        } else {
-                            // A metadata error after policy persistence must not retain an older grace period.
-                            val required = withContext(Dispatchers.IO) {
-                                try { repository.systemAuthRequired() }
-                                catch (cancelled: CancellationException) { throw cancelled }
-                                catch (_: Exception) { true }
+        activeOperation = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                gate.withLock {
+                    try {
+                        if (token != generation) return@withLock
+                        withContext(Dispatchers.IO) { operation(token) }
+                        if (token == generation && refreshAfter) refresh(token)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (token == generation) {
+                            if (!state.unlocked) {
+                                withContext(Dispatchers.IO) { repository.lock() }
+                                refreshLockedMetadata(token)
+                            } else {
+                                // A metadata error after policy persistence must not retain an older grace period.
+                                val required = withContext(Dispatchers.IO) {
+                                    try { repository.systemAuthRequired() }
+                                    catch (cancelled: CancellationException) { throw cancelled }
+                                    catch (_: Exception) { true }
+                                }
+                                if (token == generation) state = state.copy(systemAuthenticationRequired = required,
+                                    settings = state.settings.copy(systemAuthenticationEnabled = required))
                             }
-                            if (token == generation) state = state.copy(systemAuthenticationRequired = required,
-                                settings = state.settings.copy(systemAuthenticationEnabled = required))
+                            if (token == generation) state = state.copy(error = safeMessage(e), ready = true,
+                                deviceUnlockAvailable = state.deviceUnlockAvailable &&
+                                    !(e is VaultAccessException && e.code == VaultAccessError.DEVICE_UNAVAILABLE && state.passwordSet),
+                                biometricEnabled = state.biometricEnabled &&
+                                    !(e is VaultAccessException && e.code == VaultAccessError.BIOMETRIC_CHANGED),
+                                recoveryPasswordRequested = e is BiometricAuthenticationException && e.recoveryPasswordRequested,
+                                systemRecoveryRequired = !state.unlocked && (state.systemRecoveryRequired ||
+                                    (e is VaultAccessException && e.code == VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)))
                         }
-                        if (token == generation) state = state.copy(error = safeMessage(e), ready = true,
-                            deviceUnlockAvailable = state.deviceUnlockAvailable &&
-                                !(e is VaultAccessException && e.code == VaultAccessError.DEVICE_UNAVAILABLE && state.passwordSet),
-                            biometricEnabled = state.biometricEnabled &&
-                                !(e is VaultAccessException && e.code == VaultAccessError.BIOMETRIC_CHANGED),
-                            recoveryPasswordRequested = e is BiometricAuthenticationException && e.recoveryPasswordRequested,
-                            systemRecoveryRequired = !state.unlocked && (state.systemRecoveryRequired ||
-                                (e is VaultAccessException && e.code == VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)))
-                    }
-                } finally {
-                    if (token != generation) withContext(NonCancellable + Dispatchers.IO) {
-                        pendingImport?.let(repository::discardModel)
-                        pendingImport = null
-                        projection.clear()
-                        repository.lock()
-                    }
-                    if (token == generation) {
-                        lastOperation = OperationTiming(kind, (SystemClock.elapsedRealtime() - started).coerceAtLeast(0))
-                        state = state.copy(busy = false)
-                        if (systemAuthenticationDeadline != null && foreground) {
-                            systemAuthenticationDeadline = null
-                            backgroundJob?.cancel()
+                    } finally {
+                        if (token != generation) withContext(NonCancellable + Dispatchers.IO) {
+                            pendingImport?.let(repository::discardModel)
+                            pendingImport = null
+                            projection.clear()
+                            repository.lock()
                         }
-                        reconcileTicker()
                     }
+                }
+            } finally {
+                if (token == generation) {
+                    lastOperation = OperationTiming(kind, (SystemClock.elapsedRealtime() - started).coerceAtLeast(0))
+                    state = state.copy(busy = false, importDecoding = false, importCancelling = false,
+                        backupRestoreActive = state.backupRestoreActive && !state.importCancelling)
+                    if (systemAuthenticationDeadline != null && foreground) {
+                        systemAuthenticationDeadline = null
+                        backgroundJob?.cancel()
+                    }
+                    reconcileTicker()
                 }
             }
         }.also { job -> job.invokeOnCompletion { cleanup() } }
@@ -238,7 +263,7 @@ class VaultViewModel internal constructor(application: Application, private val 
 
     /** Activity recreation does not repeat a cancelled prompt; a new process gets a fresh attempt. */
     fun requestAutomaticAuthentication(security: DeviceSecurity) {
-        if (!foreground || !state.ready || state.busy || state.unlocked || state.systemRecoveryRequired ||
+        if (!foreground || !state.ready || state.busy || state.unlocked || state.systemRecoveryRequired || state.backupRestoreActive ||
             automaticAuthenticationGeneration == generation) return
         if (!state.systemAuthenticationRequired && !state.biometricEnabled &&
             !(state.deviceUnlockAvailable && !state.clearClipboardOnLock && state.error == null)) return
@@ -397,24 +422,62 @@ class VaultViewModel internal constructor(application: Application, private val 
         return true
     }
 
-    fun previewImport(bytes: ByteArray, password: String, done: () -> Unit) {
+    fun previewImport(bytes: ByteArray, password: String, forRestore: Boolean = false, done: () -> Unit) {
         val chars = password.toCharArray()
-        if (state.busy || !state.unlocked) { bytes.fill(0); chars.fill('\u0000'); return }
-        perform(kind = OperationKind.IMPORT, cleanup = { bytes.fill(0); chars.fill('\u0000') }) { token ->
+        if (state.busy || !isCurrentBackupRequest(generation, forRestore)) {
+            bytes.fill(0); chars.fill('\u0000'); return
+        }
+        perform(requireUnlocked = !forRestore, kind = OperationKind.IMPORT,
+            cleanup = { bytes.fill(0); chars.fill('\u0000') }, refreshAfter = false, decodingImport = true) { token ->
+            var decoded: VaultModel? = null
             try {
-                val imported = InterchangeCodec.decode(bytes, chars.takeIf { it.isNotEmpty() })
+                val imported = decodeImport(bytes, chars.takeIf { it.isNotEmpty() })
                 val remote = imported.model
-                if (token != generation) { repository.discardModel(remote); throw CancellationException() }
-                pendingImport?.let(repository::discardModel)
-                pendingImport = remote
-                val localKeys = repository.model!!.items.map(BackupMerge::keyOf).toSet()
+                decoded = remote
+                checkGeneration(token)
+                val existingKeys = repository.model?.items.orEmpty().map(BackupMerge::keyOf).toSet()
+                val importNames = if (forRestore) null else remote.items.map { "${it.issuer ?: "账号"} · ${it.accountName}" }
                 withContext(Dispatchers.Main) {
                     checkGeneration(token)
-                    state = state.copy(importFormat = imported.format.name, importWarnings = imported.warnings.map { it.message }, importNames = remote.items.map { "${it.issuer ?: "账号"} · ${it.accountName}" },
-                        importConflicts = remote.items.count { BackupMerge.keyOf(it) in localKeys })
+                    pendingImport?.let(repository::discardModel)
+                    pendingImport = remote
+                    decoded = null
+                    state = state.copy(importFormat = imported.format.name, importWarnings = imported.warnings.map { it.message },
+                        importNames = importNames, restoreAccountCount = remote.items.size.takeIf { forRestore },
+                        importConflicts = remote.items.count { BackupMerge.keyOf(it) in existingKeys }, importDecoding = false)
                     done()
                 }
-            } finally { bytes.fill(0); chars.fill('\u0000') }
+            } finally {
+                repository.discardModel(decoded)
+                bytes.fill(0); chars.fill('\u0000')
+            }
+        }
+    }
+
+    fun confirmBackupRestore(password: String, security: DeviceSecurity?) {
+        if (state.busy || state.unlocked || !state.backupRestoreActive || state.restoreAccountCount == null) return
+        VaultActions.passwordError(password)?.let { report(it); return }
+        val replaceExisting = state.exists
+        val chars = password.toCharArray()
+        perform(requireUnlocked = false, kind = OperationKind.IMPORT, cleanup = { chars.fill('\u0000') }) { token ->
+            val remote = pendingImport ?: throw IllegalStateException()
+            val request = repository.prepareBackupRestore(replaceExisting)
+            val proof = request?.let {
+                withContext(Dispatchers.Main) {
+                    (security ?: throw VaultAccessException(VaultAccessError.SYSTEM_AUTH_REQUIRED))
+                        .authenticateSystem(it, "验证身份以从备份恢复")
+                }
+            }
+            checkGeneration(token)
+            repository.restoreFromBackup(remote, chars, replaceExisting, proof)
+            repository.discardModel(remote)
+            pendingImport = null
+            metadata.edit().remove("lastBackupAt").remove("backupRevision").apply()
+            withContext(Dispatchers.Main) {
+                checkGeneration(token)
+                state = state.copy(backupRestoreActive = false, restoreAccountCount = null, importFormat = null,
+                    importWarnings = emptyList(), notice = "备份已恢复。所选备份仍使用它原来的口令。")
+            }
         }
     }
 
@@ -438,8 +501,14 @@ class VaultViewModel internal constructor(application: Application, private val 
     }
 
     fun cancelImport() {
+        if (state.importDecoding && !state.importCancelling) {
+            state = state.copy(importCancelling = true)
+            activeOperation?.cancel()
+            return
+        }
         if (state.busy) return
-        state = state.copy(importNames = null, importWarnings = emptyList(), importFormat = null)
+        state = state.copy(importNames = null, importWarnings = emptyList(), importFormat = null,
+            backupRestoreActive = false, restoreAccountCount = null)
         viewModelScope.launch { gate.withLock { pendingImport?.let(repository::discardModel); pendingImport = null } }
     }
 
@@ -454,13 +523,15 @@ class VaultViewModel internal constructor(application: Application, private val 
         pickerInFlight = false
         pickerGeneration = null
         pickerDeadline = null
+        pickerForRestore = false
         systemAuthenticationDeadline = null
         pendingExport?.bytes?.fill(0)
         pendingExport = null
         state = state.copy(ready = state.ready && clearClipboard, unlocked = false, busy = false,
             items = emptyList(), importNames = null, error = null,
             recoveryPasswordRequested = false, systemRecoveryRequired = false,
-            clearClipboardOnLock = clearClipboard, samplingResources = false, resources = null, importWarnings = emptyList(), importFormat = null)
+            clearClipboardOnLock = clearClipboard, samplingResources = false, resources = null, importWarnings = emptyList(), importFormat = null,
+            restoreAccountCount = null, backupRestoreActive = false, importDecoding = false, importCancelling = false)
         viewModelScope.launch {
             gate.withLock {
                 if (token != generation) return@withLock
@@ -506,8 +577,13 @@ class VaultViewModel internal constructor(application: Application, private val 
 
     private fun String?.isDeviceUnlock() = this == "device-local" || this == "device-bound"
 
-    fun beginPicker(): Long {
-        check(state.unlocked)
+    fun isCurrentBackupRequest(token: Long, forRestore: Boolean): Boolean =
+        token == generation && if (forRestore) state.backupRestoreActive && !state.unlocked else state.unlocked
+
+    fun beginPicker(forRestore: Boolean = false): Long {
+        check(if (forRestore) state.ready && !state.unlocked && !state.busy else state.unlocked)
+        if (forRestore) state = state.copy(backupRestoreActive = true)
+        pickerForRestore = forRestore
         pickerInFlight = true
         pickerGeneration = generation
         pickerDeadline = SystemClock.elapsedRealtime() + 60_000L
@@ -516,7 +592,7 @@ class VaultViewModel internal constructor(application: Application, private val 
 
     /** Rejects stale results before changing any newer request's timer or session. */
     fun endPicker(token: Long): Boolean {
-        if (!isCurrentSession(token) || !pickerInFlight || pickerGeneration != token) return false
+        if (!pickerInFlight || pickerGeneration != token || !isCurrentBackupRequest(token, pickerForRestore)) return false
         if (SystemClock.elapsedRealtime() >= (pickerDeadline ?: 0L)) {
             lock(clearClipboard = false)
             return false
@@ -524,6 +600,7 @@ class VaultViewModel internal constructor(application: Application, private val 
         pickerInFlight = false
         pickerGeneration = null
         pickerDeadline = null
+        pickerForRestore = false
         backgroundAt = null
         backgroundJob?.cancel()
         reconcileTicker()
@@ -548,7 +625,10 @@ class VaultViewModel internal constructor(application: Application, private val 
         reconcileTicker()
         codeRecalculationJob?.cancel()
         resourceJob?.cancel()
-        if (!state.unlocked) { if (state.busy) lock(clearClipboard = false); return }
+        if (!state.unlocked && !pickerInFlight) {
+            if (state.busy || state.backupRestoreActive) lock(clearClipboard = false)
+            return
+        }
         backgroundAt = SystemClock.elapsedRealtime()
         // A user initiated system picker is part of the active operation. Nothing is displayed behind it.
         val milliseconds = if (pickerInFlight) (pickerDeadline ?: 0L) - SystemClock.elapsedRealtime()
@@ -581,7 +661,7 @@ class VaultViewModel internal constructor(application: Application, private val 
 
     fun diagnostics(): DiagnosticsUiState = DiagnosticsUiState(
         deviceTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
-        autoTime = automaticTime(), driftDetected = state.clockWarning,
+        autoTime = automaticTime(), driftDetected = state.clockDriftDetected,
         resources = state.resources?.let { resource -> listOf(
             "进程内存 PSS" to (resource.totalPssBytes?.let(::formatBytes) ?: "系统未提供"),
             "Java 堆使用" to "${formatBytes(resource.javaHeapUsedBytes)} / ${formatBytes(resource.javaHeapMaxBytes)}",
@@ -605,7 +685,7 @@ class VaultViewModel internal constructor(application: Application, private val 
                     }
                     if (foreground && isCurrentSession(token)) {
                         drift.reset()
-                        state = state.copy(items = items, clockWarning = !automaticTime())
+                        state = state.copy(items = items, clockWarning = !automaticTime(), clockDriftDetected = false)
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled

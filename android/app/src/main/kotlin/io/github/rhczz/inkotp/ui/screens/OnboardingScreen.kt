@@ -46,6 +46,7 @@ fun OnboardingScreen(
     onManual: () -> Unit = onFinish,
     passwordSet: Boolean = true,
     systemAuthenticationAvailable: Boolean = true,
+    onRestoreBackup: (() -> Unit)? = null,
 ) {
     val colors = LocalInkColors.current
     var password by remember { mutableStateOf("") }
@@ -153,7 +154,13 @@ fun OnboardingScreen(
         }
         Spacer(Modifier.height(AppTokens.Spacing.xl))
         when (page) {
-            0 -> InkPrimaryButton(text = "继续", onClick = onNext)
+            0 -> {
+                InkPrimaryButton(text = "继续", onClick = onNext)
+                if (onRestoreBackup != null) {
+                    Spacer(Modifier.height(AppTokens.Spacing.s))
+                    InkSecondaryButton(text = "从备份恢复", onClick = onRestoreBackup)
+                }
+            }
             1 -> {
                 InkPrimaryButton(text = "设置恢复口令", onClick = { val submitted = password; password = ""; confirm = ""; onSetPassword(submitted) }, enabled = valid)
                 Spacer(Modifier.height(AppTokens.Spacing.s))
