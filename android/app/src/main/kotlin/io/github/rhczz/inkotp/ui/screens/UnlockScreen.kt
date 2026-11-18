@@ -35,8 +35,9 @@ fun UnlockScreen(
     onPasswordSubmit: (String) -> Unit,
 ) {
     val colors = LocalInkColors.current
-    var passwordMode by remember(state.biometricAvailable, state.degraded, state.systemAuthenticationRequired, state.systemRecoveryRequired) {
-        mutableStateOf(state.systemRecoveryRequired || (!state.systemAuthenticationRequired && !state.biometricAvailable && !state.degraded))
+    var passwordMode by remember(state.biometricAvailable, state.degraded, state.deviceUnlockAvailable, state.systemAuthenticationRequired, state.systemRecoveryRequired) {
+        mutableStateOf(state.systemRecoveryRequired ||
+            (!state.systemAuthenticationRequired && !state.biometricAvailable && !state.degraded && !state.deviceUnlockAvailable))
     }
     var passwordVisible by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
@@ -63,7 +64,14 @@ fun UnlockScreen(
         Text(text = if (state.systemRecoveryRequired) "重新绑定手机验证" else "解锁以查看验证码", style = AppType.section, color = colors.ink)
         Spacer(Modifier.height(AppTokens.Spacing.s))
         Text(
-            text = if (state.systemRecoveryRequired) "先输入应用恢复口令，再完成手机系统验证" else if (state.systemAuthenticationRequired) "使用手机的指纹、人脸或锁屏密码验证身份" else if (state.degraded) "设备绑定模式" else if (state.biometricAvailable) "生物识别不会上传任何数据" else "请输入本机恢复口令",
+            text = when {
+                state.systemRecoveryRequired -> "先输入应用恢复口令，再完成手机系统验证"
+                state.systemAuthenticationRequired -> "使用手机的指纹、人脸或锁屏密码验证身份"
+                state.degraded -> "设备绑定模式"
+                state.biometricAvailable -> "完成一次生物识别以更新本机解锁方式"
+                state.deviceUnlockAvailable -> "点击解锁，继续查看验证码"
+                else -> "请输入本机恢复口令以修复或更新解锁方式"
+            },
             style = AppType.label,
             color = colors.inkSecondary,
             textAlign = TextAlign.Center,
@@ -84,9 +92,14 @@ fun UnlockScreen(
             Spacer(Modifier.height(AppTokens.Spacing.s))
             if (state.biometricAvailable || state.systemAuthenticationRequired) InkTextButton(text = "使用系统验证", onClick = { passwordMode = false; onUnlock() }, color = colors.inkSecondary)
         } else {
-            InkPrimaryButton(text = if (state.degraded && !state.systemAuthenticationRequired) "解锁" else "使用系统验证", onClick = onUnlock)
+            InkPrimaryButton(
+                text = if (state.systemAuthenticationRequired || state.biometricAvailable) "使用系统验证" else "解锁",
+                onClick = onUnlock,
+            )
             Spacer(Modifier.height(AppTokens.Spacing.l))
-            if (!state.degraded) InkTextButton(text = if (state.systemAuthenticationRequired) "用恢复口令重新绑定" else "使用恢复口令", onClick = { passwordMode = true })
+            if (state.biometricAvailable && !state.systemAuthenticationRequired) {
+                InkTextButton(text = "使用恢复口令", onClick = { passwordMode = true }, color = colors.inkSecondary)
+            }
         }
 
         if (state.error != null) {

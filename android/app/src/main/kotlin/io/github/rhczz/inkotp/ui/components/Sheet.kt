@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,12 +29,17 @@ import io.github.rhczz.inkotp.ui.theme.LocalInkColors
 @Composable
 fun SheetHandle() {
     Box(
-        modifier = Modifier
-            .width(AppTokens.Size.sheetHandleWidth)
-            .height(AppTokens.Size.sheetHandleHeight)
-            .clip(RoundedCornerShape(AppTokens.Radius.pill))
-            .background(LocalInkColors.current.borderStrong),
-    )
+        modifier = Modifier.fillMaxWidth().padding(top = AppTokens.Spacing.m),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(AppTokens.Size.sheetHandleWidth)
+                .height(AppTokens.Size.sheetHandleHeight)
+                .clip(RoundedCornerShape(AppTokens.Radius.pill))
+                .background(LocalInkColors.current.borderStrong),
+        )
+    }
 }
 
 @Composable
@@ -50,13 +54,6 @@ fun SheetContent(
             .fillMaxWidth()
             .padding(horizontal = AppTokens.Spacing.xl, vertical = AppTokens.Spacing.l),
     ) {
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center,
-        ) {
-            SheetHandle()
-        }
-        Spacer(Modifier.height(AppTokens.Spacing.xl))
         Text(text = title, style = AppType.section, color = colors.ink)
         Spacer(Modifier.height(AppTokens.Spacing.s))
         content()
@@ -114,11 +111,7 @@ fun InkBottomSheet(
         containerColor = colors.surface,
         scrimColor = colors.scrim,
         shape = RoundedCornerShape(topStart = AppTokens.Radius.sheet, topEnd = AppTokens.Radius.sheet),
-        dragHandle = {
-            Box(modifier = Modifier.fillMaxWidth().padding(top = AppTokens.Spacing.m), contentAlignment = Alignment.Center) {
-                SheetHandle()
-            }
-        },
+        dragHandle = { SheetHandle() },
     ) {
         Column(
             modifier = Modifier

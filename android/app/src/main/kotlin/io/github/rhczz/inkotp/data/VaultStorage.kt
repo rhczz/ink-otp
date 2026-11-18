@@ -71,7 +71,9 @@ internal interface EnvelopeStore {
     suspend fun read(): DeviceEnvelope?
     suspend fun write(value: DeviceEnvelope?)
     suspend fun systemAuthRequired(): Boolean = false
-    suspend fun setSystemAuthRequired(required: Boolean) { throw IOException("policy persistence unavailable") }
+    suspend fun writeSystemConfiguration(value: DeviceEnvelope?, required: Boolean) {
+        throw IOException("policy persistence unavailable")
+    }
 }
 
 // One delegate provides one DataStore instance per application/file.
@@ -85,7 +87,7 @@ internal class DataStoreEnvelopeStore(context: Context) : EnvelopeStore {
     override suspend fun read(): DeviceEnvelope? {
         val values = store.data.first()
         val mode = values[MODE] ?: return null
-        if (mode != "biometric" && mode != "device-bound" && mode != "system-auth") throw IOException("invalid wrap mode")
+        if (mode !in setOf("biometric", "device-bound", "device-local", "system-auth")) throw IOException("invalid wrap mode")
         return try {
             val iv = decoder.decode(values[IV] ?: throw IOException("missing iv"))
             val ct = decoder.decode(values[CIPHERTEXT] ?: throw IOException("missing ciphertext"))
@@ -102,20 +104,27 @@ internal class DataStoreEnvelopeStore(context: Context) : EnvelopeStore {
     override suspend fun write(value: DeviceEnvelope?) {
         store.edit { values ->
             // Authentication policy is independent of the replaceable encrypted envelope.
-            values.remove(MODE); values.remove(IV); values.remove(CIPHERTEXT); values.remove(SALT)
-            if (value != null) {
-                values[MODE] = value.mode
-                values[IV] = encoder.encodeToString(value.iv)
-                values[CIPHERTEXT] = encoder.encodeToString(value.ciphertext)
-                values[SALT] = encoder.encodeToString(value.salt)
-            }
+            values.setEnvelope(value)
         }
     }
 
     override suspend fun systemAuthRequired(): Boolean = store.data.first()[SYSTEM_REQUIRED] ?: false
 
-    override suspend fun setSystemAuthRequired(required: Boolean) {
-        store.edit { it[SYSTEM_REQUIRED] = required }
+    override suspend fun writeSystemConfiguration(value: DeviceEnvelope?, required: Boolean) {
+        store.edit {
+            it.setEnvelope(value)
+            it[SYSTEM_REQUIRED] = required
+        }
+    }
+
+    private fun androidx.datastore.preferences.core.MutablePreferences.setEnvelope(value: DeviceEnvelope?) {
+        remove(MODE); remove(IV); remove(CIPHERTEXT); remove(SALT)
+        if (value != null) {
+            this[MODE] = value.mode
+            this[IV] = encoder.encodeToString(value.iv)
+            this[CIPHERTEXT] = encoder.encodeToString(value.ciphertext)
+            this[SALT] = encoder.encodeToString(value.salt)
+        }
     }
 
     private companion object {

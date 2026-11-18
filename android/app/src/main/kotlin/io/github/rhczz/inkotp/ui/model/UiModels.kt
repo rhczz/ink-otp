@@ -26,6 +26,7 @@ data class UnlockUiState(
     val error: String? = null,
     val biometricAvailable: Boolean = true,
     val degraded: Boolean = false,
+    val deviceUnlockAvailable: Boolean = false,
     val systemAuthenticationRequired: Boolean = false,
     val systemRecoveryRequired: Boolean = false,
     val recoveryPasswordRequested: Boolean = false,
@@ -39,7 +40,6 @@ data class ItemDetailUiState(
 )
 
 data class SettingsUiState(
-    val biometricEnabled: Boolean = true,
     val lockTimeoutSeconds: Int = 30,
     val hideCodesByDefault: Boolean = false,
     val clipboardClearSeconds: Int = 30,

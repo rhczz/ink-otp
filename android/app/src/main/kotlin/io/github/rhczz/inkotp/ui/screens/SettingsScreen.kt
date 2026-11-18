@@ -1,13 +1,31 @@
 package io.github.rhczz.inkotp.ui.screens
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import io.github.rhczz.inkotp.R
 import io.github.rhczz.inkotp.ui.components.InkDivider
 import io.github.rhczz.inkotp.ui.components.ScreenScaffold
@@ -23,7 +41,6 @@ import io.github.rhczz.inkotp.ui.theme.LocalInkColors
 fun SettingsScreen(
     state: SettingsUiState,
     onBack: () -> Unit,
-    onBiometricChange: (Boolean) -> Unit,
     onLockTimeoutChange: (Int) -> Unit,
     onHideCodesChange: (Boolean) -> Unit,
     onClipboardChange: (Int) -> Unit,
@@ -42,11 +59,7 @@ fun SettingsScreen(
         60 -> "1 分钟"
         else -> "30 秒"
     }
-    val clipboardLabel = when (state.clipboardClearSeconds) {
-        0 -> "关闭"
-        1 -> "立即"
-        else -> "30 秒"
-    }
+    var choosingClipboardClear by remember { mutableStateOf(false) }
 
     ScreenScaffold(title = "设置", onBack = onBack) {
         Column(
@@ -64,27 +77,12 @@ fun SettingsScreen(
                 enabled = state.passwordSet,
             )
             Text(
-                text = "使用系统允许的指纹、人脸或手机锁屏密码；开启前请先设置恢复口令。",
+                text = if (state.passwordSet) "开启后使用手机的指纹、人脸或锁屏密码。关闭时可直接进入。"
+                    else "先设置恢复口令，才能开启每次进入验证。",
                 style = AppType.caption,
                 color = colors.inkSecondary,
                 modifier = Modifier.padding(horizontal = AppTokens.Spacing.l, vertical = AppTokens.Spacing.s),
             )
-            InkDivider()
-            SwitchRow(
-                icon = R.drawable.ic_fingerprint,
-                title = "生物识别解锁",
-                checked = state.biometricEnabled,
-                onCheckedChange = onBiometricChange,
-                enabled = state.passwordSet && !state.systemAuthenticationEnabled,
-            )
-            if (!state.passwordSet) {
-                Text(
-                    text = "先设置恢复口令，才能开启生物识别。",
-                    style = AppType.caption,
-                    color = colors.inkSecondary,
-                    modifier = Modifier.padding(horizontal = AppTokens.Spacing.l, vertical = AppTokens.Spacing.s),
-                )
-            }
             InkDivider()
             SettingRow(
                 icon = R.drawable.ic_schedule,
@@ -111,15 +109,8 @@ fun SettingsScreen(
             SettingRow(
                 icon = R.drawable.ic_content_copy,
                 title = "剪贴板清理",
-                value = clipboardLabel,
-                onClick = {
-                    val next = when (state.clipboardClearSeconds) {
-                        30 -> 1
-                        1 -> 0
-                        else -> 30
-                    }
-                    onClipboardChange(next)
-                },
+                value = clipboardClearLabel(state.clipboardClearSeconds),
+                onClick = { choosingClipboardClear = true },
             )
             InkDivider()
             SettingRow(
@@ -175,4 +166,57 @@ fun SettingsScreen(
             )
         }
     }
+
+    if (choosingClipboardClear) {
+        ClipboardClearDialog(
+            selectedSeconds = state.clipboardClearSeconds,
+            onSelect = { seconds ->
+                choosingClipboardClear = false
+                if (seconds != state.clipboardClearSeconds) onClipboardChange(seconds)
+            },
+            onDismiss = { choosingClipboardClear = false },
+        )
+    }
+}
+
+private val clipboardClearChoices = listOf(0, 1, 15, 30, 60)
+
+private fun clipboardClearLabel(seconds: Int): String = when (seconds) {
+    0 -> "关闭"
+    1 -> "立即"
+    else -> "$seconds 秒"
+}
+
+@Composable
+private fun ClipboardClearDialog(selectedSeconds: Int, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
+    val colors = LocalInkColors.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.widthIn(max = AppTokens.Size.dialogMaxWidth),
+        shape = RoundedCornerShape(AppTokens.Radius.sheet),
+        containerColor = colors.surface,
+        title = { Text("选择清理时间", style = AppType.section, color = colors.ink) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("仅对从 InkOTP 复制的验证码生效。", style = AppType.body, color = colors.inkSecondary)
+                Column(Modifier.selectableGroup()) {
+                    clipboardClearChoices.forEach { seconds ->
+                        val selected = seconds == selectedSeconds
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = AppTokens.Size.touchTarget)
+                                .selectable(selected, role = Role.RadioButton, onClick = { onSelect(seconds) }),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = selected, onClick = null)
+                            Spacer(Modifier.width(AppTokens.Spacing.m))
+                            Text(clipboardClearLabel(seconds), style = AppType.body, color = colors.ink)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("取消", style = AppType.button) } },
+    )
 }

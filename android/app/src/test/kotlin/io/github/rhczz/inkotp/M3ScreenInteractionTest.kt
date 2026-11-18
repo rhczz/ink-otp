@@ -7,7 +7,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onFirst
@@ -116,20 +119,20 @@ class M3ScreenInteractionTest {
     }
 
     @Test
-    fun missingRecoveryPasswordDisablesBiometricsAndExplainsHowToEnableIt() {
+    fun missingRecoveryPasswordDisablesEntryAuthenticationAndExplainsHowToEnableIt() {
         showScreen {
-            settings(state = SettingsUiState(passwordSet = false, biometricEnabled = false))
+            settings(state = SettingsUiState(passwordSet = false))
         }
 
         compose.onAllNodes(isToggleable()).onFirst().assertIsNotEnabled()
-        compose.onNodeWithText("先设置恢复口令，才能开启生物识别。").assertIsDisplayed()
+        compose.onNodeWithText("先设置恢复口令，才能开启每次进入验证。").assertIsDisplayed()
         compose.onNodeWithText("设置恢复口令").assertIsDisplayed()
         compose.onNodeWithText("修改恢复口令").assertDoesNotExist()
     }
 
     @Test
-    fun clipboardSettingCyclesThroughTimedImmediateAndDisabledPolicies() {
-        val state = mutableStateOf(SettingsUiState(clipboardClearSeconds = 30))
+    fun clipboardSettingOpensFiveChoicesAndCommitsOnlyASelection() {
+        val state = mutableStateOf(SettingsUiState(clipboardClearSeconds = 45))
         val selected = mutableListOf<Int>()
         showScreen {
             settings(
@@ -141,14 +144,28 @@ class M3ScreenInteractionTest {
             )
         }
 
-        repeat(3) {
+        fun openChoices() {
             compose.onNodeWithText("剪贴板清理").performScrollTo().performClick()
         }
 
-        compose.runOnIdle {
-            assertEquals(listOf(1, 0, 30), selected)
-            assertEquals(30, state.value.clipboardClearSeconds)
+        compose.onNodeWithText("45 秒").performScrollTo().assertIsDisplayed()
+        openChoices()
+        compose.onNodeWithText("取消").performClick()
+        compose.runOnIdle { assertEquals(emptyList<Int>(), selected) }
+
+        val choices = listOf("关闭", "立即", "15 秒", "30 秒", "60 秒")
+        choices.forEach { label ->
+            openChoices()
+            compose.onNode(isSelectable() and hasText(label)).performClick()
+            compose.onNodeWithText("选择清理时间").assertDoesNotExist()
         }
+
+        compose.runOnIdle {
+            assertEquals(listOf(0, 1, 15, 30, 60), selected)
+            assertEquals(60, state.value.clipboardClearSeconds)
+        }
+        openChoices()
+        compose.onNode(isSelectable() and hasText("60 秒")).assertIsSelected()
     }
 
     private fun showScreen(content: @Composable () -> Unit) {
@@ -182,7 +199,6 @@ class M3ScreenInteractionTest {
         SettingsScreen(
             state = state,
             onBack = {},
-            onBiometricChange = {},
             onLockTimeoutChange = {},
             onHideCodesChange = {},
             onClipboardChange = onClipboardChange,

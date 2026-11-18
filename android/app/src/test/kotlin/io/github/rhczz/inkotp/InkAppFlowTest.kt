@@ -6,7 +6,11 @@ import android.provider.Settings
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -37,6 +41,8 @@ import io.github.rhczz.inkotp.ui.theme.InkTheme
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.spec.GCMParameterSpec
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -70,7 +76,7 @@ class InkAppFlowTest {
 
     private val store = ViewModelStore()
     private val files = MemoryFiles()
-    private val repository = VaultRepository(files, MemoryEnvelopes(), NoHardwareKeys,
+    private val repository = VaultRepository(files, MemoryEnvelopes(), TestDeviceKeys(),
         kdf = FlowTestKdf, kdfParams = KdfParams(8192, 1, 1))
     private var security: DeviceSecurity? = null
     private var securityHost: ActivityController<FragmentActivity>? = null
@@ -85,7 +91,9 @@ class InkAppFlowTest {
             }
         }
         compose.onNodeWithText("公开测试口令").assertIsDisplayed()
-        compose.onNode(hasSetTextAction()).performTextInput(PASSWORD)
+        compose.onNode(hasSetTextAction())
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.IsSensitiveData, true))
+            .performTextInput(PASSWORD)
         compose.onNodeWithText("确认").performClick()
         compose.runOnIdle { assertEquals(PASSWORD, supplied) }
     }
@@ -99,7 +107,7 @@ class InkAppFlowTest {
     }
 
     @Test
-    fun firstSetupManualAddAndPasswordUnlockPreserveTheRealEncryptedAccount() {
+    fun firstSetupManualAddAndDeviceUnlockPreserveTheRealEncryptedAccount() {
         val application = ApplicationProvider.getApplicationContext<Application>()
         application.getSharedPreferences("vault_metadata", 0).edit().clear().commit()
         Settings.Global.putInt(application.contentResolver, Settings.Global.AUTO_TIME, 1)
@@ -127,7 +135,7 @@ class InkAppFlowTest {
         compose.onNode(hasText("设置恢复口令") and hasClickAction()).performClick()
         pumpUntil("password vault creation") { vm.state.unlocked && vm.state.passwordSet && !vm.state.busy }
         compose.waitForIdle()
-        compose.onNodeWithText("只使用口令").performClick()
+        compose.onNodeWithText("暂不开启").performClick()
         compose.onNodeWithText("手动添加").performClick()
 
         compose.onAllNodes(hasSetTextAction())[0].performScrollTo().performTextInput("RFC 6238")
@@ -150,9 +158,9 @@ class InkAppFlowTest {
         assertTrue(previousSessionSecret.all { it == 0.toByte() })
         assertNull(repository.model)
 
-        compose.onAllNodes(hasSetTextAction()).onFirst().performTextInput(PASSWORD)
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
         compose.onNodeWithText("解锁").performClick()
-        pumpUntil("password decrypt and list restoration") { vm.state.unlocked && !vm.state.busy && vm.state.items.size == 1 }
+        pumpUntil("device decrypt and list restoration") { vm.state.unlocked && !vm.state.busy && vm.state.items.size == 1 }
         compose.waitForIdle()
 
         compose.onNodeWithText(ACCOUNT).assertIsDisplayed()
@@ -209,9 +217,14 @@ class InkAppFlowTest {
             MessageDigest.getInstance("SHA-256").digest(password.concatToString().toByteArray() + salt)
     }
 
-    private object NoHardwareKeys : DeviceKeys {
-        override fun encryptCipher(mode: String): Cipher = error("Password-only flow requested a hardware key")
-        override fun decryptCipher(mode: String, iv: ByteArray): Cipher = error("Password-only flow requested a hardware key")
+    private class TestDeviceKeys : DeviceKeys {
+        private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+        override fun encryptCipher(mode: String): Cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(Cipher.ENCRYPT_MODE, key)
+        }
+        override fun decryptCipher(mode: String, iv: ByteArray): Cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+        }
         override fun delete(mode: String) = Unit
     }
 

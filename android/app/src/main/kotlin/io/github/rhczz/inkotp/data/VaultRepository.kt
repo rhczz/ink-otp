@@ -59,9 +59,7 @@ class VaultRepository internal constructor(
     private var parameters: KdfParams? = null
     private var pendingCipher: Cipher? = null
     private var pendingEnvelope: DeviceEnvelope? = null
-    private var pendingEnable = false
-    private var wrapsSuppressed = false
-    private enum class SystemAction { ENABLE, UNLOCK, DISABLE, RECOVER }
+    private enum class SystemAction { ENABLE, UNLOCK, DISABLE, RECOVER, REBIND }
     private var pendingSystemRequest: SystemAuthRequest? = null
     private var pendingSystemAction: SystemAction? = null
     private var pendingSystemEnvelope: DeviceEnvelope? = null
@@ -77,9 +75,8 @@ class VaultRepository internal constructor(
         if (systemAuthRequired()) return SYSTEM
         val header = header()
         if (!header.hasPassword) return DEVICE
-        if (wrapsSuppressed) return PASSWORD
-        val envelope = readEnvelope()
-        return if (envelope?.mode == BIOMETRIC && envelope.salt.contentEquals(header.salt)) BIOMETRIC else PASSWORD
+        val envelope = readEnvelope()?.takeIf { it.salt.contentEquals(header.salt) }
+        return envelope?.mode?.takeIf { it == BIOMETRIC || it == DEVICE_LOCAL } ?: PASSWORD
     }
 
     suspend fun initialize(password: CharArray?): VaultModel {
@@ -98,12 +95,8 @@ class VaultRepository internal constructor(
             newKek = if (password != null) kdf.deriveKey(password, newSalt!!, kdfParams) else null
             val params = if (password != null) kdfParams else null
             val bytes = VaultCodec.sealWithKey(initial, newDek, newKek, newSalt, params, random)
-            if (password == null) {
-                val cipher = deviceOperation { keys.encryptCipher(DEVICE) }
-                val envelopeSalt = ByteArray(16)
-                cipher.updateAAD(aad(DEVICE, envelopeSalt))
-                writeEnvelope(DeviceEnvelope(DEVICE, cipher.iv, cipher.doFinal(newDek), envelopeSalt))
-            } else writeEnvelope(null)
+            if (newKek == null) writeEnvelope(sealEnvelope(DEVICE, newDek, null, ByteArray(16)))
+            else writeEnvelope(sealLocalEnvelope(newDek, newKek, newSalt!!))
             write(bytes)
             committed = true
             install(initial, newDek, newKek, newSalt, params)
@@ -120,7 +113,11 @@ class VaultRepository internal constructor(
         }
     }
 
-    suspend fun unlockPassword(password: CharArray): VaultModel = openPassword(password, systemAuthorized = false)
+    suspend fun unlockPassword(password: CharArray): VaultModel {
+        val opened = openPassword(password, systemAuthorized = false)
+        migrateDeviceEnvelope()
+        return opened
+    }
 
     private suspend fun openPassword(password: CharArray, systemAuthorized: Boolean): VaultModel {
         var openedDek: ByteArray? = null
@@ -153,23 +150,12 @@ class VaultRepository internal constructor(
         lock()
         rejectSystemPolicyBypass()
         val bytes = read()
-        if (VaultCodec.parseHeader(bytes).hasPassword) fail(VaultAccessError.PASSWORD_REQUIRED)
-        val envelope = readEnvelope()?.takeIf { it.mode == DEVICE }
+        val header = VaultCodec.parseHeader(bytes)
+        val mode = if (header.hasPassword) DEVICE_LOCAL else DEVICE
+        val envelope = readEnvelope()?.takeIf { it.mode == mode && it.salt.contentEquals(header.salt) }
             ?: fail(VaultAccessError.DEVICE_UNAVAILABLE)
-        var openedDek: ByteArray? = null
-        var openedModel: VaultModel? = null
-        try {
-            val cipher = deviceOperation { keys.decryptCipher(DEVICE, envelope.iv) }
-            cipher.updateAAD(aad(DEVICE, envelope.salt))
-            openedDek = deviceOperation { cipher.doFinal(envelope.ciphertext) }
-            if (openedDek.size != 32) fail(VaultAccessError.DEVICE_UNAVAILABLE)
-            openedModel = VaultCodec.openWithDek(bytes, openedDek)
-            currentCoroutineContext().ensureActive()
-            install(openedModel, openedDek, null, null, null)
-            openedModel = null
-            openedDek = null
-            return model!!
-        } finally { SecretBytes.wipe(openedDek); discardModel(openedModel) }
+        val cipher = deviceOperation { keys.decryptCipher(mode, envelope.iv) }
+        return openEnvelope(bytes, header, envelope, cipher)
     }
 
     suspend fun save(model: VaultModel) {
@@ -186,7 +172,7 @@ class VaultRepository internal constructor(
         this.model = next
     }
 
-    suspend fun setPassword(currentPassword: CharArray?, newPassword: CharArray): VaultModel {
+    suspend fun setPassword(currentPassword: CharArray?, newPassword: CharArray, proof: SystemAuthProof? = null): VaultModel {
         var newKek: ByteArray? = null
         try {
             val current = model ?: fail(VaultAccessError.LOCKED)
@@ -198,6 +184,7 @@ class VaultRepository internal constructor(
             }
             val newSalt = random.bytes(16)
             newKek = kdf.deriveKey(newPassword, newSalt, kdfParams)
+            val replacement = replacementEnvelope(currentDek, newKek, newSalt, proof)
             val bytes = VaultCodec.sealWithKey(current, currentDek, newKek, newSalt, kdfParams, random)
             write(bytes)
             SecretBytes.wipe(kek, salt)
@@ -206,7 +193,7 @@ class VaultRepository internal constructor(
             salt = newSalt
             parameters = kdfParams
             clearPending()
-            clearDeviceWrapsAfterCommit()
+            saveEnvelopeAfterCommit(replacement)
             return current
         } finally {
             currentPassword?.fill('\u0000')
@@ -247,7 +234,9 @@ class VaultRepository internal constructor(
         BackupCodec.open(bytes, password, kdf = kdf)
     } finally { password.fill('\u0000') }
 
-    suspend fun importBackup(remote: VaultModel, policy: MergeConflictPolicy, replace: Boolean): VaultModel {
+    suspend fun importBackup(
+        remote: VaultModel, policy: MergeConflictPolicy, replace: Boolean, proof: SystemAuthProof? = null,
+    ): VaultModel {
         val current = model ?: fail(VaultAccessError.LOCKED)
         val currentKek = kek ?: fail(VaultAccessError.PASSWORD_REQUIRED)
         val newDek = random.bytes(32)
@@ -257,6 +246,7 @@ class VaultRepository internal constructor(
         val next = copyModel(current.copy(vaultId = UUID.randomUUID().toString(), updatedAt = Instant.now().toString(), items = merged))
         var committed = false
         try {
+            val replacement = replacementEnvelope(newDek, currentKek, salt!!, proof)
             val bytes = VaultCodec.sealWithKey(next, newDek, currentKek, salt, parameters, random)
             write(bytes)
             committed = true
@@ -265,7 +255,7 @@ class VaultRepository internal constructor(
             discardModel(model)
             model = next
             clearPending()
-            clearDeviceWrapsAfterCommit()
+            saveEnvelopeAfterCommit(replacement)
             return next
         } finally {
             incoming.forEach { SecretBytes.wipe(it.secret) }
@@ -276,52 +266,14 @@ class VaultRepository internal constructor(
         }
     }
 
-    suspend fun prepareEnable(): Cipher {
-        rejectSystemPolicyBypass()
-        if (model == null) fail(VaultAccessError.LOCKED)
-        if (kek == null || !hasPassword()) fail(VaultAccessError.PASSWORD_REQUIRED)
-        clearPending()
-        val cipher = try { keys.encryptCipher(BIOMETRIC) }
-        catch (_: KeyPermanentlyInvalidatedException) {
-            keys.delete(BIOMETRIC)
-            deviceOperation { keys.encryptCipher(BIOMETRIC) }
-        }
-        pendingCipher = cipher
-        pendingEnable = true
-        return cipher
-    }
-
-    suspend fun enable(cipher: Cipher) {
-        rejectSystemPolicyBypass()
-        if (cipher !== pendingCipher || !pendingEnable) fail(VaultAccessError.INVALID_STATE)
-        val currentDek = dek ?: fail(VaultAccessError.LOCKED)
-        val currentKek = kek ?: fail(VaultAccessError.PASSWORD_REQUIRED)
-        val material = currentDek + currentKek
-        try {
-            cipher.updateAAD(aad(BIOMETRIC, salt!!))
-            val ciphertext = deviceOperation { cipher.doFinal(material) }
-            writeEnvelope(DeviceEnvelope(BIOMETRIC, cipher.iv, ciphertext, salt!!.copyOf()))
-            wrapsSuppressed = false
-            // The password header already forbids device-bound unlock. A stale
-            // unused alias must not turn a committed enable into a false failure.
-            try { keys.delete(DEVICE) }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { }
-        } finally {
-            SecretBytes.wipe(material)
-            clearPending()
-        }
-    }
-
     suspend fun prepareUnlock(): Cipher {
         lock()
         rejectSystemPolicyBypass()
-        if (wrapsSuppressed) fail(VaultAccessError.BIOMETRIC_CHANGED)
         val header = header()
         val envelope = readEnvelope()?.takeIf { it.mode == BIOMETRIC && it.salt.contentEquals(header.salt) }
             ?: fail(VaultAccessError.BIOMETRIC_CHANGED)
         if (!header.hasPassword) fail(VaultAccessError.PASSWORD_REQUIRED)
-        val cipher = deviceOperation { keys.decryptCipher(BIOMETRIC, envelope.iv) }
+        val cipher = deviceOperation(VaultAccessError.BIOMETRIC_CHANGED) { keys.decryptCipher(BIOMETRIC, envelope.iv) }
         pendingCipher = cipher
         pendingEnvelope = envelope
         return cipher
@@ -329,44 +281,14 @@ class VaultRepository internal constructor(
 
     suspend fun unlock(cipher: Cipher): VaultModel {
         rejectSystemPolicyBypass()
-        if (cipher !== pendingCipher || pendingEnable) fail(VaultAccessError.INVALID_STATE)
+        if (cipher !== pendingCipher) fail(VaultAccessError.INVALID_STATE)
         val envelope = pendingEnvelope ?: fail(VaultAccessError.INVALID_STATE)
-        var material: ByteArray? = null
-        var openedDek: ByteArray? = null
-        var openedKek: ByteArray? = null
-        var openedModel: VaultModel? = null
         try {
-            cipher.updateAAD(aad(BIOMETRIC, envelope.salt))
-            material = deviceOperation { cipher.doFinal(envelope.ciphertext) }
-            if (material.size != 64) fail(VaultAccessError.BIOMETRIC_CHANGED)
-            openedDek = material.copyOfRange(0, 32)
-            openedKek = material.copyOfRange(32, 64)
             val bytes = read()
-            val header = VaultCodec.parseHeader(bytes)
-            val verifiedDek = VaultCodec.unwrapDekWithKey(bytes, openedKek)
-            val matches = MessageDigest.isEqual(verifiedDek, openedDek)
-            SecretBytes.wipe(verifiedDek)
-            if (!matches) fail(VaultAccessError.BIOMETRIC_CHANGED)
-            openedModel = VaultCodec.openWithDek(bytes, openedDek)
-            currentCoroutineContext().ensureActive()
-            install(openedModel, openedDek, openedKek, header.salt, header.kdfParams)
-            openedModel = null
-            openedDek = null
-            openedKek = null
-            return model!!
-        } finally {
-            SecretBytes.wipe(material, openedDek, openedKek)
-            discardModel(openedModel)
-            clearPending()
-        }
-    }
-
-    suspend fun disableBiometric() {
-        rejectSystemPolicyBypass()
-        if (model == null || kek == null) fail(VaultAccessError.LOCKED)
-        clearPending()
-        clearDeviceWraps()
-        wrapsSuppressed = true
+            val opened = openEnvelope(bytes, VaultCodec.parseHeader(bytes), envelope, cipher)
+            migrateDeviceEnvelope()
+            return opened
+        } finally { clearPending() }
     }
 
     suspend fun prepareSystemEnable(): SystemAuthRequest {
@@ -381,18 +303,11 @@ class VaultRepository internal constructor(
         val authorizedCipher = consumeSystemProof(proof, SystemAction.ENABLE)
         val currentDek = dek ?: fail(VaultAccessError.LOCKED)
         val currentKek = kek ?: fail(VaultAccessError.PASSWORD_REQUIRED)
-        val material = currentDek + currentKek
         try {
-            val cipher = authorizedCipher ?: systemEncryptCipher()
-            cipher.updateAAD(aad(SYSTEM, salt!!))
-            val ciphertext = systemDeviceOperation { cipher.doFinal(material) }
-            writeEnvelope(DeviceEnvelope(SYSTEM, cipher.iv, ciphertext, salt!!.copyOf()))
-            writeSystemPolicy(true)
-            wrapsSuppressed = false
-            try { keys.delete(DEVICE); keys.delete(BIOMETRIC) }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { /* The committed system policy rejects these legacy unlock paths. */ }
-        } finally { SecretBytes.wipe(material); clearPending() }
+            val envelope = sealEnvelope(SYSTEM, currentDek, currentKek, salt!!, authorizedCipher)
+            writeSystemConfiguration(envelope, required = true)
+            deleteKeys(DEVICE, DEVICE_LOCAL, BIOMETRIC)
+        } finally { clearPending() }
     }
 
     suspend fun prepareSystemUnlock(): SystemAuthRequest {
@@ -407,34 +322,12 @@ class VaultRepository internal constructor(
     suspend fun unlockSystemAuth(proof: SystemAuthProof): VaultModel {
         val envelope = pendingSystemEnvelope ?: fail(VaultAccessError.INVALID_STATE)
         val authorizedCipher = consumeSystemProof(proof, SystemAction.UNLOCK)
-        var material: ByteArray? = null
-        var openedDek: ByteArray? = null
-        var openedKek: ByteArray? = null
-        var openedModel: VaultModel? = null
         try {
             if (!systemAuthRequired()) fail(VaultAccessError.INVALID_STATE)
             val cipher = authorizedCipher ?: systemDeviceOperation { keys.decryptCipher(SYSTEM, envelope.iv) }
-            cipher.updateAAD(aad(SYSTEM, envelope.salt))
-            material = systemDeviceOperation { cipher.doFinal(envelope.ciphertext) }
-            if (material.size != 64) fail(VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)
-            openedDek = material.copyOfRange(0, 32)
-            openedKek = material.copyOfRange(32, 64)
             val bytes = read()
-            val header = VaultCodec.parseHeader(bytes)
-            val verifiedDek = VaultCodec.unwrapDekWithKey(bytes, openedKek)
-            val matches = MessageDigest.isEqual(verifiedDek, openedDek)
-            SecretBytes.wipe(verifiedDek)
-            if (!matches || !header.salt.contentEquals(envelope.salt)) fail(VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)
-            openedModel = VaultCodec.openWithDek(bytes, openedDek)
-            currentCoroutineContext().ensureActive()
-            install(openedModel, openedDek, openedKek, header.salt, header.kdfParams)
-            openedModel = null; openedDek = null; openedKek = null
-            return model!!
-        } finally {
-            SecretBytes.wipe(material, openedDek, openedKek)
-            discardModel(openedModel)
-            clearPending()
-        }
+            return openEnvelope(bytes, VaultCodec.parseHeader(bytes), envelope, cipher)
+        } finally { clearPending() }
     }
 
     suspend fun prepareSystemDisable(): SystemAuthRequest {
@@ -458,13 +351,9 @@ class VaultRepository internal constructor(
             cipher.updateAAD(aad(SYSTEM, envelope.salt))
             material = systemDeviceOperation { cipher.doFinal(envelope.ciphertext) }
             if (!MessageDigest.isEqual(expected, material)) fail(VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)
-            // Clear the envelope first: a failure leaves the independent policy enabled, never bypassed.
-            writeEnvelope(null)
-            writeSystemPolicy(false)
-            wrapsSuppressed = true
-            try { keys.delete(SYSTEM) }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { }
+            val local = sealEnvelope(DEVICE_LOCAL, dek!!, kek!!, salt!!)
+            writeSystemConfiguration(local, required = false)
+            deleteKeys(SYSTEM)
         } finally { SecretBytes.wipe(expected, material); clearPending() }
     }
 
@@ -480,15 +369,8 @@ class VaultRepository internal constructor(
             val authorizedCipher = consumeSystemProof(proof, SystemAction.RECOVER)
             if (!systemAuthRequired()) fail(VaultAccessError.INVALID_STATE)
             val opened = openPassword(password, systemAuthorized = true)
-            val material = dek!! + kek!!
-            try {
-                val cipher = authorizedCipher ?: systemEncryptCipher()
-                cipher.updateAAD(aad(SYSTEM, salt!!))
-                val ciphertext = systemDeviceOperation { cipher.doFinal(material) }
-                writeEnvelope(DeviceEnvelope(SYSTEM, cipher.iv, ciphertext, salt!!.copyOf()))
-                wrapsSuppressed = false
-                return opened
-            } finally { SecretBytes.wipe(material) }
+            writeEnvelope(sealEnvelope(SYSTEM, dek!!, kek!!, salt!!, authorizedCipher))
+            return opened
         } catch (failure: Exception) {
             lock()
             throw failure
@@ -509,7 +391,7 @@ class VaultRepository internal constructor(
 
     private suspend fun currentSystemEnvelope(): DeviceEnvelope {
         val header = header()
-        if (!header.hasPassword || wrapsSuppressed) fail(VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)
+        if (!header.hasPassword) fail(VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)
         return readEnvelope()?.takeIf { it.mode == SYSTEM && it.salt.contentEquals(header.salt) }
             ?: fail(VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)
     }
@@ -518,9 +400,9 @@ class VaultRepository internal constructor(
         if (systemAuthRequired()) fail(VaultAccessError.SYSTEM_AUTH_REQUIRED)
     }
 
-    private suspend fun writeSystemPolicy(required: Boolean) {
+    private suspend fun writeSystemConfiguration(envelope: DeviceEnvelope, required: Boolean) {
         currentCoroutineContext().ensureActive()
-        try { envelopes.setSystemAuthRequired(required) }
+        try { envelopes.writeSystemConfiguration(envelope, required) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { fail(VaultAccessError.STORAGE_FAILURE) }
     }
@@ -564,7 +446,7 @@ class VaultRepository internal constructor(
 
     private fun copyModel(value: VaultModel) = value.copy(items = value.items.map { it.copy(secret = it.secret.copyOf()) })
     private fun clearPending() {
-        pendingCipher = null; pendingEnvelope = null; pendingEnable = false
+        pendingCipher = null; pendingEnvelope = null
         pendingSystemRequest = null; pendingSystemAction = null; pendingSystemEnvelope = null
     }
     private fun header(): VaultHeader = VaultCodec.parseHeader(read())
@@ -586,26 +468,119 @@ class VaultRepository internal constructor(
         catch (_: IOException) { fail(VaultAccessError.STORAGE_FAILURE) }
     }
 
-    private suspend fun clearDeviceWraps() {
-        writeEnvelope(null)
-        keys.delete(BIOMETRIC)
-        keys.delete(DEVICE)
-        keys.delete(SYSTEM)
+    suspend fun prepareSystemRebind(): SystemAuthRequest? {
+        if (!systemAuthRequired()) return null
+        if (model == null || kek == null) fail(VaultAccessError.LOCKED)
+        clearPending()
+        return rememberSystemRequest(SystemAction.REBIND, if (sdkInt >= 30) systemEncryptCipher() else null)
     }
 
-    private suspend fun clearDeviceWrapsAfterCommit() {
-        // The new authenticated vault is already durable. Cleanup failure must
-        // not report a failed password change/import or invite a destructive retry.
-        // Old wrappers cannot pass the current salt + DEK/KEK authentication.
-        wrapsSuppressed = true
-        try { clearDeviceWraps() }
+    private suspend fun replacementEnvelope(
+        nextDek: ByteArray, nextKek: ByteArray, nextSalt: ByteArray, proof: SystemAuthProof?,
+    ): DeviceEnvelope? {
+        if (systemAuthRequired()) {
+            val cipher = consumeSystemProof(proof ?: fail(VaultAccessError.SYSTEM_AUTH_REQUIRED), SystemAction.REBIND)
+            return sealEnvelope(SYSTEM, nextDek, nextKek, nextSalt, cipher)
+        }
+        return sealLocalEnvelope(nextDek, nextKek, nextSalt)
+    }
+
+    private fun sealLocalEnvelope(dek: ByteArray, kek: ByteArray, salt: ByteArray): DeviceEnvelope? =
+        try { sealEnvelope(DEVICE_LOCAL, dek, kek, salt) }
         catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { /* Recover with the committed local password. */ }
+        catch (_: Exception) { null } // The persisted passphrase wrapper still permits recovery.
+
+    private suspend fun saveEnvelopeAfterCommit(replacement: DeviceEnvelope?) {
+        // The new vault is already durable. A stale envelope cannot pass salt and DEK checks.
+        // A failed platform write must not invite the user to repeat a successful import.
+        try {
+            writeEnvelope(replacement)
+            if (replacement?.mode == DEVICE_LOCAL) deleteKeys(DEVICE, BIOMETRIC)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: VaultAccessException) { }
     }
 
-    private fun <T> deviceOperation(block: () -> T): T = try { block() }
-    catch (_: KeyPermanentlyInvalidatedException) { fail(VaultAccessError.BIOMETRIC_CHANGED) }
-    catch (_: GeneralSecurityException) { fail(VaultAccessError.DEVICE_UNAVAILABLE) }
+    private suspend fun migrateDeviceEnvelope() {
+        try {
+            val replacement = sealEnvelope(DEVICE_LOCAL, dek!!, kek!!, salt!!)
+            writeEnvelope(replacement)
+            deleteKeys(DEVICE, BIOMETRIC)
+        } catch (cancelled: CancellationException) {
+            lock()
+            throw cancelled
+        } catch (_: Exception) { /* Keep the valid session usable when the local wrapper is unavailable. */ }
+    }
+
+    private fun sealEnvelope(
+        mode: String, dek: ByteArray, kek: ByteArray?, salt: ByteArray, authorizedCipher: Cipher? = null,
+    ): DeviceEnvelope {
+        val material = if (kek == null) dek else dek + kek
+        try {
+            val cipher = if (mode == SYSTEM) authorizedCipher ?: systemEncryptCipher()
+                else deviceOperation {
+                    try { keys.encryptCipher(mode) }
+                    catch (_: KeyPermanentlyInvalidatedException) { keys.delete(mode); keys.encryptCipher(mode) }
+                }
+            cipher.updateAAD(aad(mode, salt))
+            val ciphertext = if (mode == SYSTEM) systemDeviceOperation { cipher.doFinal(material) }
+                else deviceOperation { cipher.doFinal(material) }
+            return DeviceEnvelope(mode, cipher.iv, ciphertext, salt.copyOf())
+        } finally { if (material !== dek) SecretBytes.wipe(material) }
+    }
+
+    private suspend fun openEnvelope(bytes: ByteArray, header: VaultHeader, envelope: DeviceEnvelope, cipher: Cipher): VaultModel {
+        val unavailable = when (envelope.mode) {
+            SYSTEM -> VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED
+            BIOMETRIC -> VaultAccessError.BIOMETRIC_CHANGED
+            else -> VaultAccessError.DEVICE_UNAVAILABLE
+        }
+        var material: ByteArray? = null
+        var openedDek: ByteArray? = null
+        var openedKek: ByteArray? = null
+        var openedModel: VaultModel? = null
+        try {
+            if (!envelope.salt.contentEquals(header.salt)) fail(unavailable)
+            cipher.updateAAD(aad(envelope.mode, envelope.salt))
+            material = if (envelope.mode == SYSTEM) systemDeviceOperation { cipher.doFinal(envelope.ciphertext) }
+                else deviceOperation(unavailable) { cipher.doFinal(envelope.ciphertext) }
+            val expectedSize = if (header.hasPassword) 64 else 32
+            if (material.size != expectedSize) fail(unavailable)
+            openedDek = material.copyOfRange(0, 32)
+            if (header.hasPassword) {
+                openedKek = material.copyOfRange(32, 64)
+                val verifiedDek = try { VaultCodec.unwrapDekWithKey(bytes, openedKek) }
+                catch (failure: VaultException) {
+                    if (failure.code == VaultError.VLT_E_WRAP_AUTH) fail(unavailable)
+                    throw failure
+                }
+                try { if (!MessageDigest.isEqual(verifiedDek, openedDek)) fail(unavailable) }
+                finally { SecretBytes.wipe(verifiedDek) }
+            }
+            openedModel = VaultCodec.openWithDek(bytes, openedDek)
+            currentCoroutineContext().ensureActive()
+            install(openedModel, openedDek, openedKek, header.salt.takeIf { header.hasPassword }, header.kdfParams)
+            openedModel = null
+            openedDek = null
+            openedKek = null
+            return model!!
+        } finally {
+            SecretBytes.wipe(material, openedDek, openedKek)
+            discardModel(openedModel)
+        }
+    }
+
+    private fun deleteKeys(vararg modes: String) {
+        modes.forEach { mode ->
+            try { keys.delete(mode) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* The obsolete alias cannot open the current envelope. */ }
+        }
+    }
+
+    private fun <T> deviceOperation(
+        failure: VaultAccessError = VaultAccessError.DEVICE_UNAVAILABLE, block: () -> T,
+    ): T = try { block() }
+    catch (_: GeneralSecurityException) { fail(failure) }
 
     private fun aad(mode: String, salt: ByteArray) = "InkOTP/session/v1/$mode\u0000".toByteArray(Charsets.UTF_8) + salt
     private fun requireStrongPassword(password: CharArray) {
@@ -619,6 +594,7 @@ class VaultRepository internal constructor(
     private fun fail(code: VaultAccessError): Nothing = throw VaultAccessException(code)
     private companion object {
         const val DEVICE = "device-bound"
+        const val DEVICE_LOCAL = "device-local"
         const val PASSWORD = "password-only"
         const val BIOMETRIC = "biometric"
         const val SYSTEM = "system-auth"

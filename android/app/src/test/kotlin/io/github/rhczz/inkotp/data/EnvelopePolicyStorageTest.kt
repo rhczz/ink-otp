@@ -16,8 +16,8 @@ class EnvelopePolicyStorageTest {
         val context = ApplicationProvider.getApplicationContext<Application>()
         val store = DataStoreEnvelopeStore(context)
         try {
-            store.setSystemAuthRequired(true)
-            store.write(DeviceEnvelope("system-auth", ByteArray(12) { 1 }, ByteArray(80) { 2 }, ByteArray(16) { 3 }))
+            val systemEnvelope = DeviceEnvelope("system-auth", ByteArray(12) { 1 }, ByteArray(80) { 2 }, ByteArray(16) { 3 })
+            store.writeSystemConfiguration(systemEnvelope, true)
             assertEquals("system-auth", store.read()!!.mode)
             assertTrue(store.systemAuthRequired())
             store.write(null)
@@ -27,6 +27,10 @@ class EnvelopePolicyStorageTest {
             store.write(DeviceEnvelope("biometric", ByteArray(12), ByteArray(80), ByteArray(16)))
             assertEquals("biometric", store.read()!!.mode)
             assertTrue(store.systemAuthRequired())
-        } finally { store.write(null); store.setSystemAuthRequired(false) }
+            val deviceEnvelope = DeviceEnvelope("device-local", ByteArray(12), ByteArray(80), ByteArray(16))
+            store.writeSystemConfiguration(deviceEnvelope, false)
+            assertFalse(store.systemAuthRequired())
+            assertEquals("device-local", store.read()!!.mode)
+        } finally { store.writeSystemConfiguration(null, false) }
     }
 }

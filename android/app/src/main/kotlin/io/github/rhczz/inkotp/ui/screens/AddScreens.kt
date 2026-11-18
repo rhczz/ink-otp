@@ -39,6 +39,7 @@ import io.github.rhczz.inkotp.ui.components.SecretTextField
 import io.github.rhczz.inkotp.ui.components.SectionHeader
 import io.github.rhczz.inkotp.ui.components.SheetActionRow
 import io.github.rhczz.inkotp.ui.components.SheetContent
+import io.github.rhczz.inkotp.ui.components.SheetHandle
 import io.github.rhczz.inkotp.ui.theme.AppTokens
 import io.github.rhczz.inkotp.ui.theme.AppType
 import io.github.rhczz.inkotp.ui.theme.LocalInkColors
@@ -85,7 +86,10 @@ fun AddSheetPreview() {
             color = colors.surface,
             shape = RoundedCornerShape(topStart = AppTokens.Radius.sheet, topEnd = AppTokens.Radius.sheet),
         ) {
-            AddSheetContent(onScan = {}, onGallery = {}, onManual = {})
+            Column {
+                SheetHandle()
+                AddSheetContent(onScan = {}, onGallery = {}, onManual = {})
+            }
         }
     }
 }

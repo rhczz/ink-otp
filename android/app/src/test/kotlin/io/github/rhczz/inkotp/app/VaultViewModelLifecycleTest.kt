@@ -84,6 +84,7 @@ class VaultViewModelLifecycleTest {
 
     @Test fun homeDuringPasswordUnlockCannotPublishItsLateResult() {
         seedLockedVault()
+        runBlocking { envelopes.write(null) }
         val vm = viewModel()
         val slow = blockKdf()
         vm.unlockPassword(password)

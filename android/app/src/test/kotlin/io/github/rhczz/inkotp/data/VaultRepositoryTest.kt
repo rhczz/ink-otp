@@ -66,7 +66,7 @@ class VaultRepositoryTest {
         assertArrayEquals(committed, files.bytes)
     }
 
-    @Test fun upgradingDeviceModeRemovesUnattendedUnlock() = runBlocking {
+    @Test fun upgradingDeviceModePreservesDeviceAccessAndRejectsOldEnvelope() = runBlocking {
         val repo = repository()
         repo.initialize(null)
         assertEquals("device-bound", repo.wrapMode())
@@ -74,13 +74,14 @@ class VaultRepositoryTest {
         repo.unlockDevice()
         val staleEnvelope = envelopes.envelope
         repo.setPassword(null, password())
-        assertEquals("password-only", repo.wrapMode())
-        assertNull(envelopes.envelope)
+        assertEquals("device-local", repo.wrapMode())
+        assertNotNull(repository().unlockDevice())
         envelopes.envelope = staleEnvelope // interrupted cleanup cannot bypass a password header
         repo.lock()
         try { repo.unlockDevice(); fail("device unlock bypassed password") }
         catch (_: VaultAccessException) { }
         assertEquals(0, repo.unlockPassword(password()).items.size)
+        assertNotNull(repository().unlockDevice())
     }
 
     @Test fun importRotatesDekAndIdsButKeepsLocalPasswordAndSettings() = runBlocking {
@@ -96,25 +97,26 @@ class VaultRepositoryTest {
         assertEquals(2, result.items.map { it.id }.distinct().size)
         assertFalse(oldDek.contentEquals(VaultCodec.unwrapDek(files.bytes!!, password())))
         repo.lock()
-        assertEquals(2, repo.unlockPassword(password()).items.size)
+        assertEquals(2, repository().unlockDevice().items.size)
     }
 
-    @Test fun biometricEnvelopeRequiresMatchingCurrentPasswordKey() = runBlocking {
+    @Test fun deviceEnvelopeWorksAcrossWritesAndRejectsAnOldSalt() = runBlocking {
         val repo = repository()
         repo.initialize(password())
-        repo.enable(repo.prepareEnable()) // fake test key has no hardware authentication
         val stale = envelopes.envelope
         repo.lock()
-        repo.unlock(repo.prepareUnlock())
+        repo.unlockDevice()
         repo.save(repo.model!!.copy(items = listOf(item())))
         assertEquals(1, VaultCodec.openWithPassword(files.bytes!!, password()).model.items.size)
         repo.setPassword(password(), "another strong password".toCharArray())
+        assertEquals(1, repository().unlockDevice().items.size)
         envelopes.envelope = stale
         repo.lock()
-        try { repo.unlock(repo.prepareUnlock()); fail("stale biometric keys accepted") }
-        catch (_: Exception) { }
+        try { repo.unlockDevice(); fail("stale local keys accepted") }
+        catch (_: VaultAccessException) { }
         assertNull(repo.model)
         assertNotNull(repo.unlockPassword("another strong password".toCharArray()))
+        assertEquals(1, repository().unlockDevice().items.size)
     }
 
     @Test fun wrongBackupPasswordNeverChangesCurrentVault() = runBlocking {
@@ -158,20 +160,28 @@ class VaultRepositoryTest {
         assertEquals(repo.model, VaultCodec.openWithPassword(files.bytes!!, password()).model)
     }
 
-    @Test fun lockingInvalidatesPendingBiometricEnable() = runBlocking {
+    @Test fun passwordOnlyUpgradeRequiresOneSuccessfulRecoveryBeforeSilentReopen() = runBlocking {
         val repo = repository()
         repo.initialize(password())
-        val cipher = repo.prepareEnable()
         repo.lock()
-        try { repo.enable(cipher); fail("enabled after lock") }
-        catch (failure: VaultAccessException) { assertEquals(VaultAccessError.INVALID_STATE, failure.code) }
+        envelopes.envelope = null  // A pre-upgrade password-only vault has no local wrapper.
+        val committed = files.bytes!!.copyOf()
+        val reopened = repository()
+        assertEquals("password-only", reopened.wrapMode())
+        try { reopened.unlockPassword("wrong phrase".toCharArray()); fail("accepted wrong recovery phrase") }
+        catch (_: Exception) { }
+        assertNull(reopened.model)
         assertNull(envelopes.envelope)
+        reopened.unlockPassword(password())
+        assertEquals("device-local", reopened.wrapMode())
+        assertArrayEquals(committed, files.bytes)
+        assertNotNull(repository().unlockDevice())
     }
 
-    @Test fun committedPasswordChangeSucceedsEvenWhenWrapperCleanupFails() = runBlocking {
+    @Test fun committedPasswordChangeSucceedsEvenWhenReplacementWrapperWriteFails() = runBlocking {
         val repo = repository()
         repo.initialize(null)
-        envelopes.failClear = true
+        envelopes.failWrite = true
         repo.setPassword(null, password())
         assertEquals("password-only", repo.wrapMode())
         repo.lock()
@@ -183,17 +193,15 @@ class VaultRepositoryTest {
         assertNotNull(reopened.unlockPassword(password()))
     }
 
-    @Test fun committedImportSucceedsWhenBiometricCleanupFailsAndStaleEnvelopeCannotUnlock() = runBlocking {
+    @Test fun committedImportSucceedsWhenWrapperWriteFailsAndStaleEnvelopeCannotUnlock() = runBlocking {
         val repo = repository()
         repo.initialize(password())
-        repo.enable(repo.prepareEnable())
-        envelopes.failClear = true
+        envelopes.failWrite = true
         val imported = repo.importBackup(repo.model!!.copy(items = listOf(item())), MergeConflictPolicy.KEEP_LOCAL, true)
         assertEquals(1, imported.items.size)
-        assertEquals("password-only", repo.wrapMode())
         repo.lock()
         val reopened = repository()
-        try { reopened.unlock(reopened.prepareUnlock()); fail("old DEK accepted") }
+        try { reopened.unlockDevice(); fail("old DEK accepted") }
         catch (_: Exception) { }
         assertEquals(1, reopened.unlockPassword(password()).items.size)
     }
@@ -210,10 +218,10 @@ class VaultRepositoryTest {
     }
     private class MemoryEnvelopes : EnvelopeStore {
         var envelope: DeviceEnvelope? = null
-        var failClear = false
+        var failWrite = false
         override suspend fun read() = envelope
         override suspend fun write(value: DeviceEnvelope?) {
-            if (value == null && failClear) throw IOException("injected cleanup failure")
+            if (failWrite) throw IOException("injected wrapper write failure")
             envelope = value
         }
     }

@@ -53,6 +53,7 @@ class SystemAuthenticationScreenTest {
 
         compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
         compose.onNodeWithText("请输入手机密码", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("用恢复口令重新绑定").assertDoesNotExist()
         compose.onNodeWithText("使用系统验证").assertIsDisplayed().performClick()
         compose.onNodeWithText("轻触进行系统验证").assertDoesNotExist()
 
@@ -102,14 +103,13 @@ class SystemAuthenticationScreenTest {
     }
 
     @Test fun settingsRequireARecoveryPhraseAndSystemPolicyPreventsChangingTheOldLockGrace() {
-        val state = mutableStateOf(SettingsUiState(passwordSet = false, biometricEnabled = false, lockTimeoutSeconds = 60))
+        val state = mutableStateOf(SettingsUiState(passwordSet = false, lockTimeoutSeconds = 60))
         val selected = mutableListOf<Boolean>()
         val lockChanges = mutableListOf<Int>()
         showScreen {
             SettingsScreen(
                 state = state.value,
                 onBack = {},
-                onBiometricChange = {},
                 onLockTimeoutChange = { lockChanges += it },
                 onHideCodesChange = {},
                 onClipboardChange = {},

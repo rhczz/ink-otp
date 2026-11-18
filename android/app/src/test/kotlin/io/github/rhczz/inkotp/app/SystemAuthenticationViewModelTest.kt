@@ -8,9 +8,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
+import io.github.rhczz.inkotp.core.crypto.Argon2Kdf
 import io.github.rhczz.inkotp.core.crypto.KdfParams
 import io.github.rhczz.inkotp.core.model.VaultItem
 import io.github.rhczz.inkotp.core.otp.OtpType
+import io.github.rhczz.inkotp.core.vault.VaultCodec
 import io.github.rhczz.inkotp.data.DeviceEnvelope
 import io.github.rhczz.inkotp.data.DeviceKeys
 import io.github.rhczz.inkotp.data.EnvelopeStore
@@ -160,37 +162,49 @@ class SystemAuthenticationViewModelTest {
         assertFalse(vm.state.unlocked)
     }
 
-    @Test fun ordinaryBiometricModeAutomaticallyRequestsTheSystemPromptOnlyOncePerLockedSession() {
+    @Test fun disabledPolicyOpensOnColdStartAndReturnsAfterAutomaticLockWithoutPrompt() {
         seedPasswordVault()
-        runBlocking {
-            repository.unlockPassword(password.toCharArray())
-            repository.enable(repository.prepareEnable())
-            repository.lock()
-        }
+        val vm = viewModel()
+        assertTrue(vm.state.unlocked)
+        assertEquals(1, vm.state.items.size)
+        assertEquals(1, keys.decryptAttempts)
+
+        vm.onBackground()
+        assertFalse(vm.state.unlocked)
+        assertTrue(vm.state.items.isEmpty())
+        vm.onForeground()
+        val security = noLockScreenSecurity()
+        pumpUntil("background session cleared") { vm.state.ready && !vm.state.busy }
+        repeat(3) { vm.requestAutomaticAuthentication(security) }
+        pumpUntil("silent foreground reopening") { vm.state.unlocked && !vm.state.busy }
+        assertEquals(2, keys.decryptAttempts)
+        assertEquals(1, vm.state.items.size)
+
+        vm.lock()
+        pumpUntil("manual lock") { vm.state.ready && !vm.state.busy }
+        vm.requestAutomaticAuthentication(security)
+        assertFalse(vm.state.unlocked)
+        vm.unlock(security)
+        pumpUntil("explicit reopen after manual lock") { vm.state.unlocked && !vm.state.busy }
+        assertEquals(3, keys.decryptAttempts)
+    }
+
+    @Test fun legacyBiometricsUnavailableOfferOneTimeRecoveryWithoutPrompt() {
+        seedLegacyBiometricVault()
         val vm = viewModel()
         assertTrue(vm.state.biometricEnabled)
 
         vm.requestAutomaticAuthentication(noLockScreenSecurity())
-        pumpUntil("ordinary biometric automatic attempt") { keys.decryptAttempts == 1 && !vm.state.busy }
-
+        assertFalse(vm.state.biometricEnabled)
         assertFalse(vm.state.unlocked)
-        assertNotNull(vm.state.error)
-        vm.requestAutomaticAuthentication(noLockScreenSecurity())
-        shadowOf(Looper.getMainLooper()).idle()
-        assertEquals("rotation must not automatically repeat a failed prompt", 1, keys.decryptAttempts)
-
-        vm.unlock(noLockScreenSecurity())
-        pumpUntil("explicit retry remains possible") { keys.decryptAttempts == 2 && !vm.state.busy }
-        assertFalse(vm.state.unlocked)
+        assertEquals(0, keys.decryptAttempts)
+        vm.unlockPassword(password)
+        pumpUntil("legacy password recovery") { vm.state.unlocked && !vm.state.busy }
+        assertTrue(vm.state.deviceUnlockAvailable)
     }
 
     @Test fun negativeSystemButtonPublishesRecoveryIntentWithoutUnlockingOrRepeatingThePrompt() {
-        seedPasswordVault()
-        runBlocking {
-            repository.unlockPassword(password.toCharArray())
-            repository.enable(repository.prepareEnable())
-            repository.lock()
-        }
+        seedLegacyBiometricVault()
         val vm = viewModel()
         val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup().get()
         Shadow.extract<ShadowBiometricManager>(activity.getSystemService(android.hardware.biometrics.BiometricManager::class.java)).setCanAuthenticate(true)
@@ -279,6 +293,24 @@ class SystemAuthenticationViewModelTest {
         repository.lock()
     }
 
+    private fun seedLegacyBiometricVault() = runBlocking {
+        seedPasswordVault()
+        val bytes = files.read()
+        val header = VaultCodec.parseHeader(bytes)
+        val passphrase = password.toCharArray()
+        val kek = Argon2Kdf().deriveKey(passphrase, header.salt, header.kdfParams!!)
+        val dek = VaultCodec.unwrapDekWithKey(bytes, kek)
+        val material = dek + kek
+        try {
+            val cipher = keys.encryptCipher("biometric")
+            cipher.updateAAD("InkOTP/session/v1/biometric\u0000".toByteArray() + header.salt)
+            envelopes.write(DeviceEnvelope("biometric", cipher.iv, cipher.doFinal(material), header.salt))
+        } finally {
+            passphrase.fill('\u0000')
+            listOf(dek, kek, material).forEach { it.fill(0) }
+        }
+    }
+
     private fun noLockScreenSecurity(): DeviceSecurity {
         val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup().get()
         shadowOf(activity.getSystemService(KeyguardManager::class.java)).setIsDeviceSecure(false)
@@ -324,7 +356,10 @@ class SystemAuthenticationViewModelTest {
             if (failPolicyRead) throw IOException("policy unavailable")
             return required
         }
-        override suspend fun setSystemAuthRequired(required: Boolean) { this.required = required }
+        override suspend fun writeSystemConfiguration(value: DeviceEnvelope?, required: Boolean) {
+            envelope = value
+            this.required = required
+        }
     }
     private class Block {
         val started = CountDownLatch(1)

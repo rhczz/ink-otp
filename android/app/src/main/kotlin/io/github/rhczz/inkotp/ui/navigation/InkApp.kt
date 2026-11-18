@@ -191,8 +191,8 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         if (session.ready && session.exists && !session.unlocked) setup = false
         if (session.unlocked && session.exists && setup && setupPage < 2) setupPage = if (session.passwordSet) 2 else 3
     }
-    LaunchedEffect(sessionToken, session.unlocked, session.biometricEnabled, session.clearClipboardOnLock, session.systemAuthenticationRequired) {
-        if (session.biometricEnabled && setupPage == 2) setupPage = 3
+    LaunchedEffect(sessionToken, session.unlocked, session.clearClipboardOnLock, session.systemAuthenticationRequired) {
+        if (session.systemAuthenticationRequired && setupPage == 2) setupPage = 3
         if (observedSessionToken != sessionToken || !session.unlocked) {
             if (session.clearClipboardOnLock) security.clearClipboard()
             cancelFileOperation()
@@ -203,9 +203,8 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         }
     }
     LaunchedEffect(foreground, session.ready, session.busy, session.unlocked, session.systemAuthenticationRequired,
-        session.biometricEnabled, session.systemRecoveryRequired, sessionToken) {
-        if (foreground && session.ready && !session.busy && !session.unlocked &&
-            (session.systemAuthenticationRequired || session.biometricEnabled)) {
+        session.biometricEnabled, session.deviceUnlockAvailable, session.systemRecoveryRequired, sessionToken) {
+        if (foreground && session.ready && !session.busy && session.exists && !session.unlocked) {
             viewModel.requestAutomaticAuthentication(security)
         }
     }
@@ -220,18 +219,21 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         when {
-            !session.ready -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = colors.accent) }
+            !session.ready || (!session.unlocked && session.deviceUnlockAvailable &&
+                !session.clearClipboardOnLock && session.error == null) ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = colors.accent) }
             setup && (!session.exists || session.unlocked) -> OnboardingScreen(page = setupPage,
                 onNext = { setupPage = if (setupPage == 0) 1 else 3 },
                 onBack = if (setupPage == 1 && !session.exists) ({ setupPage = 0 }) else null,
                 onSkipPassword = { skipPassword = true }, onSetPassword = viewModel::initialize,
-                onEnableBiometric = { viewModel.biometric(true, security) },
+                onEnableSystemAuthentication = { viewModel.systemAuthentication(true, security) },
                 onFinish = { setup = false; screen = Screen.List },
                 onScan = { setup = false; screen = Screen.Scan }, onManual = { setup = false; screen = Screen.ManualAdd },
-                passwordSet = session.passwordSet, biometricAvailable = security.canUseBiometrics())
+                passwordSet = session.passwordSet, systemAuthenticationAvailable = security.canUseSystemAuthentication())
             !session.unlocked -> UnlockScreen(
                 state = UnlockUiState(error = session.error, biometricAvailable = session.biometricEnabled && security.canUseBiometrics(), degraded = !session.passwordSet,
-                    systemAuthenticationRequired = session.systemAuthenticationRequired, systemRecoveryRequired = session.systemRecoveryRequired,
+                    deviceUnlockAvailable = session.deviceUnlockAvailable, systemAuthenticationRequired = session.systemAuthenticationRequired,
+                    systemRecoveryRequired = session.systemRecoveryRequired,
                     recoveryPasswordRequested = session.recoveryPasswordRequested),
                 onUnlock = { viewModel.unlock(security) }, onPasswordSubmit = { viewModel.unlockPassword(it, security) })
             else -> when (screen) {
@@ -251,7 +253,6 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                 Screen.Scan -> ScanScreen(onBack = ::back, onDetected = { scannedInput = it; screen = Screen.ManualAdd },
                     onGallery = ::gallery, onManual = { scannedInput = ""; screen = Screen.ManualAdd })
                 Screen.Settings -> SettingsScreen(state = session.settings, onBack = ::back,
-                    onBiometricChange = { viewModel.biometric(it, security) },
                     onSystemAuthenticationChange = { viewModel.systemAuthentication(it, security) },
                     onLockTimeoutChange = { seconds -> viewModel.settings { it.copy(lockTimeoutSeconds = seconds) } },
                     onHideCodesChange = { hidden -> viewModel.settings { it.copy(hideCodesByDefault = hidden) } },
@@ -260,11 +261,14 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                     onOnboarding = { message = "添加账号可使用列表右下角的加号。设置恢复口令后可导出加密备份，换机时先创建本机库，再从设置中导入。" },
                     onPassword = { passwordTask = PasswordTask.Change }, onExport = { requirePassword { chooseExportFormat = true } }, onImport = ::importBackup,
                     onLock = { security.clearClipboard(); viewModel.lock() })
-                Screen.Diagnostics -> DiagnosticsScreen(state = viewModel.diagnostics(), onBack = ::back, onRefresh = viewModel::refreshClock)
+                Screen.Diagnostics -> DiagnosticsScreen(
+                    state = viewModel.diagnostics(), onBack = ::back,
+                    onRecalculate = viewModel::recalculateCodes, onRefreshResources = viewModel::refreshResources,
+                )
                 Screen.About -> AboutScreen(onBack = ::back)
             }
         }
-        if (addSheet && session.unlocked) InkBottomSheet(onDismiss = { addSheet = false }) {
+        if (foreground && addSheet && session.unlocked) InkBottomSheet(onDismiss = { addSheet = false }) {
             AddSheetContent(onScan = { addSheet = false; navigate(Screen.Scan) }, onGallery = { addSheet = false; gallery() },
                 onManual = { addSheet = false; scannedInput = ""; navigate(Screen.ManualAdd) })
         }
@@ -288,7 +292,7 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
             newPassword = task == PasswordTask.Change, busy = session.busy || fileBusy,
             onDismiss = { if (!session.busy && !fileBusy) { passwordTask = null; importUri = null } },
             onConfirm = { current, password -> when (task) {
-                PasswordTask.Change -> viewModel.setPassword(current, password) { passwordTask = null; message = "恢复口令已更新。旧备份仍使用原来的口令，建议重新导出备份。" }
+                PasswordTask.Change -> viewModel.setPassword(current, password, security) { passwordTask = null; message = "恢复口令已更新。旧备份仍使用原来的口令，建议重新导出备份。" }
                 PasswordTask.Export -> viewModel.export(password, exportFormat) { token ->
                     if (!viewModel.isCurrentSession(token)) { viewModel.discardExport(token); return@export }
                     passwordTask = null
@@ -340,13 +344,13 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
             session.importNames.take(50).forEach { Text(it, style = AppType.caption) }
             if (session.importNames.size > 50) Text("其余 ${session.importNames.size - 50} 个账号也将导入", style = AppType.caption)
             Spacer(Modifier.height(AppTokens.Spacing.l))
-            InkPrimaryButton("合并，重复时保留本机", { viewModel.confirmImport(MergeConflictPolicy.KEEP_LOCAL, false) }, enabled = !session.busy)
-            InkSecondaryButton("合并，重复时使用备份", { viewModel.confirmImport(MergeConflictPolicy.OVERWRITE_LOCAL, false) }, enabled = !session.busy)
-            InkSecondaryButton("合并，重复时两个都保留", { viewModel.confirmImport(MergeConflictPolicy.KEEP_BOTH, false) }, enabled = !session.busy)
+            InkPrimaryButton("合并，重复时保留本机", { viewModel.confirmImport(MergeConflictPolicy.KEEP_LOCAL, false, security) }, enabled = !session.busy)
+            InkSecondaryButton("合并，重复时使用备份", { viewModel.confirmImport(MergeConflictPolicy.OVERWRITE_LOCAL, false, security) }, enabled = !session.busy)
+            InkSecondaryButton("合并，重复时两个都保留", { viewModel.confirmImport(MergeConflictPolicy.KEEP_BOTH, false, security) }, enabled = !session.busy)
             InkSecondaryButton("替换本机全部账号…", { replaceConfirm = true }, enabled = !session.busy)
         } }, confirmButton = {}, dismissButton = { TextButton(enabled = !session.busy, onClick = viewModel::cancelImport) { Text("取消") } })
     if (foreground && replaceConfirm) InkConfirmDialog("替换本机全部账号？", "本机现有账号将被这份备份替换。建议先导出本机备份。", "替换",
-        { replaceConfirm = false; viewModel.confirmImport(MergeConflictPolicy.KEEP_LOCAL, true) }, { replaceConfirm = false }, destructive = true)
+        { replaceConfirm = false; viewModel.confirmImport(MergeConflictPolicy.KEEP_LOCAL, true, security) }, { replaceConfirm = false }, destructive = true)
     val alert = session.error ?: session.notice ?: message
     if (foreground && alert != null && (session.unlocked || setup || message != null)) AlertDialog(
         onDismissRequest = { viewModel.clearError(); viewModel.clearNotice(); message = null },
