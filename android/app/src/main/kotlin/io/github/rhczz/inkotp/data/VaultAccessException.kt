@@ -9,7 +9,7 @@ enum class VaultAccessError(val message: String) {
     WEAK_PASSWORD("恢复口令至少 8 个字符，不能使用纯数字或常见弱口令。"),
     DEVICE_UNAVAILABLE("设备密钥不可用，请用恢复口令解锁。"),
     DEVICE_LOCKED("请先解锁手机，再打开验证器。"),
-    BIOMETRIC_CHANGED("生物识别已变更或失效，请用恢复口令解锁后重新开启。"),
+    BIOMETRIC_CHANGED("旧版生物识别已失效，请使用恢复口令更新解锁方式。"),
     STORAGE_FAILURE("无法读写加密库，请重试；不要清除 App 数据。"),
     INVALID_STATE("当前操作已失效，请重新打开后重试。"),
     SYSTEM_AUTH_REQUIRED("需要先完成系统身份验证，账号仍保持锁定。"),

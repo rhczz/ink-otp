@@ -31,6 +31,7 @@ import io.github.rhczz.inkotp.perf.OperationKind
 import io.github.rhczz.inkotp.perf.OperationTiming
 import io.github.rhczz.inkotp.platform.BiometricAuthenticationException
 import io.github.rhczz.inkotp.platform.DeviceSecurity
+import io.github.rhczz.inkotp.platform.SystemAuthProof
 import io.github.rhczz.inkotp.ui.model.DiagnosticsUiState
 import io.github.rhczz.inkotp.ui.model.SettingsUiState
 import io.github.rhczz.inkotp.ui.model.VaultItemUi
@@ -59,8 +60,9 @@ data class SessionUiState(
     val operationId: Long = 0L,
     val passwordSet: Boolean = false,
     val biometricEnabled: Boolean = false,
+    val deviceUnlockAvailable: Boolean = false,
     val items: List<VaultItemUi> = emptyList(),
-    val settings: SettingsUiState = SettingsUiState(biometricEnabled = false, passwordSet = false, lastBackupAt = null),
+    val settings: SettingsUiState = SettingsUiState(passwordSet = false, lastBackupAt = null),
     val backupReminder: Boolean = true,
     val clockWarning: Boolean = false,
     val error: String? = null,
@@ -102,6 +104,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     private var pickerDeadline: Long? = null
     private val projection = OtpProjectionCache()
     private var tickerJob: Job? = null
+    private var codeRecalculationJob: Job? = null
     private var resourceJob: Job? = null
     private var foreground = false
     private var systemAuthenticationDeadline: Long? = null
@@ -116,7 +119,7 @@ class VaultViewModel internal constructor(application: Application, private val 
 
     init {
         perform(requireUnlocked = false, kind = OperationKind.INITIALIZE) {
-            if (repository.exists() && !repository.systemAuthRequired() && !repository.hasPassword()) repository.unlockDevice()
+            if (repository.exists() && repository.wrapMode().isDeviceUnlock()) repository.unlockDevice()
         }
     }
 
@@ -173,9 +176,13 @@ class VaultViewModel internal constructor(application: Application, private val 
                                 settings = state.settings.copy(systemAuthenticationEnabled = required))
                         }
                         if (token == generation) state = state.copy(error = safeMessage(e), ready = true,
+                            deviceUnlockAvailable = state.deviceUnlockAvailable &&
+                                !(e is VaultAccessException && e.code == VaultAccessError.DEVICE_UNAVAILABLE && state.passwordSet),
+                            biometricEnabled = state.biometricEnabled &&
+                                !(e is VaultAccessException && e.code == VaultAccessError.BIOMETRIC_CHANGED),
                             recoveryPasswordRequested = e is BiometricAuthenticationException && e.recoveryPasswordRequested,
-                            systemRecoveryRequired = state.systemRecoveryRequired ||
-                                (e is VaultAccessException && e.code == VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED))
+                            systemRecoveryRequired = !state.unlocked && (state.systemRecoveryRequired ||
+                                (e is VaultAccessException && e.code == VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)))
                     }
                 } finally {
                     if (token != generation) withContext(NonCancellable + Dispatchers.IO) {
@@ -204,13 +211,14 @@ class VaultViewModel internal constructor(application: Application, private val 
             val exists = repository.exists()
             val password = exists && repository.hasPassword()
             val system = exists && repository.systemAuthRequired()
-            val biometric = exists && !system && repository.wrapMode() == "biometric"
+            val mode = if (exists && !system) repository.wrapMode() else null
             val model = repository.model
             val settings = model?.settings ?: VaultSettings()
             previous.copy(ready = true, exists = exists, unlocked = model != null, passwordSet = password,
                 systemAuthenticationRequired = system, systemRecoveryRequired = false,
-                biometricEnabled = biometric, items = model?.let { projection.project(it, wallClockMillis() / 1000) }.orEmpty(),
-                settings = SettingsUiState(biometricEnabled = biometric, passwordSet = password, systemAuthenticationEnabled = system,
+                biometricEnabled = mode == "biometric", deviceUnlockAvailable = mode.isDeviceUnlock(),
+                items = model?.let { projection.project(it, wallClockMillis() / 1000) }.orEmpty(),
+                settings = SettingsUiState(passwordSet = password, systemAuthenticationEnabled = system,
                     lockTimeoutSeconds = settings.lockTimeoutSeconds, hideCodesByDefault = settings.hideCodesByDefault,
                     clipboardClearSeconds = settings.clipboardClearSeconds, lastBackupAt = metadata.getString("lastBackupAt", null)),
                 backupReminder = model != null && metadata.getString("backupRevision", null) != model.updatedAt,
@@ -231,16 +239,23 @@ class VaultViewModel internal constructor(application: Application, private val 
     /** Activity recreation does not repeat a cancelled prompt; a new process gets a fresh attempt. */
     fun requestAutomaticAuthentication(security: DeviceSecurity) {
         if (!foreground || !state.ready || state.busy || state.unlocked || state.systemRecoveryRequired ||
-            !(state.systemAuthenticationRequired || state.biometricEnabled) ||
             automaticAuthenticationGeneration == generation) return
+        if (!state.systemAuthenticationRequired && !state.biometricEnabled &&
+            !(state.deviceUnlockAvailable && !state.clearClipboardOnLock && state.error == null)) return
         automaticAuthenticationGeneration = generation
+        if (state.biometricEnabled && !security.canUseBiometrics()) {
+            state = state.copy(biometricEnabled = false)
+            return
+        }
         unlock(security)
     }
 
     fun unlockPassword(password: String, security: DeviceSecurity?) {
         val chars = password.toCharArray()
         if (state.busy) { chars.fill('\u0000'); return }
-        if (state.systemAuthenticationRequired && security == null) { chars.fill('\u0000'); report("请先完成系统身份验证"); return }
+        if (state.systemAuthenticationRequired && (security == null || !state.systemRecoveryRequired)) {
+            chars.fill('\u0000'); report("请先完成系统身份验证"); return
+        }
         perform(false, kind = OperationKind.UNLOCK, cleanup = { chars.fill('\u0000') }) { token ->
             try {
                 if (repository.systemAuthRequired()) {
@@ -254,6 +269,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     }
 
     fun unlock(security: DeviceSecurity) {
+        if (state.unlocked) return
         if (state.systemAuthenticationRequired) {
             perform(false, kind = OperationKind.UNLOCK) { token ->
                 val request = repository.prepareSystemUnlock()
@@ -263,9 +279,12 @@ class VaultViewModel internal constructor(application: Application, private val 
             }
             return
         }
-        if (!state.passwordSet) { perform(false) { repository.unlockDevice() }; return }
+        if (state.deviceUnlockAvailable || !state.passwordSet) {
+            perform(false, kind = OperationKind.UNLOCK) { repository.unlockDevice() }
+            return
+        }
         if (!state.biometricEnabled) { report("请使用恢复口令解锁"); return }
-        perform(false) { token ->
+        perform(false, kind = OperationKind.UNLOCK) { token ->
             val cipher = repository.prepareUnlock()
             val authenticated = withContext(Dispatchers.Main) { security.authenticate(cipher, "解锁 InkOTP") }
             checkGeneration(token)
@@ -291,20 +310,6 @@ class VaultViewModel internal constructor(application: Application, private val 
         }
     }
 
-    fun biometric(enabled: Boolean, security: DeviceSecurity) {
-        if (state.systemAuthenticationRequired) { report("每次进入验证已包含系统允许的生物识别；如需更改，请先关闭该设置"); return }
-        if (enabled && !state.passwordSet) { report("请先设置恢复口令，再开启生物识别"); return }
-        if (enabled && !security.canUseBiometrics()) { report("设备没有可用的强生物识别，请先在系统设置中录入指纹或受支持的人脸"); return }
-        perform { token ->
-            if (enabled) {
-                val cipher = repository.prepareEnable()
-                val authenticated = withContext(Dispatchers.Main) { security.authenticate(cipher, "开启生物识别解锁") }
-                checkGeneration(token)
-                repository.enable(authenticated)
-            } else repository.disableBiometric()
-        }
-    }
-
     fun add(issuer: String, account: String, input: String, done: () -> Unit) = mutate(done) { VaultActions.add(it, issuer, account, input) }
     fun edit(id: String, issuer: String, account: String, done: () -> Unit) = mutate(done) { VaultActions.edit(it, id, issuer, account) }
     fun delete(id: String, done: () -> Unit) = mutate(done) { VaultActions.delete(it, id) }
@@ -323,13 +328,17 @@ class VaultViewModel internal constructor(application: Application, private val 
 
     fun settings(update: (VaultSettings) -> VaultSettings) = mutate { it.copy(settings = update(it.settings), updatedAt = Instant.now().toString()) }
 
-    fun setPassword(current: String, new: String, done: () -> Unit) {
+    fun setPassword(current: String, new: String, security: DeviceSecurity, done: () -> Unit) {
         VaultActions.passwordError(new)?.let { report(it); return }
         val old = current.takeIf { state.passwordSet }?.toCharArray()
         val fresh = new.toCharArray()
         if (state.busy || !state.unlocked) { old?.fill('\u0000'); fresh.fill('\u0000'); return }
         perform(kind = OperationKind.CHANGE_PASSWORD, cleanup = { old?.fill('\u0000'); fresh.fill('\u0000') }) { token ->
-            try { repository.setPassword(old, fresh); withContext(Dispatchers.Main) { if (token == generation) done() } }
+            try {
+                val proof = authorizeRebind(token, security)
+                repository.setPassword(old, fresh, proof)
+                withContext(Dispatchers.Main) { if (token == generation) done() }
+            }
             finally { old?.fill('\u0000'); fresh.fill('\u0000') }
         }
     }
@@ -409,12 +418,23 @@ class VaultViewModel internal constructor(application: Application, private val 
         }
     }
 
-    fun confirmImport(policy: MergeConflictPolicy, replace: Boolean) = perform(kind = OperationKind.IMPORT) { token ->
+    fun confirmImport(policy: MergeConflictPolicy, replace: Boolean, security: DeviceSecurity? = null) = perform(kind = OperationKind.IMPORT) { token ->
         val remote = pendingImport ?: throw IllegalStateException()
-        repository.importBackup(remote, policy, replace)
+        val proof = authorizeRebind(token, security)
+        repository.importBackup(remote, policy, replace, proof)
         repository.discardModel(remote)
         pendingImport = null
-        withContext(Dispatchers.Main) { checkGeneration(token); state = state.copy(importNames = null, importWarnings = emptyList(), importFormat = null, notice = "导入完成，请继续使用本机恢复口令。系统验证策略保持开启时，下次进入可能需要用系统验证和恢复口令重新绑定。") }
+        withContext(Dispatchers.Main) { checkGeneration(token); state = state.copy(importNames = null, importWarnings = emptyList(), importFormat = null, notice = "导入完成。本机恢复口令仍可用于备份和恢复。") }
+    }
+
+    private suspend fun authorizeRebind(token: Long, security: DeviceSecurity?): SystemAuthProof? {
+        val request = repository.prepareSystemRebind() ?: return null
+        val proof = withContext(Dispatchers.Main) {
+            (security ?: throw VaultAccessException(VaultAccessError.SYSTEM_AUTH_REQUIRED))
+                .authenticateSystem(request, "验证身份以更新本机加密库")
+        }
+        checkGeneration(token)
+        return proof
     }
 
     fun cancelImport() {
@@ -427,6 +447,7 @@ class VaultViewModel internal constructor(application: Application, private val 
         val token = ++generation
         activeOperation?.cancel()
         tickerJob?.cancel(); tickerJob = null
+        codeRecalculationJob?.cancel()
         resourceJob?.cancel(); resourceJob = null
         backgroundJob?.cancel()
         backgroundAt = null
@@ -436,8 +457,9 @@ class VaultViewModel internal constructor(application: Application, private val 
         systemAuthenticationDeadline = null
         pendingExport?.bytes?.fill(0)
         pendingExport = null
-        state = state.copy(unlocked = false, busy = false, items = emptyList(), importNames = null, error = null,
-            recoveryPasswordRequested = false,
+        state = state.copy(ready = state.ready && clearClipboard, unlocked = false, busy = false,
+            items = emptyList(), importNames = null, error = null,
+            recoveryPasswordRequested = false, systemRecoveryRequired = false,
             clearClipboardOnLock = clearClipboard, samplingResources = false, resources = null, importWarnings = emptyList(), importFormat = null)
         viewModelScope.launch {
             gate.withLock {
@@ -456,7 +478,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     private suspend fun refreshLockedMetadata(token: Long) {
         var exists = true
         var password = true
-        var biometric = false
+        var mode: String? = null
         var system = true
         var error: String? = null
         withContext(Dispatchers.IO) {
@@ -465,7 +487,7 @@ class VaultViewModel internal constructor(application: Application, private val 
                 if (exists) {
                     system = repository.systemAuthRequired()
                     password = repository.hasPassword()
-                    biometric = !system && repository.wrapMode() == "biometric"
+                    if (!system) mode = repository.wrapMode()
                 } else { password = false; system = false }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -475,11 +497,14 @@ class VaultViewModel internal constructor(application: Application, private val 
             }
         }
         if (token == generation) {
-            state = state.copy(ready = true, exists = exists, passwordSet = password, biometricEnabled = biometric,
+            state = state.copy(ready = true, exists = exists, passwordSet = password,
+                biometricEnabled = mode == "biometric", deviceUnlockAvailable = mode.isDeviceUnlock(),
                 systemAuthenticationRequired = system, error = error,
-                settings = state.settings.copy(passwordSet = password, biometricEnabled = biometric, systemAuthenticationEnabled = system))
+                settings = state.settings.copy(passwordSet = password, systemAuthenticationEnabled = system))
         }
     }
+
+    private fun String?.isDeviceUnlock() = this == "device-local" || this == "device-bound"
 
     fun beginPicker(): Long {
         check(state.unlocked)
@@ -508,6 +533,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     fun onSystemAuthenticationBackground() {
         foreground = false
         reconcileTicker()
+        codeRecalculationJob?.cancel()
         resourceJob?.cancel()
         val now = SystemClock.elapsedRealtime()
         val deadline = systemAuthenticationDeadline ?: (now + 120_000L).also { systemAuthenticationDeadline = it }
@@ -520,6 +546,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     fun onBackground() {
         foreground = false
         reconcileTicker()
+        codeRecalculationJob?.cancel()
         resourceJob?.cancel()
         if (!state.unlocked) { if (state.busy) lock(clearClipboard = false); return }
         backgroundAt = SystemClock.elapsedRealtime()
@@ -564,13 +591,32 @@ class VaultViewModel internal constructor(application: Application, private val 
         ) + listOfNotNull(resource.lastOperation?.let { "最近操作（含验证等待）" to "${operationLabel(it.kind)} · ${it.elapsedMillis} ms" }) }.orEmpty(),
         resourceSampling = state.samplingResources,
     )
-    fun refreshClock() {
-        drift.reset()
-        state = state.copy(clockWarning = !automaticTime())
-        refreshResources()
+    fun recalculateCodes() {
+        if (!foreground || !state.unlocked || codeRecalculationJob?.isActive == true) return
+        val token = generation
+        codeRecalculationJob = viewModelScope.launch {
+            gate.withLock {
+                if (!foreground || !isCurrentSession(token)) return@withLock
+                try {
+                    val items = withContext(Dispatchers.Default) {
+                        val epochSeconds = wallClockMillis() / 1000
+                        projection.clear()
+                        repository.model?.let { projection.project(it, epochSeconds) }.orEmpty()
+                    }
+                    if (foreground && isCurrentSession(token)) {
+                        drift.reset()
+                        state = state.copy(items = items, clockWarning = !automaticTime())
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    if (foreground && isCurrentSession(token)) report("验证码重新计算未完成，可稍后重试")
+                }
+            }
+        }
     }
     fun refreshResources() {
-        if (!state.unlocked || resourceJob?.isActive == true) return
+        if (!foreground || !state.unlocked || resourceJob?.isCompleted == false) return
         val token = generation
         val timing = lastOperation
         state = state.copy(samplingResources = true)
@@ -604,6 +650,7 @@ class VaultViewModel internal constructor(application: Application, private val 
         pendingExport?.bytes?.fill(0)
         pendingExport = null
         activeOperation?.cancel()
+        codeRecalculationJob?.cancel()
         tickerJob?.cancel(); resourceJob?.cancel()
         backgroundJob?.cancel()
         CoroutineScope(Dispatchers.IO).launch { gate.withLock { pendingImport?.let(repository::discardModel); pendingImport = null; projection.clear(); repository.lock() } }

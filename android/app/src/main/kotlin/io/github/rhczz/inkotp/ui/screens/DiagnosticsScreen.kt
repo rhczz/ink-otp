@@ -29,7 +29,8 @@ import io.github.rhczz.inkotp.ui.theme.LocalInkColors
 fun DiagnosticsScreen(
     state: DiagnosticsUiState,
     onBack: () -> Unit,
-    onRefresh: () -> Unit,
+    onRecalculate: () -> Unit,
+    onRefreshResources: () -> Unit,
 ) {
     val colors = LocalInkColors.current
     ScreenScaffold(title = "诊断", onBack = onBack) {
@@ -99,7 +100,7 @@ fun DiagnosticsScreen(
             ChecklistItem("密钥是否手动输入错误", true)
 
             Spacer(Modifier.height(AppTokens.Spacing.xxl))
-            InkPrimaryButton(text = "重新计算全部验证码", onClick = onRefresh)
+            InkPrimaryButton(text = "重新计算全部验证码", onClick = onRecalculate)
 
             SectionHeader("性能与资源")
             Text(
@@ -115,7 +116,7 @@ fun DiagnosticsScreen(
             Spacer(Modifier.height(AppTokens.Spacing.l))
             InkPrimaryButton(
                 text = if (state.resourceSampling) "正在采样…" else "刷新资源统计",
-                onClick = onRefresh,
+                onClick = onRefreshResources,
                 enabled = !state.resourceSampling,
             )
         }

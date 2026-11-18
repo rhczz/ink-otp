@@ -9,6 +9,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.isSensitiveData
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -44,7 +45,10 @@ fun CodeText(
     val spoken = if (hidden) "验证码已隐藏" else code.toCharArray().joinToString(" ")
     Text(
         text = shown,
-        modifier = modifier.semantics { contentDescription = spoken },
+        modifier = modifier.semantics {
+            contentDescription = spoken
+            if (!hidden) isSensitiveData = true
+        },
         style = style,
         color = color,
         maxLines = 1,

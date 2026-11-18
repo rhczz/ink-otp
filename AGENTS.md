@@ -8,6 +8,11 @@
 - 开始实现前记录范围和验收方式；交付前补全实际结果。没有执行的检查写“未验证”，不能当作通过。
 - 功能行为、交互或数据格式变化，先同步设计文档与规格；临时偏离记录到 `docs/exceptions.md`。
 
+## 分支与提交
+
+- 每次修改从最新的远端 `master` 建立新分支。按工作类型使用 `feature/`、`fixture/`、`test/`、`chore/`、`refactor/` 等前缀，提交、推送并走 PR 合入 `master`。
+- Codex 协作的提交使用 `Co-authored-by: Codex <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>` 署名。合并时保留共同作者记录。
+
 ## 项目边界
 
 - 优先采用成熟的 Android 官方流程、行业格式和生态约定。自定义实现必须说明现有机制为何不足，并记录 ADR；不能只为本 App 方便而静默破坏互通。

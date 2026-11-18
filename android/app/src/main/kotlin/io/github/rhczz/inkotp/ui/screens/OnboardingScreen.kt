@@ -40,12 +40,12 @@ fun OnboardingScreen(
     onBack: (() -> Unit)? = null,
     onSkipPassword: () -> Unit,
     onSetPassword: (String) -> Unit,
-    onEnableBiometric: () -> Unit,
+    onEnableSystemAuthentication: () -> Unit,
     onFinish: () -> Unit,
     onScan: () -> Unit = onFinish,
     onManual: () -> Unit = onFinish,
     passwordSet: Boolean = true,
-    biometricAvailable: Boolean = true,
+    systemAuthenticationAvailable: Boolean = true,
 ) {
     val colors = LocalInkColors.current
     var password by remember { mutableStateOf("") }
@@ -126,10 +126,12 @@ fun OnboardingScreen(
                 2 -> {
                     InkIcon(R.drawable.ic_fingerprint, size = AppTokens.IconSize.state, tint = colors.ink)
                     Spacer(Modifier.height(AppTokens.Spacing.xxl))
-                    Text(text = "开启生物识别", style = AppType.title, color = colors.ink, textAlign = TextAlign.Center)
+                    Text(text = "每次进入时验证身份", style = AppType.title, color = colors.ink, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(AppTokens.Spacing.s))
                     Text(
-                        text = if (!passwordSet) "请先设置恢复口令，才能开启生物识别。" else if (!biometricAvailable) "设备没有可用的强生物识别，可继续使用恢复口令。" else "日常解锁更快。生物识别失败或变更时，仍可用恢复口令。",
+                        text = if (!passwordSet) "设置恢复口令后即可开启。"
+                            else if (!systemAuthenticationAvailable) "在手机系统设置中启用锁屏密码后，可从应用设置开启。"
+                            else "开启后，通过手机的指纹、人脸或锁屏密码进入。关闭时可直接进入。",
                         style = AppType.body,
                         color = colors.inkSecondary,
                         textAlign = TextAlign.Center,
@@ -158,9 +160,9 @@ fun OnboardingScreen(
                 InkTextButton(text = "稍后设置（安全性降低）", onClick = onSkipPassword, color = colors.inkSecondary)
             }
             2 -> {
-                InkPrimaryButton(text = "开启", onClick = onEnableBiometric, enabled = passwordSet && biometricAvailable)
+                InkPrimaryButton(text = "开启", onClick = onEnableSystemAuthentication, enabled = passwordSet && systemAuthenticationAvailable)
                 Spacer(Modifier.height(AppTokens.Spacing.s))
-                InkTextButton(text = "只使用口令", onClick = onNext, color = colors.inkSecondary)
+                InkTextButton(text = "暂不开启", onClick = onNext, color = colors.inkSecondary)
             }
             else -> {
                 InkPrimaryButton(text = "扫描二维码", onClick = onScan)

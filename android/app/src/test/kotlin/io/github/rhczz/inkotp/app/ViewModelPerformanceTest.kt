@@ -18,6 +18,7 @@ import io.github.rhczz.inkotp.data.VaultRepository
 import io.github.rhczz.inkotp.perf.ProjectionCacheStats
 import java.security.MessageDigest
 import java.time.Duration
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
@@ -45,6 +46,7 @@ class ViewModelPerformanceTest {
     private val store = ViewModelStore()
     private val realNanoClock = System::class.java.getMethod("nanoTime")
     private val probes = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val nextClockRead = AtomicReference<(() -> Long)?>(null)
     private val repository = VaultRepository(MemoryFiles(), MemoryEnvelopes(), NoHardwareKeys,
         kdf = FastTestKdf, kdfParams = KdfParams(8192, 1, 1))
 
@@ -144,12 +146,84 @@ class ViewModelPerformanceTest {
         assertEquals(0, pendingMainTasks())
     }
 
+    @Test fun diagnosticActionsRefreshOnlyTheirOwnResults() {
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        Settings.Global.putInt(application.contentResolver, Settings.Global.AUTO_TIME, 0)
+        val vm = unlockedViewModel()
+        vm.onForeground()
+        pumpUntil("idle foreground ticker") { vm.tickerActive && pendingMainTasks() == 1 }
+        val initial = statistics(vm).codeComputations
+        Settings.Global.putInt(application.contentResolver, Settings.Global.AUTO_TIME, 1)
+        assertTrue(vm.state.clockWarning)
+
+        vm.refreshResources()
+        pumpUntil("resource sample") { vm.state.resources != null && !vm.state.samplingResources }
+        assertTrue(vm.state.clockWarning)
+        assertEquals(initial, statistics(vm).codeComputations)
+        val sample = vm.state.resources
+
+        repeat(20) { vm.recalculateCodes() }
+        pumpUntil("recalculated OTPs") { !vm.state.clockWarning }
+        assertEquals(initial + 1, statistics(vm).codeComputations)
+        assertSame(sample, vm.state.resources)
+        assertFalse(vm.state.samplingResources)
+    }
+
+    @Test fun failedRecalculationCanRetryAndDoesNotRefreshResourceStatistics() {
+        val vm = unlockedViewModel()
+        vm.onForeground()
+        pumpUntil("idle foreground ticker") { vm.tickerActive && pendingMainTasks() == 1 }
+        val before = statistics(vm)
+        nextClockRead.set { error("Unusable test clock") }
+
+        vm.recalculateCodes()
+        pumpUntil("recalculation failure") { vm.state.error == "验证码重新计算未完成，可稍后重试" }
+        assertEquals(before.codeComputations, statistics(vm).codeComputations)
+        assertNull(vm.state.resources)
+        assertFalse(vm.state.samplingResources)
+
+        vm.clearError()
+        vm.recalculateCodes()
+        assertEquals(before.codeComputations + 1, statistics(vm).codeComputations)
+        assertNull(vm.state.error)
+    }
+
+    @Test fun lockingWhileRecalculatingDiscardsInFlightDiagnosticResults() {
+        val vm = unlockedViewModel()
+        vm.onForeground()
+        pumpUntil("idle foreground ticker") { vm.tickerActive && pendingMainTasks() == 1 }
+        val began = CountDownLatch(1)
+        val complete = CountDownLatch(1)
+        nextClockRead.set {
+            began.countDown()
+            check(complete.await(5, TimeUnit.SECONDS))
+            SystemClock.uptimeMillis()
+        }
+
+        vm.recalculateCodes()
+        try {
+            pumpUntil("recalculation waiting for the clock") { began.count == 0L }
+            vm.refreshResources()
+            vm.lock()
+        } finally {
+            complete.countDown()
+        }
+        pumpUntil("serialized lock completes") { repository.model == null }
+        assertFalse(vm.state.unlocked)
+        assertTrue(vm.state.items.isEmpty())
+        assertEquals(0, statistics(vm).cachedEntries)
+        assertNull(vm.state.resources)
+        assertFalse(vm.state.samplingResources)
+    }
+
     private fun viewModel(): VaultViewModel {
         val application = ApplicationProvider.getApplicationContext<Application>()
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                VaultViewModel(application, repository, wallClockMillis = { SystemClock.uptimeMillis() }) as T
+                VaultViewModel(application, repository, wallClockMillis = {
+                    nextClockRead.getAndSet(null)?.invoke() ?: SystemClock.uptimeMillis()
+                }) as T
         }
         return ViewModelProvider(store, factory)[VaultViewModel::class.java].also { vm ->
             pumpUntil("initial metadata") { vm.state.ready && !vm.state.busy }

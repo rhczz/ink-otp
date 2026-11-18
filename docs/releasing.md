@@ -1,6 +1,6 @@
 # InkOTP 版本发布
 
-自动发布的入口是推送 `v{versionName}` tag。例如当前源码为 `versionName = "0.4.2-beta.1"`、`versionCode = 5`，只接受 `v0.4.2-beta.1`。普通分支推送和 PR 运行质量检查；手动执行 Release 工作流也只运行 CI，不签名、不创建 Release。0.4.1 的发布结果见 [发布记录](changes/2026-11-17-release-0.4.1.md)，0.4.2 的用户授权和验证见 [隐藏复制修复记录](changes/2026-11-17-hidden-copy-and-device-lock.md)。
+自动发布的入口是推送 `v{versionName}` tag。例如 `versionName = "0.4.3-beta.1"`、`versionCode = 6` 对应 `v0.4.3-beta.1`。普通分支推送和 PR 运行质量检查；手动执行 Release 工作流也只运行 CI，不签名、不创建 Release。0.4.1 的发布结果见 [发布记录](changes/2026-11-17-release-0.4.1.md)，0.4.2 的用户授权和验证见 [隐藏复制修复记录](changes/2026-11-17-hidden-copy-and-device-lock.md)。
 
 ## 工作流与配置
 
@@ -39,7 +39,7 @@ f1e8211a3f245bed886a048f8088b16be229072dcf77b65981e6ca5dcf642589
 
 `tools/release_artifacts.py` 从源码、Gradle metadata 和 APK 读取版本并要求完全一致；tag 使用严格版本格式并通过参数数组传给子进程，不进入 shell 插值。checkout 必须正好是该 tag 指向的提交。`versionCode` 至少为 3，并且高于其他已有版本 tag；既有 Release（包括草稿）一律拒绝。远端 Release 找不到对应源码 tag、GitHub API 失败或历史数据无法解析时也停止。
 
-APK 必须是 `io.github.rhczz.inkotp`、非 debuggable、minSdk 26、targetSdk 36，且权限都在配置白名单内。白名单只允许相机、生物识别及 AndroidX 的私有接收器权限。网络、媒体读取、外部存储等权限都会阻止发布。产物要求小于 15 MiB，包含 arm64-v8a、armeabi-v7a、x86、x86_64；所有 ELF PT_LOAD 段支持 16 KiB 对齐。
+APK 必须是 `io.github.rhczz.inkotp`、非 debuggable、minSdk 26、targetSdk 36，且权限都在配置白名单内。白名单只允许相机、生物识别、隐藏悬浮窗及 AndroidX 的私有接收器权限。网络、媒体读取、外部存储等权限都会阻止发布。产物要求小于 15 MiB，包含 arm64-v8a、armeabi-v7a、x86、x86_64；所有 ELF PT_LOAD 段支持 16 KiB 对齐。
 
 Android Build Tools 36.0.0 先执行 `zipalign -P 16`，再使用 `apksigner` 签名，签后执行对齐检查及 `apksigner verify --min-sdk-version 26 --print-certs`。只接受唯一且指纹匹配的非调试签名。发布前复用 APK 体积、ABI 和 ELF 门禁。
 

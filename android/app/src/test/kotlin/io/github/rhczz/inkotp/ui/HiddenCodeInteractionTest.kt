@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.click
@@ -97,6 +100,7 @@ class HiddenCodeInteractionTest {
         compose.runOnIdle { current.value = current.value.copy(item = next.copy(hidden = false)) }
         compose.onNodeWithText(groupCode(next.code, next.digits)).assertIsDisplayed()
         compose.onNodeWithContentDescription(next.code.toCharArray().joinToString(" ")).assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.IsSensitiveData, true))
         compose.runOnIdle { current.value = current.value.copy(item = next) }
         assertHidden(next)
     }

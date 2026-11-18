@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Looper
+import android.os.PersistableBundle
 import android.view.WindowManager
 import androidx.fragment.app.FragmentActivity
 import org.junit.After
@@ -72,6 +73,32 @@ class DeviceSecurityTest {
         security.clearClipboard()
 
         assertEquals("123456", clipboard.primaryClip!!.getItemAt(0).text.toString())
+    }
+
+    @Test
+    fun ownershipExpiresWhenAClipboardWriterReusesOurMetadata() {
+        security.copyCode("123456", clearAfterSeconds = 15)
+        val copiedMetadata = PersistableBundle(clipboard.primaryClipDescription!!.extras!!)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+        clipboard.setPrimaryClip(ClipData.newPlainText("InkOTP 验证码", "a useful note").apply {
+            description.extras = copiedMetadata
+        })
+
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(14))
+
+        assertEquals("a useful note", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+    }
+
+    @Test
+    fun fifteenAndSixtySecondPresetsUseTheirOwnDeadlines() {
+        listOf(15L, 60L).forEach { seconds ->
+            security.copyCode("12345678", clearAfterSeconds = seconds.toInt())
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(seconds - 1))
+            assertTrue(clipboard.hasPrimaryClip())
+
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+            assertFalse(clipboard.hasPrimaryClip())
+        }
     }
 
     @Test

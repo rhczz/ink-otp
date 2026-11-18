@@ -103,21 +103,28 @@ class SystemAuthenticationRepositoryTest {
         assertFalse(repository.systemAuthRequired())
     }
 
-    @Test fun passwordChangeAndImportKeepThePolicyAndRequireAuthorizedRebinding() = runBlocking {
+    @Test fun passwordChangeAndImportRequireFreshSystemProofAndKeepNormalSystemUnlock() = runBlocking {
         val repository = repo()
         repository.initialize(password())
         repository.enableSystemAuth(authorized(repository.prepareSystemEnable()))
         val replacement = "another strong recovery phrase"
-        repository.setPassword(password(), replacement.toCharArray())
-        assertTrue(repository.systemAuthRequired())
-        assertNull(envelopes.envelope)
-        repository.lock()
-        repository.recoverSystemAuth(replacement.toCharArray(), authorized(repository.prepareSystemRecovery()))
-        repository.importBackup(repository.model!!.copy(items = emptyList()), MergeConflictPolicy.KEEP_LOCAL, false)
+        val committed = files.bytes!!.copyOf()
+        assertAccess(VaultAccessError.SYSTEM_AUTH_REQUIRED) {
+            repository.setPassword(password(), replacement.toCharArray())
+        }
+        assertArrayEquals(committed, files.bytes)
+        val passwordProof = authorized(repository.prepareSystemRebind()!!)
+        repository.setPassword(password(), replacement.toCharArray(), passwordProof)
+        val remote = repository.model!!.copy(items = emptyList())
+        assertAccess(VaultAccessError.INVALID_STATE) {
+            repository.importBackup(remote, MergeConflictPolicy.KEEP_LOCAL, false, passwordProof)
+        }
+        val importProof = authorized(repository.prepareSystemRebind()!!)
+        repository.importBackup(remote, MergeConflictPolicy.KEEP_LOCAL, false, importProof)
         assertTrue(repository.systemAuthRequired())
         repository.lock()
         assertAccess(VaultAccessError.SYSTEM_AUTH_REQUIRED) { repository.unlockPassword(replacement.toCharArray()) }
-        repository.recoverSystemAuth(replacement.toCharArray(), authorized(repository.prepareSystemRecovery()))
+        repository.unlockSystemAuth(authorized(repository.prepareSystemUnlock()))
         assertTrue(repository.systemAuthRequired())
     }
 
@@ -141,15 +148,15 @@ class SystemAuthenticationRepositoryTest {
         assertNotNull(repository.model)
     }
 
-    @Test fun successfulDisableRequiresNewProofThenRestoresPasswordOnlyAccess() = runBlocking {
+    @Test fun successfulDisableRequiresNewProofThenRestoresDeviceAccess() = runBlocking {
         val repository = repo()
         repository.initialize(password())
         repository.enableSystemAuth(authorized(repository.prepareSystemEnable()))
         repository.disableSystemAuth(authorized(repository.prepareSystemDisable()))
         assertFalse(repository.systemAuthRequired())
-        assertEquals("password-only", repository.wrapMode())
+        assertEquals("device-local", repository.wrapMode())
         repository.lock()
-        assertNotNull(repo().unlockPassword(password()))
+        assertNotNull(repo().unlockDevice())
     }
 
     @Test fun unreadablePolicyFailsClosedInsteadOfFallingBackToPasswordUnlock() = runBlocking {
@@ -198,8 +205,9 @@ class SystemAuthenticationRepositoryTest {
             if (failPolicyRead) throw IOException("policy unavailable")
             return required
         }
-        override suspend fun setSystemAuthRequired(required: Boolean) {
+        override suspend fun writeSystemConfiguration(value: DeviceEnvelope?, required: Boolean) {
             if (failPolicyWrite) throw IOException("policy write failed")
+            envelope = value
             this.required = required
         }
     }

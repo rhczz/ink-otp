@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.KeyguardManager
 import android.content.Intent
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
@@ -39,7 +40,7 @@ class DeviceSecurity(activity: FragmentActivity) {
     private val appContext = activity.applicationContext
     private val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var ownedClipToken: String? = null
+    private var ownedClip: OwnedClip? = null
     private var clearTask: Runnable? = null
     private var activePrompt: BiometricPrompt? = null
     private var activeAuthentication: CancellableContinuation<*>? = null
@@ -156,7 +157,9 @@ class DeviceSecurity(activity: FragmentActivity) {
                     val authorizedCipher = result.cryptoObject?.cipher
                     if (authorizedCipher == null || authorizedCipher !== cipher) {
                         continuation.resumeWithException(
-                            BiometricAuthenticationException("认证未授权密钥操作，请使用恢复口令。"),
+                            BiometricAuthenticationException(if (allowCredential) {
+                                "系统验证未授权本次密钥操作，请重试。"
+                            } else "认证未授权密钥操作，请使用恢复口令。"),
                         )
                     } else {
                         continuation.resume(authorizedCipher)
@@ -174,7 +177,7 @@ class DeviceSecurity(activity: FragmentActivity) {
                             message = if (allowCredential && cancelled) {
                                 "已取消系统身份验证，账号仍保持锁定。"
                             } else if (allowCredential) {
-                                "系统身份验证暂不可用，请重试或在验证后使用恢复口令修复。"
+                                "系统身份验证暂不可用，请重试或检查手机锁屏设置。"
                             } else if (cancelled) {
                                 "已取消生物识别，可使用恢复口令。"
                             } else {
@@ -245,10 +248,13 @@ class DeviceSecurity(activity: FragmentActivity) {
         }
         clipboard.setPrimaryClip(clip)
         cancelClearTimer()
-        ownedClipToken = token
+        ownedClip = null
+        val description = findOwnedClip(token) ?: return
+        val owner = OwnedClip(token, description.timestamp)
+        ownedClip = owner
         if (clearAfterSeconds > 0) {
             val task = Runnable {
-                if (ownedClipToken == token) clearClipboard()
+                if (ownedClip === owner) clearClipboard()
             }
             clearTask = task
             val delayMillis = if (clearAfterSeconds == 1) 0L else clearAfterSeconds * 1_000L
@@ -256,16 +262,16 @@ class DeviceSecurity(activity: FragmentActivity) {
         }
     }
 
-    /** Clears only the clip bearing the token from our most recent successful copy. */
+    /** Requires the same token and Android clipboard timestamp before requesting a clear. */
     @MainThread
     fun clearClipboard() {
         requireMainThread()
         cancelClearTimer()
-        val token = ownedClipToken ?: return
-        ownedClipToken = null
+        val owner = ownedClip ?: return
+        ownedClip = null
         // Android can deny clipboard access while backgrounded. Clearing is best effort.
         try {
-            if (clipboard.primaryClipDescription?.extras?.getString(OWNER_EXTRA) != token) return
+            if (findOwnedClip(owner.token)?.timestamp != owner.timestamp) return
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 clipboard.clearPrimaryClip()
             } else {
@@ -274,6 +280,12 @@ class DeviceSecurity(activity: FragmentActivity) {
         } catch (_: SecurityException) {
             // Do not retry later: the user might have copied unrelated content in the meantime.
         }
+    }
+
+    private fun findOwnedClip(token: String): ClipDescription? = try {
+        clipboard.primaryClipDescription?.takeIf { it.extras?.getString(OWNER_EXTRA) == token }
+    } catch (_: SecurityException) {
+        null
     }
 
     @MainThread
@@ -313,6 +325,8 @@ class DeviceSecurity(activity: FragmentActivity) {
     private fun requireMainThread() {
         check(Looper.myLooper() == Looper.getMainLooper()) { "设备服务必须在主线程调用" }
     }
+
+    private class OwnedClip(val token: String, val timestamp: Long)
 
     private companion object {
         const val SENSITIVE_EXTRA = "android.content.extra.IS_SENSITIVE"

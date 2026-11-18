@@ -25,6 +25,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.isSensitiveData
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -45,6 +47,7 @@ fun AppTextField(
     singleLine: Boolean = true,
     keyboardType: KeyboardType = KeyboardType.Text,
     visualTransformation: VisualTransformation = VisualTransformation.None,
+    sensitive: Boolean = false,
     trailing: @Composable (() -> Unit)? = null,
 ) {
     val colors = LocalInkColors.current
@@ -54,7 +57,9 @@ fun AppTextField(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().then(
+                if (sensitive) Modifier.semantics { isSensitiveData = true } else Modifier,
+            ),
             singleLine = singleLine,
             isError = error != null,
             placeholder = placeholder?.let { { Text(text = it, style = AppType.body, color = colors.inkDisabled) } },
@@ -106,6 +111,7 @@ fun SecretTextField(
         error = error,
         keyboardType = KeyboardType.Password,
         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+        sensitive = true,
         trailing = {
             InkIconButton(
                 icon = if (visible) R.drawable.ic_visibility_off else R.drawable.ic_visibility,

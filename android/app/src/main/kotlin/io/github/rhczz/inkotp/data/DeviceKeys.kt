@@ -78,7 +78,7 @@ internal fun createDeviceKeySpec(
     strongBox: Boolean,
     sdkInt: Int = Build.VERSION.SDK_INT,
 ): KeyGenParameterSpec {
-    require(mode == "biometric" || mode == "device-bound" || mode == "system-auth") { "unsupported device wrap mode" }
+    require(mode in setOf("biometric", "device-bound", "device-local", "system-auth")) { "unsupported device wrap mode" }
     val biometric = mode == "biometric"
     val system = mode == "system-auth"
     val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)

@@ -282,12 +282,21 @@ ea01b95a7fd1538f74e04456df360f65a71eeebab91d2271d1ac78fd62e743a645527f
 
 ## 7. 设备包装（不在本文件中）
 
-- Android：用 Keystore 中的不可导出 AES-256-GCM 密钥包装 DEK；包装后的密文、IV、密钥别名存 **DataStore**（应用私有），不写入 `vault.bin`。
-- iOS（Phase 2）：用 Keychain 条目保管 DEK（受生物识别 ACL 保护），同样不写入 `vault.bin`。
-- 设备包装受生物识别变更影响（Android `setInvalidatedByBiometricEnrollment(true)`、iOS `.biometryCurrentSet`）；失效时必须回退到口令通道（`flags` bit0=1）。
-- 无口令通道（`flags=0`）只允许设备包装。设备包装丢失/失效且无备份时，数据**不可恢复**；因此导出备份前必须强制设置口令。
-- 从备份恢复后：用备份中的 vault JSON 重建本地 `vault.bin`，重新生成/绑定 DEK 与设备包装，并提示重新开启生物识别。
-- `vault.bin` 必须排除系统自动备份与云同步；否则会出现"恢复出文件但 Keystore 密钥不存在"的情况。
+Android 使用应用私有 DataStore 保存包装模式、12 B IV、16 B salt、AES-256-GCM 密文及标签；各模式对应独立的不可导出 Android Keystore 密钥。AAD 为 UTF-8 `InkOTP/session/v1/<mode>`、一个零字节及当前头部 salt 拼接。
+
+| Android 包装 | 库头部 | 包装材料 | 使用条件 |
+|---|---|---|---|
+| `device-bound` | 无恢复口令 | 32 B DEK | 手机已解锁。保留旧版模式。 |
+| `device-local` | 有恢复口令 | 32 B DEK + 32 B KEK | 手机已解锁，每次进入验证关闭。 |
+| `biometric` | 有恢复口令 | 32 B DEK + 32 B KEK | 只读取旧版包装。强生物识别成功后迁移到 `device-local`。 |
+| `system-auth` | 有恢复口令 | 32 B DEK + 32 B KEK | 每次进入验证开启。API 30+ 使用系统身份验证绑定的密钥操作；API 26–29 由 Android 锁屏确认和限时密钥共同授权。 |
+
+有恢复口令时，解开设备包装后还须用 KEK 对当前头部的密码包装做 GCM 校验，并以恒定时间比较得到的 DEK 与设备包装的 DEK。验证通过后才能打开库密文。升级时，旧版仅有恢复口令通道的库，须先成功用恢复口令解密，随后写入新的设备包装。
+
+每次进入验证的布尔策略独立于包装读取，启用和停用时与新包装通过同一 DataStore 事务提交。策略开启时，缺失、无效或过期的系统包装不能触发本机免验证解锁；重新绑定须验证 Android 系统身份及应用恢复口令。修改口令和导入备份时使用新的包装，开启策略时须先获得新的 Android 系统授权。若库文件已成功提交但包装写入中断，旧包装无法通过当前头部和 DEK 验证；恢复口令仍可从已提交的库中恢复数据。
+
+- 无口令通道时，设备包装丢失且没有备份将无法恢复数据。导出备份前须先设置恢复口令。
+- `vault.bin` 和平台包装必须排除系统自动备份与云同步。iOS（Phase 2）使用 Keychain 实现本地包装。
 
 ---
 
