@@ -30,7 +30,7 @@ import io.github.rhczz.inkotp.ui.theme.AppType
 import io.github.rhczz.inkotp.ui.theme.LocalInkColors
 
 @Composable
-fun AboutScreen(onBack: () -> Unit) {
+fun AboutScreen(onBack: () -> Unit, onPrivacy: (() -> Unit)? = null) {
     val colors = LocalInkColors.current
     val context = LocalContext.current
     var repositoryOpenFailed by remember { mutableStateOf(false) }
@@ -52,10 +52,10 @@ fun AboutScreen(onBack: () -> Unit) {
             )
             Spacer(Modifier.height(AppTokens.Spacing.m))
             Text(text = "InkOTP", style = AppType.title, color = colors.ink)
-            Text(text = "${io.github.rhczz.inkotp.BuildConfig.VERSION_NAME} · 公测版", style = AppType.caption, color = colors.inkSecondary)
+            Text(text = io.github.rhczz.inkotp.BuildConfig.VERSION_NAME, style = AppType.caption, color = colors.inkSecondary)
             Spacer(Modifier.height(AppTokens.Spacing.l))
             Text(
-                text = "完全离线的两步验证器。不申请网络权限，不收集数据；种子只以密文落盘。",
+                text = "离线两步验证器。验证码密钥由应用在本机处理，保存在加密库中。",
                 style = AppType.body,
                 color = colors.inkSecondary,
             )
@@ -96,12 +96,10 @@ fun AboutScreen(onBack: () -> Unit) {
             LicenseLine("Material Symbols", "Apache-2.0")
             LicenseLine("Robolectric / Roborazzi（仅测试）", "Apache-2.0")
 
-            SectionHeader("隐私")
-            Text(
-                text = "无网络权限、无分析 SDK、无崩溃上报。生物识别由 Android 系统完成，App 只能收到成功/失败结果。",
-                style = AppType.body,
-                color = colors.inkSecondary,
-            )
+            if (onPrivacy != null) {
+                SectionHeader("隐私")
+                InkTextButton("查看完整隐私声明", onClick = onPrivacy)
+            }
         }
     }
 }

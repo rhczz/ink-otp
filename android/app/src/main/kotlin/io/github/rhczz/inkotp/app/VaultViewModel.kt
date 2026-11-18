@@ -116,6 +116,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     private var codeRecalculationJob: Job? = null
     private var resourceJob: Job? = null
     private var foreground = false
+    private var privacySuspended = false
     private var systemAuthenticationDeadline: Long? = null
     private var automaticAuthenticationGeneration: Long? = null
     private var lastOperation: OperationTiming? = null
@@ -127,6 +128,10 @@ class VaultViewModel internal constructor(application: Application, private val 
     fun isCurrentSession(token: Long): Boolean = token == generation && state.unlocked
 
     init {
+        openSession()
+    }
+
+    private fun openSession() {
         perform(requireUnlocked = false, kind = OperationKind.INITIALIZE) {
             if (repository.exists() && repository.wrapMode().isDeviceUnlock()) repository.unlockDevice()
         }
@@ -167,7 +172,7 @@ class VaultViewModel internal constructor(application: Application, private val 
         decodingImport: Boolean = false,
         operation: suspend (Long) -> Unit,
     ) {
-        if (state.busy || (requireUnlocked && !state.unlocked)) { cleanup(); return }
+        if (privacySuspended || state.busy || (requireUnlocked && !state.unlocked)) { cleanup(); return }
         val token = generation
         state = state.copy(busy = true, error = null, operationId = state.operationId + 1L,
             recoveryPasswordRequested = false, importDecoding = decodingImport)
@@ -512,7 +517,23 @@ class VaultViewModel internal constructor(application: Application, private val 
         viewModelScope.launch { gate.withLock { pendingImport?.let(repository::discardModel); pendingImport = null } }
     }
 
-    fun lock(clearClipboard: Boolean = true) {
+    fun lock(clearClipboard: Boolean = true) = lock(clearClipboard, refreshMetadata = true)
+
+    internal fun suspendForPrivacy() {
+        foreground = false
+        privacySuspended = true
+        lock(clearClipboard = true, refreshMetadata = false)
+        state = SessionUiState()
+    }
+
+    internal fun resumeAfterPrivacyConsent() {
+        if (privacySuspended) {
+            privacySuspended = false
+            openSession()
+        }
+    }
+
+    private fun lock(clearClipboard: Boolean, refreshMetadata: Boolean) {
         val token = ++generation
         activeOperation?.cancel()
         tickerJob?.cancel(); tickerJob = null
@@ -541,7 +562,7 @@ class VaultViewModel internal constructor(application: Application, private val 
                     projection.clear()
                     repository.lock()
                 }
-                refreshLockedMetadata(token)
+                if (refreshMetadata) refreshLockedMetadata(token)
             }
         }
     }

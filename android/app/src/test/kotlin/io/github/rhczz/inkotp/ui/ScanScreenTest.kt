@@ -34,7 +34,8 @@ class ScanScreenTest {
             }
         }
 
-        compose.onNodeWithText("重试相机权限").assertExists()
+        compose.onNodeWithText("授予相机权限").assertExists()
+        compose.onNodeWithText("重试相机权限").assertDoesNotExist()
         compose.onNodeWithText("前往系统设置").assertExists()
         compose.onNodeWithText("从图片导入").performScrollTo().performClick()
         compose.onNodeWithText("手动输入").performScrollTo().performClick()

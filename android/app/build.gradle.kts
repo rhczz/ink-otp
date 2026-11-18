@@ -1,4 +1,11 @@
 import java.util.Properties
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
 import org.gradle.testing.jacoco.tasks.JacocoReport
 
@@ -14,6 +21,39 @@ val localSigning = Properties().apply {
     if (localSigningFile.exists()) localSigningFile.inputStream().use { load(it) }
 }
 
+abstract class BundlePrivacyPolicy : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val policyHtml: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val policyStyles: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun bundle() {
+        val policy = outputDirectory.dir("privacy").get().asFile
+        policy.mkdirs()
+        policyHtml.get().asFile.copyTo(policy.resolve("index.html"), overwrite = true)
+        policyStyles.get().asFile.copyTo(policy.resolve("site.css"), overwrite = true)
+    }
+}
+
+val bundlePrivacyPolicy = tasks.register<BundlePrivacyPolicy>("bundlePrivacyPolicy") {
+    policyHtml.set(rootProject.layout.projectDirectory.file("../website/privacy/index.html"))
+    policyStyles.set(rootProject.layout.projectDirectory.file("../website/assets/site.css"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/privacy/assets"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(bundlePrivacyPolicy, BundlePrivacyPolicy::outputDirectory)
+    }
+}
+
 android {
     namespace = "io.github.rhczz.inkotp"
     compileSdk {
@@ -26,8 +66,8 @@ android {
         applicationId = "io.github.rhczz.inkotp"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.5.0-beta.1"
+        versionCode = 8
+        versionName = "0.5.1"
     }
 
     buildFeatures {

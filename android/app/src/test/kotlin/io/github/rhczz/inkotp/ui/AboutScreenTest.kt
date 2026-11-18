@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
+import io.github.rhczz.inkotp.BuildConfig
 import io.github.rhczz.inkotp.ui.screens.AboutScreen
 import io.github.rhczz.inkotp.ui.theme.InkTheme
 import org.junit.Assert.assertEquals
@@ -30,6 +31,7 @@ class AboutScreenTest {
     @Test fun licensePageOpensTheProjectRepositoryInAnExternalApp() {
         showLicenses()
 
+        compose.onNodeWithText(BuildConfig.VERSION_NAME).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("GPL-3.0").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("github.com/rhczz/ink-otp").performScrollTo().performClick()
 

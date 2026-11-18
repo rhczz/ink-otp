@@ -47,6 +47,7 @@ fun OnboardingScreen(
     passwordSet: Boolean = true,
     systemAuthenticationAvailable: Boolean = true,
     onRestoreBackup: (() -> Unit)? = null,
+    onPrivacy: (() -> Unit)? = null,
 ) {
     val colors = LocalInkColors.current
     var password by remember { mutableStateOf("") }
@@ -87,9 +88,10 @@ fun OnboardingScreen(
                         textAlign = TextAlign.Center,
                     )
                     Spacer(Modifier.height(AppTokens.Spacing.m))
-                    Bullet(text = "不联网，不上传任何数据")
-                    Bullet(text = "库文件整库加密，密钥交给系统安全硬件")
-                    Bullet(text = "随时可导出加密备份，换机也能恢复")
+                    Bullet(text = "验证码由应用在本机生成")
+                    Bullet(text = "库文件整库加密，使用系统密钥库或恢复口令保护")
+                    Bullet(text = "设置恢复口令后，可导出加密备份用于换机")
+                    if (onPrivacy != null) InkTextButton("查看完整隐私声明", onClick = onPrivacy)
                 }
                 1 -> {
                     InkIcon(R.drawable.ic_key, size = AppTokens.IconSize.state, tint = colors.ink)

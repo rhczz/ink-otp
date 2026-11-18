@@ -36,6 +36,7 @@ import io.github.rhczz.inkotp.data.EnvelopeStore
 import io.github.rhczz.inkotp.data.VaultFiles
 import io.github.rhczz.inkotp.data.VaultRepository
 import io.github.rhczz.inkotp.platform.DeviceSecurity
+import io.github.rhczz.inkotp.platform.PrivacyPolicy
 import io.github.rhczz.inkotp.ui.navigation.InkApp
 import io.github.rhczz.inkotp.ui.theme.InkTheme
 import java.security.MessageDigest
@@ -124,7 +125,10 @@ class InkAppFlowTest {
         val device = DeviceSecurity(controller.get()).also { security = it }
         compose.setContent {
             InkTheme(darkTheme = false) {
-                Surface(Modifier.fillMaxSize()) { InkApp(vm, device, foreground = true) }
+                Surface(Modifier.fillMaxSize()) {
+                    InkApp(vm, device, foreground = true, privacyPolicy = PrivacyPolicy.load(application),
+                        onWithdrawPrivacy = { vm.suspendForPrivacy(); true })
+                }
             }
         }
 
@@ -185,6 +189,22 @@ class InkAppFlowTest {
         assertNotNull(vm.describeExport(vm.sessionToken))
         compose.onNodeWithText("取消").performClick()
         compose.runOnIdle { assertNull(vm.describeExport(vm.sessionToken)) }
+        assertArrayEquals(committed, files.read())
+
+        compose.onNodeWithText("撤回隐私同意").performScrollTo().performClick()
+        compose.onNodeWithText("取消").performClick()
+        compose.runOnIdle { assertTrue(vm.state.unlocked) }
+
+        compose.onNodeWithText("撤回隐私同意").performScrollTo().performClick()
+        val withdrawnSecret = repository.model!!.items.single().secret
+        compose.onNodeWithText("撤回同意").performClick()
+        pumpUntil("privacy withdrawal clears decrypted state") { !vm.state.ready && repository.model == null }
+        assertTrue(vm.state.items.isEmpty())
+        assertTrue(withdrawnSecret.all { it == 0.toByte() })
+        assertArrayEquals(committed, files.read())
+
+        compose.runOnIdle { vm.resumeAfterPrivacyConsent() }
+        pumpUntil("renewed acceptance restores the existing encrypted account") { vm.state.items.singleOrNull()?.accountName == ACCOUNT }
         assertArrayEquals(committed, files.read())
     }
 
