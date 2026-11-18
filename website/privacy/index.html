@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="了解 InkOTP Android 如何在设备上处理验证码账号、相机、备份与剪贴板，以及如何管理你的数据。">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#f6f7fa">
+  <title>隐私声明 | InkOTP</title>
+  <link rel="canonical" href="https://inkotp.renhongchang.top/privacy/">
+  <link rel="icon" href="../assets/inkotp-icon.png" type="image/png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到正文</a>
+  <header class="site-header">
+    <div class="site-frame header-inner">
+      <a class="brand" href="../">
+        <img src="../assets/inkotp-icon.png" width="36" height="36" alt="">
+        <span>InkOTP</span>
+      </a>
+      <nav class="site-nav" aria-label="主导航">
+        <a href="../">首页</a>
+        <a href="./" aria-current="page">隐私声明</a>
+        <a href="https://github.com/rhczz/ink-otp">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="site-frame policy-shell" tabindex="-1">
+    <div class="policy-heading">
+      <h1>隐私声明</h1>
+      <p>InkOTP 在你的 Android 设备上生成两步验证码。你添加的验证码账号、密钥和设置保存在本机。本文说明这些信息如何使用，以及你可以怎样管理它们。</p>
+      <p class="policy-meta">适用版本 InkOTP 0.5 Android 公测版 · 更新于 <time datetime="2026-11-18">2026 年 11 月 18 日</time></p>
+    </div>
+    <div class="policy-layout">
+      <nav class="policy-toc" aria-label="隐私声明目录">
+        <a href="#scope">适用范围</a>
+        <a href="#data">本机信息与权限</a>
+        <a href="#retention">保存、备份与删除</a>
+        <a href="#libraries">开源组件与传输</a>
+        <a href="#website">官网与外部链接</a>
+        <a href="#contact">联系我们</a>
+      </nav>
+      <article class="policy-body" aria-label="隐私声明正文">
+        <section aria-labelledby="scope">
+          <h2 id="scope">适用范围</h2>
+          <p>本声明适用于 InkOTP Android 应用（包名 <code>io.github.rhczz.inkotp</code>）和本官网，由开发者任红昌发布。应用的验证码功能全程离线，无需注册 InkOTP 账号。</p>
+          <p>未满十四周岁的用户，请在监护人同意和指导下使用。监护人可通过下方渠道咨询本机数据的管理方式。</p>
+        </section>
+
+        <section aria-labelledby="data">
+          <h2 id="data">本机信息与权限</h2>
+          <dl>
+            <dt>验证码账号与密钥</dt>
+            <dd>你手动输入、扫码添加或从备份导入时，应用在本机处理服务名、账号标识、验证码密钥和验证码类型、算法、位数、周期或计数器。应用根据密钥与设备时间生成 TOTP 验证码，并保存账号顺序、锁定时限等设置。</dd>
+            <dt>相机</dt>
+            <dd>进入「扫码添加」或首次引导中的「扫描二维码」后，如尚未授权，Android 会请求相机权限。相机画面只在扫码页面即时用于本机识别。拒绝授权后，你仍可选择图片或手动输入密钥。你可在 Android 的「应用 → InkOTP → 权限」中撤回相机授权。</dd>
+            <dt>图片与备份文件</dt>
+            <dd>选择「从相册导入」或导入备份时，应用通过 Android 系统选择器读取你选定的图片或文件。导出时，应用将备份写入你选定的位置。若你选择了第三方文件提供方，文件由该提供方按其规则保存和管理。</dd>
+            <dt>设备身份验证</dt>
+            <dd>启用「每次进入时验证身份」后，验证由 Android 系统完成，可用方式取决于系统与设备。应用接收认证结果，并按需使用系统授权的密钥操作。指纹、人脸模板和锁屏凭据由操作系统管理。你可在 InkOTP 的「设置」中关闭此功能。</dd>
+            <dt>悬浮窗保护</dt>
+            <dd>应用可在支持的 Android 版本上阻挡第三方悬浮窗，以保护验证码界面。</dd>
+            <dt>剪贴板</dt>
+            <dd>你主动复制时，验证码写入系统剪贴板。应用检查自己写入内容的标记和时间戳，以按设置尝试清理该条内容。你可在设置中更改清理间隔，实际清理取决于系统当时是否允许剪贴板操作。</dd>
+          </dl>
+        </section>
+
+        <section aria-labelledby="retention">
+          <h2 id="retention">保存、备份与删除</h2>
+          <p>验证码库以加密文件保存在 Android 应用私有空间，使用 Android Keystore 或应用恢复口令保护密钥。设备绑定配置和备份状态同样保存在本机。应用的私有数据排除在系统自动备份与设备迁移之外。</p>
+          <ul>
+            <li>在验证码列表打开条目，即可查阅账号信息、编辑服务名或账号，以及删除该账号。通过「设置 → 导出备份」可以取得由你保管的副本。</li>
+            <li>导出默认采用加密格式。只有明确确认明文迁移时，应用才会生成相应的明文文件。明文文件含验证码密钥，请妥善保管。建议将加密备份与恢复口令分开保存。</li>
+            <li>救援恢复替换现有库时，应用会在私有空间保留一份原库的加密副本。删除账号针对当前库。可在 Android 设置中清除应用数据或卸载，移除当前库、救援副本和本机设置。</li>
+            <li>应用私有空间以外的导出文件由你保管。要删除这些副本，请在保存位置或相应文件提供方中处理。</li>
+          </ul>
+        </section>
+
+        <section aria-labelledby="libraries">
+          <h2 id="libraries">开源组件与传输</h2>
+          <p>Android 应用未声明联网权限。验证码账号、密钥、备份内容和相机图像在设备侧处理，应用没有账号同步、分析、广告或崩溃上报服务。你主动导出文件或粘贴验证码时，接收该内容的文件服务或应用将按自己的规则处理。</p>
+          <p>以下组件随应用分发，在设备上提供功能。</p>
+          <dl>
+            <dt><a href="https://developer.android.com/jetpack/androidx">AndroidX 及 Jetpack Compose</a></dt>
+            <dd>由 Android Jetpack 项目维护，用于界面、应用状态、设置和系统认证。CameraX 在你开启扫码时提供相机预览和图像帧。</dd>
+            <dt><a href="https://github.com/zxing/zxing">ZXing</a></dt>
+            <dd>由 ZXing 开源项目维护，用于在本机识别相机帧或你选中图片中的二维码。</dd>
+            <dt><a href="https://www.bouncycastle.org/">Bouncy Castle</a> 与 <a href="https://github.com/Kotlin/kotlinx.serialization">Kotlinx Serialization</a></dt>
+            <dd>分别用于本机的密钥派生和结构化数据读写，涉及验证码库与备份处理。</dd>
+          </dl>
+        </section>
+
+        <section aria-labelledby="website">
+          <h2 id="website">官网与外部链接</h2>
+          <p>官网以静态页面提供产品、下载和隐私信息。网站页面本身不集成登录、表单或浏览统计，也不在页面代码里设置 Cookie。你用浏览器访问时，托管服务可能记录 IP 地址、请求时间和访问路径等运行日志，用于网站交付、安全与排障，保存方式和期限取决于实际的托管服务设置。</p>
+          <p>APK 下载、源代码和安全报告由 GitHub 提供。GitHub 对访问、下载及账号操作的处理见其<a href="https://docs.github.com/zh/site-policy/privacy-policies/github-general-privacy-statement">隐私声明</a>。</p>
+        </section>
+
+        <section aria-labelledby="contact">
+          <h2 id="contact">联系我们</h2>
+          <p>如有隐私问题、投诉，或需要协助查阅、更正、复制、删除信息、撤回授权，请发邮件至 <a href="mailto:hi@renhongchang.top">hi@renhongchang.top</a>。开发者使用你随邮件提供的地址和说明来处理请求和回复。应用漏洞也可使用 <a href="https://github.com/rhczz/ink-otp/security/advisories/new">GitHub 私密安全报告</a>。</p>
+          <p class="policy-note">反馈时请勿发送验证码、密钥、恢复口令、备份文件或含有这些信息的截图。应用数据由你在设备或备份位置管理。</p>
+          <p>若应用处理信息的方式发生变化，本页将说明变化，页首日期会同步更新。</p>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="site-frame footer-inner">
+      <a class="brand footer-brand" href="../">
+        <img src="../assets/inkotp-icon.png" width="28" height="28" alt="">
+        <span>InkOTP</span>
+      </a>
+      <nav class="site-nav" aria-label="页脚导航">
+        <a href="../">首页</a>
+        <a href="./" aria-current="page">隐私声明</a>
+        <a href="https://github.com/rhczz/ink-otp">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
