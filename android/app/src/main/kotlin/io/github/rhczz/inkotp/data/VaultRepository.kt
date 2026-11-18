@@ -16,6 +16,7 @@ import io.github.rhczz.inkotp.core.crypto.RandomSource
 import io.github.rhczz.inkotp.core.crypto.SecretBytes
 import io.github.rhczz.inkotp.core.crypto.SecureRandomSource
 import io.github.rhczz.inkotp.core.model.VaultModel
+import io.github.rhczz.inkotp.core.model.VaultItem
 import io.github.rhczz.inkotp.core.model.VaultSettings
 import io.github.rhczz.inkotp.core.vault.VaultCodec
 import io.github.rhczz.inkotp.core.vault.VaultError
@@ -59,7 +60,7 @@ class VaultRepository internal constructor(
     private var parameters: KdfParams? = null
     private var pendingCipher: Cipher? = null
     private var pendingEnvelope: DeviceEnvelope? = null
-    private enum class SystemAction { ENABLE, UNLOCK, DISABLE, RECOVER, REBIND }
+    private enum class SystemAction { ENABLE, UNLOCK, DISABLE, RECOVER, REBIND, RESTORE_BACKUP }
     private var pendingSystemRequest: SystemAuthRequest? = null
     private var pendingSystemAction: SystemAction? = null
     private var pendingSystemEnvelope: DeviceEnvelope? = null
@@ -87,9 +88,7 @@ class VaultRepository internal constructor(
             if (files.exists()) fail(VaultAccessError.ALREADY_EXISTS)
             rejectSystemPolicyBypass()
             password?.let(::requireStrongPassword)
-            val now = Instant.now().toString()
-            val initial = VaultModel(vaultId = UUID.randomUUID().toString(), createdAt = now, updatedAt = now,
-                settings = VaultSettings(lockTimeoutSeconds = 0))
+            val initial = newVault(emptyList())
             newDek = random.bytes(32)
             val newSalt = if (password != null) random.bytes(16) else null
             newKek = if (password != null) kdf.deriveKey(password, newSalt!!, kdfParams) else null
@@ -264,6 +263,67 @@ class VaultRepository internal constructor(
                 discardModel(next)
             }
         }
+    }
+
+    suspend fun prepareBackupRestore(replaceExisting: Boolean): SystemAuthRequest? {
+        checkRestoreTarget(replaceExisting)
+        clearPending()
+        if (!systemAuthRequired()) return null
+        return rememberSystemRequest(SystemAction.RESTORE_BACKUP, if (sdkInt >= 30) systemEncryptCipher() else null)
+    }
+
+    /** Restore independent backup data while locked. Existing ciphertext is only copied, never decrypted here. */
+    suspend fun restoreFromBackup(
+        remote: VaultModel,
+        password: CharArray,
+        replaceExisting: Boolean,
+        proof: SystemAuthProof? = null,
+    ): VaultModel {
+        var next: VaultModel? = null
+        var newDek: ByteArray? = null
+        var newKek: ByteArray? = null
+        try {
+            checkRestoreTarget(replaceExisting)
+            val requireSystem = systemAuthRequired()
+            requireStrongPassword(password)
+            val newSalt = random.bytes(16)
+            newKek = kdf.deriveKey(password, newSalt, kdfParams)
+            currentCoroutineContext().ensureActive()
+            newDek = random.bytes(32)
+            val envelope = if (requireSystem) {
+                val cipher = consumeSystemProof(proof ?: fail(VaultAccessError.SYSTEM_AUTH_REQUIRED), SystemAction.RESTORE_BACKUP)
+                sealEnvelope(SYSTEM, newDek, newKek, newSalt, cipher)
+            } else sealLocalEnvelope(newDek, newKek, newSalt)
+
+            next = newVault(remote.items.map { it.copy(id = UUID.randomUUID().toString(), secret = it.secret.copyOf()) })
+            val bytes = VaultCodec.sealWithKey(next, newDek, newKek, newSalt, kdfParams, random)
+            checkRestoreTarget(replaceExisting)
+            write(bytes, preserveOriginal = replaceExisting)
+            install(next, newDek, newKek, newSalt, kdfParams)
+            next = null
+            newDek = null
+            newKek = null
+            saveEnvelopeAfterCommit(envelope)
+            return model!!
+        } finally {
+            password.fill('\u0000')
+            SecretBytes.wipe(newDek, newKek)
+            discardModel(next)
+            clearPending()
+        }
+    }
+
+    private fun checkRestoreTarget(replaceExisting: Boolean) {
+        if (model != null) fail(VaultAccessError.INVALID_STATE)
+        val exists = files.exists()
+        if (exists && !replaceExisting) fail(VaultAccessError.ALREADY_EXISTS)
+        if (!exists && replaceExisting) fail(VaultAccessError.NOT_CREATED)
+    }
+
+    private fun newVault(items: List<VaultItem>): VaultModel {
+        val now = Instant.now().toString()
+        return VaultModel(vaultId = UUID.randomUUID().toString(), createdAt = now, updatedAt = now,
+            settings = VaultSettings(lockTimeoutSeconds = 0), items = items)
     }
 
     suspend fun prepareUnlock(): Cipher {
@@ -454,9 +514,11 @@ class VaultRepository internal constructor(
         if (!files.exists()) fail(VaultAccessError.NOT_CREATED)
         files.read()
     } catch (_: IOException) { fail(VaultAccessError.STORAGE_FAILURE) }
-    private suspend fun write(bytes: ByteArray) {
+    private suspend fun write(bytes: ByteArray, preserveOriginal: Boolean = false) {
         currentCoroutineContext().ensureActive()
-        try { files.write(bytes) }
+        try {
+            if (preserveOriginal) files.replaceKeepingOriginal(bytes) else files.write(bytes)
+        }
         catch (_: IOException) { fail(VaultAccessError.STORAGE_FAILURE) }
     }
 

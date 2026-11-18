@@ -183,6 +183,52 @@ class SystemAuthenticationRepositoryTest {
         assertNull(repository.model)
     }
 
+    @Test fun lockedRestoreRequiresFreshSystemProofAndKeepsTheExistingSystemPolicy() = runBlocking {
+        val repository = repo()
+        val backup = repository.initialize(password())
+        repository.enableSystemAuth(authorized(repository.prepareSystemEnable()))
+        val original = byteArrayOf(1, 2, 3)
+        files.bytes = original.copyOf()
+        repository.lock()
+        val replacement = "new backup recovery phrase"
+        assertAccess(VaultAccessError.SYSTEM_AUTH_REQUIRED) {
+            repository.restoreFromBackup(backup, replacement.toCharArray(), replaceExisting = true)
+        }
+        assertNull(repository.model)
+        assertArrayEquals(original, files.bytes)
+        assertNull(files.preserved)
+
+        val request = repository.prepareBackupRestore(replaceExisting = true)!!
+        repository.restoreFromBackup(backup, replacement.toCharArray(), replaceExisting = true, authorized(request))
+
+        assertArrayEquals(original, files.preserved)
+        assertTrue(repository.systemAuthRequired())
+        repository.lock()
+        assertAccess(VaultAccessError.SYSTEM_AUTH_REQUIRED) {
+            repository.unlockPassword(replacement.toCharArray())
+        }
+        assertNotNull(repository.unlockSystemAuth(authorized(repository.prepareSystemUnlock())))
+    }
+
+    @Test fun firstRunRestoreCreatesAVaultAndCannotReplaceAnUnexpectedExistingVault() = runBlocking {
+        val repository = repo()
+        val backup = io.github.rhczz.inkotp.core.interchange.InterchangeCodec.decode(
+            "otpauth://totp/Example:restored?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example".toByteArray()
+        ).model
+        assertNull(repository.prepareBackupRestore(replaceExisting = false))
+        repository.restoreFromBackup(backup, password(), replaceExisting = false)
+        assertEquals("restored", repository.model!!.items.single().accountName)
+        assertNull(files.preserved)
+        val committed = files.bytes!!.copyOf()
+
+        repository.lock()
+        assertAccess(VaultAccessError.ALREADY_EXISTS) {
+            repository.restoreFromBackup(backup, password(), replaceExisting = false)
+        }
+        assertArrayEquals(committed, files.bytes)
+        assertEquals("restored", repository.unlockPassword(password()).items.single().accountName)
+    }
+
     private suspend fun assertAccess(code: VaultAccessError, action: suspend () -> Any?) {
         try { action(); fail("operation unexpectedly succeeded") }
         catch (failure: VaultAccessException) { assertEquals(code, failure.code) }
@@ -190,9 +236,14 @@ class SystemAuthenticationRepositoryTest {
 
     private class MemoryFiles : VaultFiles {
         var bytes: ByteArray? = null
+        var preserved: ByteArray? = null
         override fun exists() = bytes != null
         override fun read() = bytes!!.copyOf()
         override fun write(bytes: ByteArray) { this.bytes = bytes.copyOf() }
+        override fun replaceKeepingOriginal(bytes: ByteArray) {
+            preserved = read()
+            write(bytes)
+        }
     }
     private class MemoryEnvelopes : EnvelopeStore {
         var envelope: DeviceEnvelope? = null

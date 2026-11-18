@@ -40,7 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private enum class Screen { List, Detail, ManualAdd, Scan, Settings, Diagnostics, About }
-private enum class PasswordTask { Change, Export, Import }
+private enum class PasswordTask { Change, Export, Import, Restore }
 
 @Composable
 fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Boolean) {
@@ -57,11 +57,12 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
     var setup by rememberSaveable { mutableStateOf(false) }
     var setupPage by rememberSaveable { mutableStateOf(0) }
     var skipPassword by remember { mutableStateOf(false) }
-    var passwordTask by remember { mutableStateOf<PasswordTask?>(null) }
+    var passwordTask by rememberSaveable { mutableStateOf<PasswordTask?>(null) }
     var scannedInput by remember { mutableStateOf("") }
-    var importUri by remember { mutableStateOf<Uri?>(null) }
+    var importUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var exportPickerToken by rememberSaveable { mutableStateOf<Long?>(null) }
     var importPickerToken by rememberSaveable { mutableStateOf<Long?>(null) }
+    var importForRestore by rememberSaveable { mutableStateOf(false) }
     var imagePickerToken by rememberSaveable { mutableStateOf<Long?>(null) }
     var fileBusy by remember { mutableStateOf(false) }
     var fileJob by remember { mutableStateOf<Job?>(null) }
@@ -71,7 +72,7 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
     var replaceConfirm by remember { mutableStateOf(false) }
     var chooseExportFormat by remember { mutableStateOf(false) }
     var exportFormat by remember { mutableStateOf(InterchangeFormat.AEGIS_ENCRYPTED) }
-    var importFormat by remember { mutableStateOf<InterchangeFormat?>(null) }
+    var importFormat by rememberSaveable { mutableStateOf<InterchangeFormat?>(null) }
     var exportReviewToken by rememberSaveable { mutableStateOf<Long?>(null) }
 
     fun cancelFileOperation() {
@@ -80,8 +81,10 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         fileJob = null
         fileBusy = false
     }
-    fun launchFileOperation(token: Long, failure: String, cleanup: () -> Unit = {}, operation: suspend () -> Unit) {
-        if (!viewModel.isCurrentSession(token)) { cleanup(); return }
+    fun launchFileOperation(token: Long, failure: String, cleanup: () -> Unit = {},
+        forRestore: Boolean = false, operation: suspend () -> Unit,
+    ) {
+        if (!viewModel.isCurrentBackupRequest(token, forRestore)) { cleanup(); return }
         cancelFileOperation()
         val request = ++fileRequest
         fileBusy = true
@@ -89,7 +92,7 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
             try { operation() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
-                if (viewModel.isCurrentSession(token)) viewModel.report(if (error is QrImageReadException || error is InterchangeException) error.message ?: failure else failure)
+                if (viewModel.isCurrentBackupRequest(token, forRestore)) viewModel.report(if (error is QrImageReadException || error is InterchangeException) error.message ?: failure else failure)
             } finally {
                 if (fileRequest == request) { fileBusy = false; fileJob = null }
             }
@@ -142,22 +145,22 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
     val chooseBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val token = importPickerToken
         importPickerToken = null
+        val forRestore = importForRestore
         val accepted = token != null && viewModel.endPicker(token)
-        if (uri != null) {
-            if (accepted) {
-                launchFileOperation(token!!, "文件无法读取或不是支持的验证器备份") {
-                    val bytes = BackupFiles.read(context, uri)
-                    var transferred = false
-                    try {
-                        val format = withContext(Dispatchers.Default) { InterchangeCodec.detect(bytes) }
-                        if (viewModel.isCurrentSession(token)) {
-                            if (format.requiresPassword) { importUri = uri; importFormat = format; passwordTask = PasswordTask.Import }
-                            else { viewModel.previewImport(bytes, "") { importUri = null; importFormat = null }; transferred = true }
-                        }
-                    } finally { if (!transferred) bytes.fill(0) }
-                }
-            } else viewModel.report("库已锁定，请解锁后重新选择备份")
-        }
+        if (accepted && uri != null) {
+            launchFileOperation(token!!, "文件无法读取或不是支持的验证器备份", forRestore = forRestore) {
+                val bytes = BackupFiles.read(context, uri)
+                var transferred = false
+                try {
+                    val format = withContext(Dispatchers.Default) { InterchangeCodec.detect(bytes) }
+                    if (viewModel.isCurrentBackupRequest(token, forRestore)) {
+                        if (format.requiresPassword) { importUri = uri; importFormat = format; passwordTask = PasswordTask.Import }
+                        else { viewModel.previewImport(bytes, "", forRestore) { importUri = null; importFormat = null }; transferred = true }
+                    }
+                } finally { if (!transferred) bytes.fill(0) }
+            }
+        } else if (accepted && forRestore) viewModel.cancelImport()
+        else if (uri != null) viewModel.report("这次文件选择已失效，请重新选择备份")
     }
     val chooseImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         val token = imagePickerToken
@@ -177,13 +180,26 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         try { chooseImage.launch("image/*") }
         catch (_: RuntimeException) { viewModel.endPicker(token); imagePickerToken = null; viewModel.report("无法打开系统图片选择器，请使用手动输入") }
     }
-    fun importBackup() = requirePassword {
-        val token = viewModel.beginPicker()
+    fun selectBackup(forRestore: Boolean) {
+        val current = viewModel.state
+        if (!current.ready || current.busy || fileBusy || importPickerToken != null || current.unlocked == forRestore) return
+        val token = viewModel.beginPicker(forRestore)
         importPickerToken = token
+        importForRestore = forRestore
         try { chooseBackup.launch(arrayOf("*/*")) }
         catch (_: RuntimeException) {
-            viewModel.endPicker(token); importPickerToken = null; viewModel.report("无法打开系统文件选择器，请检查系统文件应用")
+            viewModel.endPicker(token)
+            importPickerToken = null
+            if (forRestore) viewModel.cancelImport()
+            viewModel.report("无法打开系统文件选择器，请检查系统文件应用")
         }
+    }
+    fun importBackup() = requirePassword { selectBackup(forRestore = false) }
+    fun cancelImportDecoding() {
+        viewModel.cancelImport()
+        passwordTask = null
+        importUri = null
+        importFormat = null
     }
 
     LaunchedEffect(session.ready, session.exists, session.unlocked, session.passwordSet, setup, setupPage) {
@@ -191,9 +207,26 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         if (session.ready && session.exists && !session.unlocked) setup = false
         if (session.unlocked && session.exists && setup && setupPage < 2) setupPage = if (session.passwordSet) 2 else 3
     }
-    LaunchedEffect(sessionToken, session.unlocked, session.clearClipboardOnLock, session.systemAuthenticationRequired) {
+    LaunchedEffect(session.importNames, session.restoreAccountCount) {
+        if (passwordTask == PasswordTask.Import && (session.importNames != null || session.restoreAccountCount != null)) {
+            passwordTask = null
+            importUri = null
+            importFormat = null
+        }
+    }
+    LaunchedEffect(session.error, session.busy, fileBusy) {
+        if (session.error != null && session.backupRestoreActive && !session.busy && !fileBusy &&
+            session.restoreAccountCount == null && importUri == null) viewModel.cancelImport()
+    }
+    LaunchedEffect(session.unlocked, session.restoreAccountCount) {
+        if (session.unlocked && session.restoreAccountCount == null && passwordTask == PasswordTask.Restore) {
+            passwordTask = null
+            setup = false
+        }
+    }
+    LaunchedEffect(sessionToken, session.unlocked, session.clearClipboardOnLock, session.systemAuthenticationRequired, session.backupRestoreActive) {
         if (session.systemAuthenticationRequired && setupPage == 2) setupPage = 3
-        if (observedSessionToken != sessionToken || !session.unlocked) {
+        if (observedSessionToken != sessionToken || (!session.unlocked && !session.backupRestoreActive)) {
             if (session.clearClipboardOnLock) security.clearClipboard()
             cancelFileOperation()
             stack.clear(); screen = Screen.List; selectedId = null; query = ""; addSheet = false
@@ -203,7 +236,7 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         }
     }
     LaunchedEffect(foreground, session.ready, session.busy, session.unlocked, session.systemAuthenticationRequired,
-        session.biometricEnabled, session.deviceUnlockAvailable, session.systemRecoveryRequired, sessionToken) {
+        session.biometricEnabled, session.deviceUnlockAvailable, session.systemRecoveryRequired, session.backupRestoreActive, sessionToken) {
         if (foreground && session.ready && !session.busy && session.exists && !session.unlocked) {
             viewModel.requestAutomaticAuthentication(security)
         }
@@ -214,7 +247,15 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         security.secureScreen(secure)
         onDispose { security.secureScreen(!BuildConfig.DEBUG) }
     }
-    DisposableEffect(Unit) { onDispose { fileRequest++; fileJob?.cancel() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            val current = viewModel.state
+            if (fileBusy && importUri == null && current.backupRestoreActive &&
+                !current.busy && current.restoreAccountCount == null) viewModel.cancelImport()
+            fileRequest++
+            fileJob?.cancel()
+        }
+    }
     BackHandler(enabled = session.unlocked && !setup && stack.isNotEmpty() && !session.busy) { back() }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -229,13 +270,15 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                 onEnableSystemAuthentication = { viewModel.systemAuthentication(true, security) },
                 onFinish = { setup = false; screen = Screen.List },
                 onScan = { setup = false; screen = Screen.Scan }, onManual = { setup = false; screen = Screen.ManualAdd },
-                passwordSet = session.passwordSet, systemAuthenticationAvailable = security.canUseSystemAuthentication())
+                passwordSet = session.passwordSet, systemAuthenticationAvailable = security.canUseSystemAuthentication(),
+                onRestoreBackup = if (!session.exists) ({ selectBackup(forRestore = true) }) else null)
             !session.unlocked -> UnlockScreen(
                 state = UnlockUiState(error = session.error, biometricAvailable = session.biometricEnabled && security.canUseBiometrics(), degraded = !session.passwordSet,
                     deviceUnlockAvailable = session.deviceUnlockAvailable, systemAuthenticationRequired = session.systemAuthenticationRequired,
                     systemRecoveryRequired = session.systemRecoveryRequired,
                     recoveryPasswordRequested = session.recoveryPasswordRequested),
-                onUnlock = { viewModel.unlock(security) }, onPasswordSubmit = { viewModel.unlockPassword(it, security) })
+                onUnlock = { viewModel.unlock(security) }, onPasswordSubmit = { viewModel.unlockPassword(it, security) },
+                onRestoreBackup = { selectBackup(forRestore = true) })
             else -> when (screen) {
                 Screen.List -> VaultListScreen(
                     state = VaultListUiState(items = session.items, query = query, backupReminder = session.backupReminder, clockWarning = session.clockWarning, passwordWarning = !session.passwordSet),
@@ -258,7 +301,7 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                     onHideCodesChange = { hidden -> viewModel.settings { it.copy(hideCodesByDefault = hidden) } },
                     onClipboardChange = { seconds -> viewModel.settings { it.copy(clipboardClearSeconds = seconds) } },
                     onDiagnostics = { navigate(Screen.Diagnostics) }, onAbout = { navigate(Screen.About) },
-                    onOnboarding = { message = "添加账号可使用列表右下角的加号。设置恢复口令后可导出加密备份，换机时先创建本机库，再从设置中导入。" },
+                    onOnboarding = { message = "添加账号可使用列表右下角的加号。设置恢复口令后可导出加密备份，换机时可在首次启动选择从备份恢复。" },
                     onPassword = { passwordTask = PasswordTask.Change }, onExport = { requirePassword { chooseExportFormat = true } }, onImport = ::importBackup,
                     onLock = { security.clearClipboard(); viewModel.lock() })
                 Screen.Diagnostics -> DiagnosticsScreen(
@@ -277,20 +320,37 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
             busy = session.busy || fileBusy,
             operationKey = session.operationId to fileRequest,
             authenticationInProgress = security.isAuthenticationInProgress || !foreground,
+            onCancel = if (session.importDecoding && !session.importCancelling) ::cancelImportDecoding else null,
+            cancelling = session.importCancelling,
         )
     }
     if (foreground && skipPassword) InkConfirmDialog("暂不设置恢复口令？", "这台设备仍会加密保存账号，但换机或重装将无法恢复。你可以稍后在设置中补设恢复口令。", "暂时跳过",
         { skipPassword = false; viewModel.initialize(null) }, { skipPassword = false })
     if (foreground) passwordTask?.let { task ->
         VaultPasswordDialog(
-            title = when (task) { PasswordTask.Change -> if (session.passwordSet) "修改恢复口令" else "设置恢复口令"; PasswordTask.Export -> if (exportFormat.plaintext) "导出迁移文件" else "导出加密备份"; PasswordTask.Import -> "打开加密备份" },
+            title = when (task) {
+                PasswordTask.Change -> if (session.passwordSet) "修改恢复口令" else "设置恢复口令"
+                PasswordTask.Export -> if (exportFormat.plaintext) "导出迁移文件" else "导出加密备份"
+                PasswordTask.Import -> "打开加密备份"
+                PasswordTask.Restore -> if (session.exists) "替换本机库并恢复？" else "设置新的本机恢复口令"
+            },
             message = when (task) {
                 PasswordTask.Change -> "口令至少 8 个字符，建议使用较长短语。修改不会更新旧备份，旧备份仍使用原口令。"
                 PasswordTask.Export -> "所选格式：${exportFormat.displayName()}。请输入本机当前恢复口令，验证后准备导出。"
-                PasswordTask.Import -> "已识别：${importFormat?.displayName() ?: "验证器备份"}。请输入该文件的备份密码；本机当前恢复口令保持不变。"
+                PasswordTask.Import -> "已识别：${importFormat?.displayName() ?: "验证器备份"}。请输入创建这份备份时使用的口令。"
+                PasswordTask.Restore -> if (session.exists)
+                    "将用所选备份建立新的本机库。原库密文留在本应用的私有空间。此次操作会更新之前保留的副本。请设置新的本机恢复口令。"
+                    else "为恢复后的本机库设置新恢复口令，至少 8 个字符。所选备份仍使用它原来的口令。"
             }, requireCurrent = task == PasswordTask.Change && session.passwordSet,
-            newPassword = task == PasswordTask.Change, busy = session.busy || fileBusy,
-            onDismiss = { if (!session.busy && !fileBusy) { passwordTask = null; importUri = null } },
+            newPassword = task == PasswordTask.Change || task == PasswordTask.Restore, busy = session.busy || fileBusy,
+            confirmText = if (task != PasswordTask.Restore) "确认" else if (session.exists) "替换并恢复" else "恢复",
+            onCancelBusy = if (task == PasswordTask.Import && session.importDecoding && !session.importCancelling) ::cancelImportDecoding else null,
+            cancelling = task == PasswordTask.Import && session.importCancelling,
+            onDismiss = {
+                passwordTask = null
+                importUri = null
+                if (task == PasswordTask.Import && importForRestore) viewModel.cancelImport()
+            },
             onConfirm = { current, password -> when (task) {
                 PasswordTask.Change -> viewModel.setPassword(current, password, security) { passwordTask = null; message = "恢复口令已更新。旧备份仍使用原来的口令，建议重新导出备份。" }
                 PasswordTask.Export -> viewModel.export(password, exportFormat) { token ->
@@ -303,14 +363,16 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                     val uri = importUri
                     if (uri != null) {
                         val token = sessionToken
-                        launchFileOperation(token, "备份无法读取或超过 12 MiB，请重新选择文件") {
+                        val forRestore = importForRestore
+                        launchFileOperation(token, "备份无法读取或超过 12 MiB，请重新选择文件", forRestore = forRestore) {
                             val bytes = BackupFiles.read(context, uri)
-                            if (viewModel.isCurrentSession(token)) {
-                                viewModel.previewImport(bytes, password) { passwordTask = null; importUri = null; importFormat = null }
+                            if (viewModel.isCurrentBackupRequest(token, forRestore)) {
+                                viewModel.previewImport(bytes, password, forRestore) { passwordTask = null; importUri = null; importFormat = null }
                             } else bytes.fill(0)
                         }
                     }
                 }
+                PasswordTask.Restore -> viewModel.confirmBackupRestore(password, security)
             } })
     }
     if (foreground && chooseExportFormat && session.unlocked) BackupFormatDialog(
@@ -327,6 +389,19 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         )
     }
 
+    if (foreground && session.restoreAccountCount != null && passwordTask != PasswordTask.Restore) {
+        InkConfirmDialog(
+            title = "恢复 ${session.restoreAccountCount} 个账号",
+            message = buildString {
+                session.importFormat?.let { appendLine(InterchangeFormat.valueOf(it).displayName()) }
+                session.importWarnings.forEach { appendLine(it) }
+                append("确认账号数量和兼容提示后，设置新的本机恢复口令。")
+            },
+            confirmText = "继续设置口令",
+            onConfirm = { if (!session.busy) passwordTask = PasswordTask.Restore },
+            onDismiss = viewModel::cancelImport,
+        )
+    }
     if (foreground && session.importNames != null) AlertDialog(
         onDismissRequest = { if (!session.busy) viewModel.cancelImport() }, properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
         shape = RoundedCornerShape(AppTokens.Radius.sheet), containerColor = colors.surface,
@@ -352,7 +427,7 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
     if (foreground && replaceConfirm) InkConfirmDialog("替换本机全部账号？", "本机现有账号将被这份备份替换。建议先导出本机备份。", "替换",
         { replaceConfirm = false; viewModel.confirmImport(MergeConflictPolicy.KEEP_LOCAL, true, security) }, { replaceConfirm = false }, destructive = true)
     val alert = session.error ?: session.notice ?: message
-    if (foreground && alert != null && (session.unlocked || setup || message != null)) AlertDialog(
+    if (foreground && alert != null && (session.unlocked || setup || session.backupRestoreActive || message != null)) AlertDialog(
         onDismissRequest = { viewModel.clearError(); viewModel.clearNotice(); message = null },
         containerColor = colors.surface, shape = RoundedCornerShape(AppTokens.Radius.sheet),
         title = { Text(if (session.error != null) "操作未完成" else "提示", style = AppType.section) },

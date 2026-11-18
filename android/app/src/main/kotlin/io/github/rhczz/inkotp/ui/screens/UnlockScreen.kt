@@ -33,6 +33,7 @@ fun UnlockScreen(
     state: UnlockUiState,
     onUnlock: () -> Unit,
     onPasswordSubmit: (String) -> Unit,
+    onRestoreBackup: (() -> Unit)? = null,
 ) {
     val colors = LocalInkColors.current
     var passwordMode by remember(state.biometricAvailable, state.degraded, state.deviceUnlockAvailable, state.systemAuthenticationRequired, state.systemRecoveryRequired) {
@@ -102,6 +103,10 @@ fun UnlockScreen(
             }
         }
 
+        if (onRestoreBackup != null) {
+            Spacer(Modifier.height(AppTokens.Spacing.m))
+            InkTextButton(text = "从备份恢复", onClick = onRestoreBackup, color = colors.inkSecondary)
+        }
         if (state.error != null) {
             Spacer(Modifier.height(AppTokens.Spacing.m))
             Text(text = state.error, style = AppType.label, color = colors.danger, textAlign = TextAlign.Center)

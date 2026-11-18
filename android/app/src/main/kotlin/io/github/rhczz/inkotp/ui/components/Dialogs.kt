@@ -1,6 +1,8 @@
 package io.github.rhczz.inkotp.ui.components
 
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -27,7 +29,14 @@ fun InkConfirmDialog(
         shape = RoundedCornerShape(AppTokens.Radius.sheet),
         containerColor = colors.surface,
         title = { Text(text = title, style = AppType.section, color = colors.ink) },
-        text = { Text(text = message, style = AppType.body, color = colors.inkSecondary) },
+        text = {
+            Text(
+                text = message,
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                style = AppType.body,
+                color = colors.inkSecondary,
+            )
+        },
         confirmButton = {
             TextButton(onClick = onConfirm) {
                 Text(

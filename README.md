@@ -3,6 +3,12 @@
 > 完全离线的 Android 两步验证器（TOTP），设计语言 **Quiet Ink**。
 > v1.0 只做 Android；`ios/` 与 `spec/` 已为 Phase 2 预留，跨端只共享规格与测试向量，不共享代码。
 
+## Android 0.5 公测
+
+InkOTP 0.5 面向 Android 8.0 及以上，通过 GitHub Release 分发签名 APK。已有用户建议先导出一份加密备份，再直接覆盖安装。安装、恢复、测试范围与反馈入口见 [0.5 公测指南](docs/testing/0.5-public-beta.md)。
+
+[公测 APK 与校验文件](https://github.com/rhczz/ink-otp/releases/tag/v0.5.0-beta.1) · [0.5 版本说明](docs/releases/0.5.0-beta.1.md)
+
 ## 状态
 
 - **M0 完成**：工程骨架、平台中立 spec、Python 参考实现、CI/Makefile。

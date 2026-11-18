@@ -153,6 +153,7 @@ class ViewModelPerformanceTest {
         vm.onForeground()
         pumpUntil("idle foreground ticker") { vm.tickerActive && pendingMainTasks() == 1 }
         val initial = statistics(vm).codeComputations
+        assertFalse(vm.diagnostics().driftDetected)
         Settings.Global.putInt(application.contentResolver, Settings.Global.AUTO_TIME, 1)
         assertTrue(vm.state.clockWarning)
 
