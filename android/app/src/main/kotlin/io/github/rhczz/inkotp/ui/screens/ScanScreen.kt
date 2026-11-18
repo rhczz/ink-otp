@@ -32,7 +32,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -70,6 +69,7 @@ fun ScanScreen(
     onDetected: (String) -> Unit,
     onGallery: () -> Unit,
     onManual: () -> Unit,
+    onPrivacy: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -77,18 +77,14 @@ fun ScanScreen(
     var permissionGranted by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
+    var permissionPending by rememberSaveable { mutableStateOf(false) }
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
     var attempt by remember { mutableIntStateOf(0) }
     var cameraError by remember { mutableStateOf<String?>(null) }
     val detected = remember { AtomicBoolean(false) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permissionGranted = granted
-    }
-    LaunchedEffect(Unit) {
-        if (!permissionGranted && !permissionRequested) {
-            permissionRequested = true
-            permission.launch(Manifest.permission.CAMERA)
-        }
+        permissionPending = false
     }
     DisposableEffect(lifecycleOwner, context) {
         val observer = LifecycleEventObserver { _, event ->
@@ -139,13 +135,23 @@ fun ScanScreen(
                 }
             }
             Text(
-                text = "对准服务提供的二维码，识别过程完全离线。",
+                text = if (permissionGranted) "对准服务提供的二维码，识别过程完全离线。"
+                    else "仅在扫码时使用相机，画面在本机识别，不保存。也可以直接从图片导入或手动输入。",
                 style = AppType.caption,
                 color = colors.inkSecondary,
                 textAlign = TextAlign.Center,
             )
             if (!permissionGranted) {
-                InkPrimaryButton(text = "重试相机权限", onClick = { permission.launch(Manifest.permission.CAMERA) })
+                if (onPrivacy != null) InkTextButton("查看完整隐私声明", onClick = onPrivacy)
+                InkPrimaryButton(
+                    text = if (permissionRequested) "重试相机权限" else "授予相机权限",
+                    enabled = !permissionPending,
+                    onClick = {
+                        permissionRequested = true
+                        permissionPending = true
+                        permission.launch(Manifest.permission.CAMERA)
+                    },
+                )
                 InkTextButton(
                     text = "前往系统设置",
                     onClick = {

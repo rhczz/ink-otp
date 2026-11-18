@@ -43,7 +43,13 @@ private enum class Screen { List, Detail, ManualAdd, Scan, Settings, Diagnostics
 private enum class PasswordTask { Change, Export, Import, Restore }
 
 @Composable
-fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Boolean) {
+internal fun InkApp(
+    viewModel: VaultViewModel,
+    security: DeviceSecurity,
+    foreground: Boolean,
+    privacyPolicy: PrivacyPolicy? = null,
+    onWithdrawPrivacy: (() -> Boolean)? = null,
+) {
     val session = viewModel.state
     val sessionToken = viewModel.sessionToken
     val context = LocalContext.current
@@ -51,6 +57,9 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
     val colors = LocalInkColors.current
     var screen by remember { mutableStateOf(Screen.List) }
     val stack = remember { mutableStateListOf<Screen>() }
+    var readingPrivacy by rememberSaveable { mutableStateOf(false) }
+    var confirmingWithdrawal by rememberSaveable { mutableStateOf(false) }
+    val openPrivacy: (() -> Unit)? = privacyPolicy?.let { { readingPrivacy = true } }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var addSheet by remember { mutableStateOf(false) }
@@ -229,6 +238,7 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         if (observedSessionToken != sessionToken || (!session.unlocked && !session.backupRestoreActive)) {
             if (session.clearClipboardOnLock) security.clearClipboard()
             cancelFileOperation()
+            confirmingWithdrawal = false
             stack.clear(); screen = Screen.List; selectedId = null; query = ""; addSheet = false
             scannedInput = ""; passwordTask = null; importUri = null; importFormat = null; replaceConfirm = false; chooseExportFormat = false; exportReviewToken = null
             exportPickerToken = null; importPickerToken = null; imagePickerToken = null
@@ -236,8 +246,8 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
         }
     }
     LaunchedEffect(foreground, session.ready, session.busy, session.unlocked, session.systemAuthenticationRequired,
-        session.biometricEnabled, session.deviceUnlockAvailable, session.systemRecoveryRequired, session.backupRestoreActive, sessionToken) {
-        if (foreground && session.ready && !session.busy && session.exists && !session.unlocked) {
+        session.biometricEnabled, session.deviceUnlockAvailable, session.systemRecoveryRequired, session.backupRestoreActive, sessionToken, readingPrivacy) {
+        if (foreground && !readingPrivacy && session.ready && !session.busy && session.exists && !session.unlocked) {
             viewModel.requestAutomaticAuthentication(security)
         }
     }
@@ -256,10 +266,12 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
             fileJob?.cancel()
         }
     }
-    BackHandler(enabled = session.unlocked && !setup && stack.isNotEmpty() && !session.busy) { back() }
+    BackHandler(enabled = !readingPrivacy && session.unlocked && !setup && stack.isNotEmpty() && !session.busy) { back() }
+    BackHandler(enabled = readingPrivacy) { readingPrivacy = false }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         when {
+            readingPrivacy && privacyPolicy != null -> PrivacyScreen(privacyPolicy, onBack = { readingPrivacy = false })
             !session.ready || (!session.unlocked && session.deviceUnlockAvailable &&
                 !session.clearClipboardOnLock && session.error == null) ->
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = colors.accent) }
@@ -271,7 +283,8 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                 onFinish = { setup = false; screen = Screen.List },
                 onScan = { setup = false; screen = Screen.Scan }, onManual = { setup = false; screen = Screen.ManualAdd },
                 passwordSet = session.passwordSet, systemAuthenticationAvailable = security.canUseSystemAuthentication(),
-                onRestoreBackup = if (!session.exists) ({ selectBackup(forRestore = true) }) else null)
+                onRestoreBackup = if (!session.exists) ({ selectBackup(forRestore = true) }) else null,
+                onPrivacy = openPrivacy)
             !session.unlocked -> UnlockScreen(
                 state = UnlockUiState(error = session.error, biometricAvailable = session.biometricEnabled && security.canUseBiometrics(), degraded = !session.passwordSet,
                     deviceUnlockAvailable = session.deviceUnlockAvailable, systemAuthenticationRequired = session.systemAuthenticationRequired,
@@ -294,7 +307,8 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                 Screen.ManualAdd -> ManualAddScreen(onBack = ::back, initialInput = scannedInput,
                     onSave = { issuer, account, input -> viewModel.add(issuer, account, input) { scannedInput = ""; stack.clear(); screen = Screen.List } })
                 Screen.Scan -> ScanScreen(onBack = ::back, onDetected = { scannedInput = it; screen = Screen.ManualAdd },
-                    onGallery = ::gallery, onManual = { scannedInput = ""; screen = Screen.ManualAdd })
+                    onGallery = ::gallery, onManual = { scannedInput = ""; screen = Screen.ManualAdd },
+                    onPrivacy = openPrivacy)
                 Screen.Settings -> SettingsScreen(state = session.settings, onBack = ::back,
                     onSystemAuthenticationChange = { viewModel.systemAuthentication(it, security) },
                     onLockTimeoutChange = { seconds -> viewModel.settings { it.copy(lockTimeoutSeconds = seconds) } },
@@ -303,12 +317,13 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
                     onDiagnostics = { navigate(Screen.Diagnostics) }, onAbout = { navigate(Screen.About) },
                     onOnboarding = { message = "添加账号可使用列表右下角的加号。设置恢复口令后可导出加密备份，换机时可在首次启动选择从备份恢复。" },
                     onPassword = { passwordTask = PasswordTask.Change }, onExport = { requirePassword { chooseExportFormat = true } }, onImport = ::importBackup,
-                    onLock = { security.clearClipboard(); viewModel.lock() })
+                    onLock = { security.clearClipboard(); viewModel.lock() },
+                    onPrivacy = openPrivacy, onWithdrawPrivacy = onWithdrawPrivacy?.let { { confirmingWithdrawal = true } })
                 Screen.Diagnostics -> DiagnosticsScreen(
                     state = viewModel.diagnostics(), onBack = ::back,
                     onRecalculate = viewModel::recalculateCodes, onRefreshResources = viewModel::refreshResources,
                 )
-                Screen.About -> AboutScreen(onBack = ::back)
+                Screen.About -> AboutScreen(onBack = ::back, onPrivacy = openPrivacy)
             }
         }
         if (foreground && addSheet && session.unlocked) InkBottomSheet(onDismiss = { addSheet = false }) {
@@ -322,6 +337,18 @@ fun InkApp(viewModel: VaultViewModel, security: DeviceSecurity, foreground: Bool
             authenticationInProgress = security.isAuthenticationInProgress || !foreground,
             onCancel = if (session.importDecoding && !session.importCancelling) ::cancelImportDecoding else null,
             cancelling = session.importCancelling,
+        )
+    }
+    if (foreground && session.unlocked && confirmingWithdrawal && onWithdrawPrivacy != null) {
+        InkConfirmDialog(
+            title = "撤回隐私同意？",
+            message = "撤回后 InkOTP 会锁定并停止处理验证码数据，保留这台设备上的加密库和你自行保存的备份。再次同意后可以继续使用。",
+            confirmText = "撤回同意",
+            onConfirm = {
+                confirmingWithdrawal = false
+                if (!onWithdrawPrivacy()) message = "无法保存隐私选择，请稍后重试。"
+            },
+            onDismiss = { confirmingWithdrawal = false },
         )
     }
     if (foreground && skipPassword) InkConfirmDialog("暂不设置恢复口令？", "这台设备仍会加密保存账号，但换机或重装将无法恢复。你可以稍后在设置中补设恢复口令。", "暂时跳过",

@@ -52,6 +52,8 @@ fun SettingsScreen(
     onImport: () -> Unit = {},
     onLock: () -> Unit = {},
     onSystemAuthenticationChange: (Boolean) -> Unit = {},
+    onPrivacy: (() -> Unit)? = null,
+    onWithdrawPrivacy: (() -> Unit)? = null,
 ) {
     val colors = LocalInkColors.current
     val lockLabel = when (state.lockTimeoutSeconds) {
@@ -153,6 +155,14 @@ fun SettingsScreen(
                 onClick = onOnboarding,
             )
             InkDivider()
+            if (onPrivacy != null) {
+                SettingRow(icon = R.drawable.ic_shield, title = "隐私声明", onClick = onPrivacy)
+                InkDivider()
+            }
+            if (onWithdrawPrivacy != null) {
+                SettingRow(icon = R.drawable.ic_lock, title = "撤回隐私同意", onClick = onWithdrawPrivacy)
+                InkDivider()
+            }
             SettingRow(
                 icon = R.drawable.ic_info,
                 title = "关于与开源许可",
