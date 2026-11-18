@@ -26,10 +26,6 @@ abstract class BundlePrivacyPolicy : DefaultTask() {
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val policyHtml: RegularFileProperty
 
-    @get:InputFile
-    @get:PathSensitive(PathSensitivity.NONE)
-    abstract val policyStyles: RegularFileProperty
-
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
@@ -38,14 +34,12 @@ abstract class BundlePrivacyPolicy : DefaultTask() {
         val policy = outputDirectory.dir("privacy").get().asFile
         policy.mkdirs()
         policyHtml.get().asFile.copyTo(policy.resolve("index.html"), overwrite = true)
-        policyStyles.get().asFile.copyTo(policy.resolve("site.css"), overwrite = true)
     }
 }
 
 val bundlePrivacyPolicy = tasks.register<BundlePrivacyPolicy>("bundlePrivacyPolicy") {
     policyHtml.set(rootProject.layout.projectDirectory.file("../website/privacy/index.html"))
-    policyStyles.set(rootProject.layout.projectDirectory.file("../website/assets/site.css"))
-    outputDirectory.set(layout.buildDirectory.dir("generated/privacy/assets"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/privacyDocument/assets"))
 }
 
 androidComponents {
@@ -66,8 +60,8 @@ android {
         applicationId = "io.github.rhczz.inkotp"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.5.2"
+        versionCode = 10
+        versionName = "0.5.3"
     }
 
     buildFeatures {

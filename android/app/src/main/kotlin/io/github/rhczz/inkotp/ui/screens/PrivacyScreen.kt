@@ -3,15 +3,13 @@ package io.github.rhczz.inkotp.ui.screens
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -21,7 +19,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import io.github.rhczz.inkotp.platform.PrivacyBlock
+import io.github.rhczz.inkotp.platform.PrivacyBlockKind
 import io.github.rhczz.inkotp.platform.PrivacyPolicy
 import io.github.rhczz.inkotp.ui.components.InkPrimaryButton
 import io.github.rhczz.inkotp.ui.components.InkSecondaryButton
@@ -30,13 +37,16 @@ import io.github.rhczz.inkotp.ui.components.ScreenScaffold
 import io.github.rhczz.inkotp.ui.theme.AppTokens
 import io.github.rhczz.inkotp.ui.theme.AppType
 import io.github.rhczz.inkotp.ui.theme.LocalInkColors
-import java.io.ByteArrayInputStream
 
 @Composable
 internal fun PrivacyScreen(policy: PrivacyPolicy, onBack: () -> Unit) {
     val colors = LocalInkColors.current
+    val context = LocalContext.current
+    val title = policy.blocks.first { it.kind == PrivacyBlockKind.TITLE }.text
+    val body = remember(policy) { policy.blocks.filterNot { it.kind == PrivacyBlockKind.TITLE } }
     var linkError by remember { mutableStateOf(false) }
-    ScreenScaffold(title = "隐私声明", onBack = onBack) {
+
+    ScreenScaffold(title = title, onBack = onBack) {
         Column(Modifier.fillMaxSize()) {
             if (linkError) {
                 Text(
@@ -46,54 +56,62 @@ internal fun PrivacyScreen(policy: PrivacyPolicy, onBack: () -> Unit) {
                     modifier = Modifier.padding(vertical = AppTokens.Spacing.s),
                 )
             }
-            AndroidView(
+            LazyColumn(
                 modifier = Modifier.weight(1f),
-                factory = { context ->
-                    WebView(context).apply {
-                        settings.javaScriptEnabled = false
-                        settings.domStorageEnabled = false
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = false
-                        settings.blockNetworkLoads = true
-                        settings.cacheMode = WebSettings.LOAD_NO_CACHE
-                        webViewClient = PrivacyWebClient { uri ->
-                            val intent = if (uri.scheme == "mailto") Intent(Intent.ACTION_SENDTO, uri)
-                                else Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)
-                            linkError = try {
-                                context.startActivity(intent)
-                                false
-                            } catch (_: ActivityNotFoundException) {
-                                true
-                            } catch (_: SecurityException) {
-                                true
-                            }
+                contentPadding = PaddingValues(top = AppTokens.Spacing.s, bottom = AppTokens.Spacing.xl),
+            ) {
+                items(body) { block ->
+                    PrivacyParagraph(block) { url ->
+                        val uri = Uri.parse(url)
+                        val intent = if (uri.scheme == "mailto") Intent(Intent.ACTION_SENDTO, uri)
+                        else Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)
+                        linkError = try {
+                            context.startActivity(intent)
+                            false
+                        } catch (_: ActivityNotFoundException) {
+                            true
+                        } catch (_: SecurityException) {
+                            true
                         }
-                        loadDataWithBaseURL(POLICY_PAGE, policy.document, "text/html", "UTF-8", null)
                     }
-                },
-                onRelease = { it.destroy() },
-            )
+                }
+            }
         }
     }
 }
 
-private const val POLICY_PAGE = "https://appassets.androidplatform.net/privacy/"
-
-private class PrivacyWebClient(private val openExternal: (Uri) -> Unit) : WebViewClient() {
-    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse =
-        WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(byteArrayOf()))
-
-    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        val uri = request.url
-        if (uri.fragment != null && uri.buildUpon().fragment(null).build().toString() == POLICY_PAGE) return false
-        if (request.isForMainFrame && request.hasGesture() &&
-            ((uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.host != "appassets.androidplatform.net") ||
-                (uri.scheme == "mailto" && !uri.schemeSpecificPart.isNullOrBlank()))
-        ) {
-            openExternal(uri)
-        }
-        return true
+@Composable
+private fun PrivacyParagraph(block: PrivacyBlock, onLink: (String) -> Unit) {
+    val colors = LocalInkColors.current
+    val kind = block.kind
+    val style = when (kind) {
+        PrivacyBlockKind.HEADING -> AppType.section
+        PrivacyBlockKind.TERM -> AppType.bodyStrong
+        PrivacyBlockKind.META -> AppType.caption
+        else -> AppType.body
     }
+    val top = when (kind) {
+        PrivacyBlockKind.HEADING -> AppTokens.Spacing.xl
+        PrivacyBlockKind.DETAIL -> AppTokens.Spacing.xs
+        else -> AppTokens.Spacing.m
+    }
+    val color = if (kind == PrivacyBlockKind.META || kind == PrivacyBlockKind.DETAIL) colors.inkSecondary else colors.ink
+    val modifier = Modifier.padding(top = top)
+    val text = buildAnnotatedString {
+        if (kind == PrivacyBlockKind.BULLET) append("• ")
+        val offset = length
+        append(block.text)
+        val linkStyles = TextLinkStyles(SpanStyle(color = colors.accent, textDecoration = TextDecoration.Underline))
+        for (link in block.links) {
+            addLink(LinkAnnotation.Url(link.url, linkStyles) { onLink(link.url) }, offset + link.start, offset + link.end)
+        }
+    }
+    Text(
+        text = text,
+        style = style,
+        color = color,
+        modifier = if (kind == PrivacyBlockKind.HEADING) modifier.semantics { heading() } else modifier,
+    )
 }
 
 @Composable
