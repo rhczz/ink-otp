@@ -10,14 +10,21 @@ import UniformTypeIdentifiers
 struct InkOTPDesktop: App {
     @StateObject private var store = VaultStore()
     @StateObject private var commands = DesktopCommands()
+    @StateObject private var activity = DesktopActivity()
 
     init() {
         if CommandLine.arguments.contains("--ci-vault-smoke") { VaultSmoke.runAndExit() }
     }
 
+    private var canCopySelection: Bool {
+        guard activity.isActive, let id = commands.selectedAccountID else { return false }
+        return store.model?.items.contains { $0.id == id && $0.type == .totp } == true
+    }
+
     var body: some Scene {
         Window("InkOTP", id: "vault") {
             DesktopVaultView(store: store, commands: commands)
+                .environmentObject(activity)
                 .frame(minWidth: 720, minHeight: 470)
         }
         .defaultSize(width: 940, height: 640)
@@ -38,10 +45,10 @@ struct InkOTPDesktop: App {
             CommandGroup(after: .pasteboard) {
                 Button(tr("Copy Verification Code", "复制验证码")) { commands.send(.copy) }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .disabled(store.model == nil || !commands.hasSelection)
+                    .disabled(!canCopySelection)
                 Button(tr("Edit Account…", "编辑账号…")) { commands.send(.edit) }
                     .keyboardShortcut("e", modifiers: .command)
-                    .disabled(store.model == nil || !commands.hasSelection || store.busy)
+                    .disabled(store.model == nil || commands.selectedAccountID == nil || store.busy)
             }
             CommandMenu(tr("Vault", "验证码库")) {
                 Button(tr("Lock Now", "立即锁定")) { store.lock() }
@@ -56,6 +63,7 @@ struct InkOTPDesktop: App {
 
         Settings {
             DesktopSettings(store: store, commands: commands)
+                .environmentObject(activity)
         }
     }
 }
@@ -67,10 +75,55 @@ enum DesktopRequest {
 @MainActor
 final class DesktopCommands: ObservableObject {
     let requests = CurrentValueSubject<DesktopRequest?, Never>(nil)
-    @Published var hasSelection = false
+    @Published var selectedAccountID: String?
 
     func send(_ request: DesktopRequest) {
         requests.send(request)
+    }
+}
+
+@MainActor
+final class DesktopActivity: ObservableObject {
+    @Published private(set) var isActive = NSApplication.shared.isActive
+    private var observations = Set<AnyCancellable>()
+
+    init() {
+        NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.isActive = false } }
+            .store(in: &observations)
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.isActive = true } }
+            .store(in: &observations)
+    }
+}
+
+@MainActor
+struct DesktopPrivacyCurtain: ViewModifier {
+    @EnvironmentObject private var activity: DesktopActivity
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        // Keep this container and its presenter alive. Native fields must be
+        // removed from the host while inactive, including their AX elements.
+        ZStack {
+            if activity.isActive {
+                content
+            } else {
+                let ink = QuietInk(dark: scheme == .dark)
+                Label(tr("InkOTP is inactive", "InkOTP 已切换至后台"), systemImage: "lock.shield")
+                    .foregroundStyle(ink.secondary)
+                    .accessibilityIdentifier("desktop-privacy-curtain")
+                    .frame(minWidth: 400, minHeight: 164)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(ink.background)
+            }
+        }
+        .transaction { transaction in
+            if !activity.isActive {
+                transaction.disablesAnimations = true
+                transaction.animation = nil
+            }
+        }
     }
 }
 
@@ -98,6 +151,7 @@ struct DesktopVaultView: View {
     @ObservedObject var commands: DesktopCommands
     @Environment(\.colorScheme) private var scheme
     @Environment(\.openSettings) private var openSettings
+    @EnvironmentObject private var activity: DesktopActivity
     @AppStorage("export.last-revision") private var lastBackupRevision = ""
     @State private var selection: String?
     @State private var query = ""
@@ -105,15 +159,14 @@ struct DesktopVaultView: View {
     @State private var confirmDelete: String?
     @State private var showRecovery = false
     @State private var unlockPassword = ""
-    @State private var revealed: Set<String> = []
     @State private var codeFeedback: String?
     @State private var feedbackTask: Task<Void, Never>?
     @State private var fileTask: Task<Void, Never>?
+    @State private var openPanel: NSOpenPanel?
     @State private var fileBusy = false
-    @State private var didStart = false
-    @State private var appActive = true
     @State private var clockChanged = false
 
+    private var appActive: Bool { activity.isActive }
     private var ink: QuietInk { QuietInk(dark: scheme == .dark) }
     private var items: [VaultItem] {
         (store.model?.items ?? []).sorted { ($0.sortIndex, $0.id) < ($1.sortIndex, $1.id) }
@@ -137,6 +190,7 @@ struct DesktopVaultView: View {
                 gate(icon: "hand.raised", title: tr("Privacy Statement", "隐私声明"),
                      message: tr("InkOTP generates verification codes on this Mac. Review the privacy statement to continue.", "InkOTP 在这台 Mac 上生成验证码。请阅读隐私声明后继续。")) {
                     Button(tr("Read Privacy Statement", "阅读隐私声明")) { present(.privacy) }
+                        .accessibilityIdentifier("privacy-read")
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 }
@@ -150,6 +204,7 @@ struct DesktopVaultView: View {
                     HStack {
                         Button(tr("Restore from Backup…", "从备份恢复…"), action: chooseBackup)
                         Button(tr("Create Vault…", "新建验证码库…")) { present(.setup) }
+                            .accessibilityIdentifier("vault-create")
                             .buttonStyle(.borderedProminent)
                             .keyboardShortcut(.defaultAction)
                     }
@@ -177,8 +232,10 @@ struct DesktopVaultView: View {
                 DesktopBusyIndicator().padding(16)
             }
         }
+        .modifier(DesktopPrivacyCurtain())
         .sheet(item: $sheet) { current in
             sheetView(current.content, sheetID: current.id)
+                .environmentObject(activity)
         }
         .confirmationDialog(tr("Delete account?", "删除账号？"), isPresented: Binding(
             get: { confirmDelete != nil },
@@ -199,13 +256,7 @@ struct DesktopVaultView: View {
             handle(request)
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSSystemClockDidChange)) { _ in clockChanged = true }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in appActive = true }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-            appActive = false
-            revealed.removeAll()
-        }
-        .onChange(of: selection) { _, newValue in commands.hasSelection = newValue != nil }
-        .onChange(of: defaultHidden) { _, _ in revealed.removeAll() }
+        .onChange(of: selection) { _, newValue in commands.selectedAccountID = newValue }
         .onChange(of: visible.map(\.id)) { _, ids in
             if let selection, !ids.contains(selection) { self.selection = nil }
         }
@@ -214,25 +265,18 @@ struct DesktopVaultView: View {
             query = ""
             confirmDelete = nil
             sheet = nil
-            revealed.removeAll()
             fileTask?.cancel()
+            openPanel?.cancel(nil)
             codeFeedback = nil
             unlockPassword = ""
             showRecovery = false
         }
         .onDisappear {
             fileTask?.cancel()
+            openPanel?.cancel(nil)
             feedbackTask?.cancel()
-            commands.hasSelection = false
-            if store.model != nil { store.lock() }
-        }
-        .task(id: store.ready) {
-            guard store.ready, !didStart else { return }
-            didStart = true
-            appActive = NSApplication.shared.isActive
-            if store.consent && store.initialized && store.model == nil {
-                await store.unlock()
-            }
+            commands.selectedAccountID = nil
+            store.lock()
         }
     }
 
@@ -242,10 +286,12 @@ struct DesktopVaultView: View {
             VStack(spacing: 14) {
                 if showRecovery {
                     SecureField(tr("Recovery password", "恢复口令"), text: $unlockPassword)
+                        .accessibilityIdentifier("vault-recovery-password")
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 320)
                         .onSubmit(unlockWithPassword)
                     Button(tr("Unlock with Recovery Password", "使用恢复口令解锁"), action: unlockWithPassword)
+                        .accessibilityIdentifier("vault-recovery-submit")
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                         .disabled(unlockPassword.isEmpty || isBusy)
@@ -258,11 +304,13 @@ struct DesktopVaultView: View {
                     Button(tr("Unlock Vault", "解锁验证码库")) {
                         Task { await store.unlock() }
                     }
+                    .accessibilityIdentifier("vault-unlock")
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isBusy)
                     if store.hasRecoveryPassword {
                         Button(tr("Use Recovery Password…", "使用恢复口令…")) { showRecovery = true }
+                            .accessibilityIdentifier("vault-recovery-open")
                             .buttonStyle(.link)
                     }
                 }
@@ -337,6 +385,7 @@ struct DesktopVaultView: View {
                             Text(tr("Add a service to start generating codes.", "添加服务后即可生成验证码。"))
                         } actions: {
                             Button(tr("Add Account…", "添加账号…")) { present(.account(nil, nil)) }
+                                .accessibilityIdentifier("vault-add-account")
                                 .buttonStyle(.borderedProminent)
                                 .disabled(isBusy)
                         }
@@ -358,9 +407,11 @@ struct DesktopVaultView: View {
                     Button(tr("Paste QR Link…", "粘贴二维码链接…"), action: pasteSetup)
                     Button(tr("Read QR Image…", "读取二维码图片…"), action: chooseQRImage)
                     Button(tr("Scan with Camera…", "使用相机扫描…")) { present(.camera) }
+                        .accessibilityIdentifier("camera-open")
                 } label: {
                     Label(tr("Add Account", "添加账号"), systemImage: "plus")
                 }
+                .accessibilityIdentifier("vault-add-menu")
                 .disabled(isBusy)
                 Button { openSettings() } label: {
                     Label(tr("Settings", "设置"), systemImage: "gearshape")
@@ -368,6 +419,7 @@ struct DesktopVaultView: View {
                 Button { store.lock() } label: {
                     Label(tr("Lock Vault", "锁定验证码库"), systemImage: "lock")
                 }
+                .accessibilityIdentifier("vault-lock")
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -431,17 +483,18 @@ struct DesktopVaultView: View {
                 }
             }
             Spacer(minLength: 6)
-            if appActive {
-                let hidden = defaultHidden != revealed.contains(item.id)
+            if appActive && item.type == .totp {
                 TimelineView(.periodic(from: secondBoundary, by: 1)) { context in
-                    let warning = item.type == .totp && secondsRemaining(item, at: context.date) <= 5
-                    let code = hidden ? String(repeating: "•", count: item.digits)
+                    let warning = secondsRemaining(item, at: context.date) <= 5
+                    let code = defaultHidden ? String(repeating: "•", count: item.digits)
                         : store.code(item, at: context.date) ?? "—"
                     Text(grouped(code))
                         .font(.system(.caption, design: .monospaced).weight(.medium))
                         .foregroundStyle(warning ? ink.warningText : Color.primary)
-                        .accessibilityLabel(Text(hidden ? tr("Code hidden", "验证码已隐藏") : code))
+                        .accessibilityLabel(Text(defaultHidden ? tr("Code hidden", "验证码已隐藏") : code))
                 }
+            } else if appActive {
+                Text("HOTP").font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
@@ -457,10 +510,12 @@ struct DesktopVaultView: View {
                         Text(item.issuer ?? item.accountName)
                             .font(.system(.title, design: .default).weight(.semibold))
                             .textSelection(.enabled)
+                            .accessibilityIdentifier(item.issuer == nil ? "account-detail-name" : "account-detail-issuer")
                         if item.issuer != nil {
                             Text(item.accountName)
                                 .foregroundStyle(ink.secondary)
                                 .textSelection(.enabled)
+                                .accessibilityIdentifier("account-detail-name")
                         }
                     }
                     Spacer()
@@ -474,7 +529,14 @@ struct DesktopVaultView: View {
                     .fixedSize()
                 }
 
-                codeCard(item)
+                if item.type == .totp {
+                    codeCard(item)
+                } else {
+                    Label(tr("This version preserves HOTP accounts without generating verification codes.",
+                             "此版本暂不生成 HOTP 验证码，账号信息会保留。"),
+                          systemImage: "info.circle")
+                        .foregroundStyle(ink.secondary)
+                }
 
                 VStack(alignment: .leading, spacing: 12) {
                     Text(tr("Account Details", "账号详情")).font(.headline)
@@ -503,12 +565,11 @@ struct DesktopVaultView: View {
     }
 
     private func codeCard(_ item: VaultItem) -> some View {
-        let hidden = defaultHidden != revealed.contains(item.id)
-        return VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 18) {
             TimelineView(.periodic(from: secondBoundary, by: 1)) { context in
                 let remaining = secondsRemaining(item, at: context.date)
-                let expiring = item.type == .totp && remaining <= 5
-                let rawCode = hidden ? nil : store.code(item, at: context.date)
+                let expiring = remaining <= 5
+                let rawCode = defaultHidden ? nil : store.code(item, at: context.date)
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(tr("VERIFICATION CODE", "验证码"))
@@ -516,46 +577,31 @@ struct DesktopVaultView: View {
                             .tracking(1.8)
                             .foregroundStyle(ink.secondary)
                         Spacer()
-                        if item.type == .totp {
-                            Text(tr("\(remaining)s remaining", "剩余 \(remaining) 秒"))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(expiring ? ink.warningText : ink.secondary)
-                        }
+                        Text(tr("\(remaining)s remaining", "剩余 \(remaining) 秒"))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(expiring ? ink.warningText : ink.secondary)
                     }
-                    Text(hidden
+                    Text(defaultHidden
                          ? grouped(String(repeating: "•", count: item.digits))
                          : grouped(rawCode ?? "—"))
                         .font(.system(size: 42, weight: .semibold, design: .monospaced))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .foregroundStyle(expiring ? ink.warningText : ink.foreground)
-                        .accessibilityLabel(Text(hidden ? tr("Verification code hidden", "验证码已隐藏") : tr("Verification code", "验证码")))
+                        .accessibilityLabel(Text(defaultHidden ? tr("Verification code hidden", "验证码已隐藏") : tr("Verification code", "验证码")))
                         .accessibilityValue(Text(rawCode ?? ""))
-                    if item.type == .totp {
-                        ProgressView(value: Double(remaining), total: Double(max(1, item.period)))
-                            .tint(expiring ? ink.warning : ink.accent)
-                            .accessibilityHidden(true)
-                    }
+                        .accessibilityIdentifier("account-code")
+                    ProgressView(value: Double(remaining), total: Double(max(1, item.period)))
+                        .tint(expiring ? ink.warning : ink.accent)
+                        .accessibilityHidden(true)
                 }
             }
 
-            HStack(spacing: 10) {
-                Button { copy(item) } label: {
-                    Label(tr("Copy Code", "复制验证码"), systemImage: "document.on.document")
-                }
-                .buttonStyle(.borderedProminent)
-                Button {
-                    if revealed.contains(item.id) { revealed.remove(item.id) } else { revealed.insert(item.id) }
-                } label: {
-                    Label(hidden ? tr("Show", "显示") : tr("Hide", "隐藏"), systemImage: hidden ? "eye" : "eye.slash")
-                }
-                if item.type == .hotp {
-                    Button { Task { await store.advance(item.id) } } label: {
-                        Label(tr("Next Code", "下一个验证码"), systemImage: "arrow.clockwise")
-                    }
-                    .disabled(isBusy || item.counter == Int64.max)
-                }
+            Button { copy(item) } label: {
+                Label(tr("Copy Code", "复制验证码"), systemImage: "document.on.document")
             }
+            .accessibilityIdentifier("account-copy")
+            .buttonStyle(.borderedProminent)
             .controlSize(.large)
         }
         .padding(22)
@@ -570,7 +616,8 @@ struct DesktopVaultView: View {
 
     @ViewBuilder
     private func accountActions(_ item: VaultItem) -> some View {
-        Button(tr("Copy Verification Code", "复制验证码")) { copy(item) }.disabled(!appActive)
+        Button(tr("Copy Verification Code", "复制验证码")) { copy(item) }
+            .disabled(!appActive || item.type != .totp)
         Button(tr("Edit Account…", "编辑账号…")) { present(.account(item.id, nil)) }.disabled(isBusy || !appActive)
         Divider()
         Button(tr("Move Up", "上移")) { Task { await store.move(item.id, direction: -1) } }
@@ -593,7 +640,7 @@ struct DesktopVaultView: View {
     }
 
     private func copy(_ item: VaultItem) {
-        guard appActive, store.copy(item) else { return }
+        guard appActive, item.type == .totp, store.copy(item) else { return }
         codeFeedback = tr("Code copied", "验证码已复制")
         AccessibilityNotification.Announcement(tr("Verification code copied", "验证码已复制")).post()
         feedbackTask?.cancel()
@@ -613,7 +660,7 @@ struct DesktopVaultView: View {
     }
 
     private func handle(_ request: DesktopRequest) {
-        guard sheet == nil, confirmDelete == nil else { return }
+        guard appActive, sheet == nil, confirmDelete == nil, openPanel == nil else { return }
         switch request {
         case .add: if store.model != nil { present(.account(nil, nil)) }
         case .copy: if let selected { copy(selected) }
@@ -654,19 +701,20 @@ struct DesktopVaultView: View {
                 PasswordSheet(store: store, close: close)
             }
         case .camera:
-            CameraSheet(close: close) { value in
+            CameraSheet(store: store, close: close) { value in
+                let revision = store.lockRevision
                 close()
                 // Open the editor on the next run loop after dismissing the camera.
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(250))
-                    guard store.model != nil, appActive, sheet == nil else { return }
+                    guard store.lockRevision == revision, store.model != nil, appActive, sheet == nil else { return }
                     openDraft(value)
                 }
             }
         case .changePassword: PasswordSheet(store: store, close: close)
         case .privacy: PrivacySheet(store: store, close: close)
         case .diagnostics: DiagnosticsSheet(store: store, clockChanged: $clockChanged, close: close)
-        case .about: AboutSheet(close: close)
+        case .about: AboutSheet(store: store, close: close)
         case .onboarding: OnboardingSheet(close: close)
         }
     }
@@ -682,16 +730,11 @@ struct DesktopVaultView: View {
     private func openDraft(_ setup: String) {
         store.errorMessage = nil
         do {
-            guard setup.utf8.count <= 65_536 else { throw QRFailure.unsupported }
-            let draft = try Otpauth.parse(setup.trimmingCharacters(in: .whitespacesAndNewlines))
-            guard draft.kind != .migration else {
-                store.errorMessage = tr("Google Authenticator migration QR codes are unsupported. Use a setup link for one account.",
-                                        "暂不支持 Google Authenticator 迁移二维码。请使用单个账号的设置链接。")
-                return
-            }
-            present(.account(nil, draft))
+            present(.account(nil, try AccountSetupInput.parse(setup)))
+        } catch let error as AccountSetupInput {
+            store.errorMessage = error.errorDescription
         } catch {
-            store.errorMessage = tr("This is not a supported verification setup key or link.", "这不是受支持的验证码设置密钥或链接。")
+            store.errorMessage = AccountSetupInput.invalid.errorDescription
         }
     }
 
@@ -708,21 +751,24 @@ struct DesktopVaultView: View {
     }
 
     private func openFile(prompt: String, types: [UTType], receive: @escaping (URL) -> Void) {
-        guard !isBusy, sheet == nil else { return }
+        guard !isBusy, sheet == nil, openPanel == nil else { return }
         store.errorMessage = nil
         let panel = NSOpenPanel()
         panel.prompt = prompt
         panel.allowedContentTypes = types
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
+        let revision = store.lockRevision
+        openPanel = panel
+        let didChoose: (NSApplication.ModalResponse) -> Void = { response in
+            openPanel = nil
+            guard response == .OK, store.lockRevision == revision, let url = panel.url else { return }
+            receive(url)
+        }
         if let window = NSApplication.shared.keyWindow {
-            panel.beginSheetModal(for: window) { response in
-                if response == .OK, let url = panel.url { receive(url) }
-            }
+            panel.beginSheetModal(for: window, completionHandler: didChoose)
         } else {
-            panel.begin { response in
-                if response == .OK, let url = panel.url { receive(url) }
-            }
+            panel.begin(completionHandler: didChoose)
         }
     }
 

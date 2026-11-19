@@ -11,12 +11,15 @@ struct DesktopSettings: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage("export.last-success") private var lastBackup = 0.0
     @State private var confirmingWithdrawal = false
+    @State private var selectedTab = SettingsTab.security
+
+    private enum SettingsTab: Hashable { case security, backups, help }
 
     var body: some View {
-        TabView {
-            security.tabItem { Label(tr("Security", "安全"), systemImage: "lock.shield") }
-            backups.tabItem { Label(tr("Backup", "备份"), systemImage: "externaldrive") }
-            help.tabItem { Label(tr("Help", "帮助"), systemImage: "questionmark.circle") }
+        TabView(selection: $selectedTab) {
+            security.tabItem { Label(tr("Security", "安全"), systemImage: "lock.shield") }.tag(SettingsTab.security)
+            backups.tabItem { Label(tr("Backup", "备份"), systemImage: "externaldrive") }.tag(SettingsTab.backups)
+            help.tabItem { Label(tr("Help", "帮助"), systemImage: "questionmark.circle") }.tag(SettingsTab.help)
         }
         .padding(18)
         .frame(width: 530, height: 400)
@@ -33,6 +36,7 @@ struct DesktopSettings: View {
                 DesktopNotice(message: errorMessage) { store.errorMessage = nil }.padding(8)
             }
         }
+        .modifier(DesktopPrivacyCurtain())
     }
 
     private var security: some View {
@@ -53,10 +57,12 @@ struct DesktopSettings: View {
                     Text(tr("After 30 Seconds", "30 秒后")).tag(30)
                     Text(tr("After 1 Minute", "1 分钟后")).tag(60)
                 }
+                .accessibilityIdentifier("settings-lock-timeout")
                 .disabled(store.systemAuthentication || store.model == nil || store.busy)
             }
             Section {
                 Toggle(tr("Hide verification codes", "隐藏验证码"), isOn: setting(\.hideCodesByDefault, fallback: false))
+                    .accessibilityIdentifier("settings-hide-codes")
                 Picker(tr("Clear copied codes", "清理已复制的验证码"), selection: setting(\.clipboardClearSeconds, fallback: 30)) {
                     if let value = store.model?.settings.clipboardClearSeconds, ![0, 1, 15, 30, 60].contains(value) {
                         Text(tr("\(value) seconds", "\(value) 秒")).tag(value)
@@ -158,17 +164,24 @@ enum DesktopPrivacy {
 struct PrivacySheet: View {
     @ObservedObject var store: VaultStore
     let close: () -> Void
+    var allowConsent = true
 
     var body: some View {
-        InformationDialog(title: tr("Privacy Statement", "隐私声明"), close: close, width: 658) {
+        InformationDialog(title: tr("Privacy Statement", "隐私声明"), close: close, width: 658,
+                          titleIdentifier: "privacy-document") {
             if DesktopPrivacy.available {
+                let paragraphs = DesktopPrivacy.statement.components(separatedBy: "\n\n")
+                let firstHeading = paragraphs.firstIndex { $0.hasPrefix("## ") }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 13) {
-                        ForEach(Array(DesktopPrivacy.statement.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
+                        ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
                             if paragraph.hasPrefix("## ") {
-                                Text(String(paragraph.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines))
+                                let heading = String(paragraph.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+                                Text(heading)
                                     .font(.headline)
+                                    .accessibilityLabel(Text(heading))
                                     .accessibilityAddTraits(.isHeader)
+                                    .accessibilityIdentifier(index == firstHeading ? "privacy-first-section" : "privacy-section-\(index)")
                             } else {
                                 Text(paragraph.trimmingCharacters(in: .whitespacesAndNewlines))
                                     .textSelection(.enabled)
@@ -183,11 +196,12 @@ struct PrivacySheet: View {
                 Label(tr("The privacy statement is missing from this application package.", "当前应用包缺少隐私声明。"),
                       systemImage: "exclamationmark.triangle")
             }
-            if !store.consent && DesktopPrivacy.available {
+            if allowConsent && !store.consent && DesktopPrivacy.available {
                 Button(tr("Continue", "同意并继续")) {
                     store.acceptPrivacy()
                     close()
                 }
+                .accessibilityIdentifier("privacy-accept")
                 .buttonStyle(.borderedProminent)
             }
         }
@@ -200,50 +214,98 @@ struct DiagnosticsSheet: View {
     @Binding var clockChanged: Bool
     let close: () -> Void
     @State private var sampledTime = Date.now
+    @State private var recalculatedCount: Int?
+    @State private var recalculation: Task<Void, Never>?
     @State private var residentBytes: UInt64?
     @State private var privateBytes: Int?
     @State private var refreshed = false
+    @State private var resourceSampling: Task<Void, Never>?
 
     var body: some View {
         InformationDialog(title: tr("Diagnostics", "诊断"), close: close) {
-            VStack(alignment: .leading, spacing: 11) {
-                LabeledContent(tr("Mac time", "Mac 时间"), value: sampledTime.formatted(date: .abbreviated, time: .standard))
-                LabeledContent(tr("Time zone", "时区"), value: TimeZone.autoupdatingCurrent.identifier)
-                if clockChanged {
-                    Label(tr("The system clock changed while InkOTP was open. Confirm the time before copying a new code.",
-                             "InkOTP 运行期间系统时钟发生变更。请确认时间正确后复制新验证码。"),
-                          systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
-                Text(tr("Check your Mac’s date, time and time zone, then verify that your service, account and setup key match the requesting site.",
-                        "请核对 Mac 的日期、时间和时区，再确认验证码对应的服务、账号及设置密钥。"))
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Button(tr("Refresh Time and Codes", "刷新时间与验证码")) {
-                        sampledTime = .now
-                        clockChanged = false
+            clockDetails
+            Divider()
+            resourceDetails
+        }
+        .onDisappear {
+            recalculation?.cancel()
+            resourceSampling?.cancel()
+        }
+    }
+
+    private var clockDetails: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            LabeledContent(tr("Mac time", "Mac 时间"), value: sampledTime.formatted(date: .abbreviated, time: .standard))
+            LabeledContent(tr("Time zone", "时区"), value: TimeZone.autoupdatingCurrent.identifier)
+            if clockChanged {
+                Label(tr("The system clock changed while InkOTP was open. Confirm the time before copying a new code.",
+                         "InkOTP 运行期间系统时钟发生变更。请确认时间正确后复制新验证码。"),
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+            Text(tr("Check your Mac’s date, time and time zone, then verify that your service, account and setup key match the requesting site.",
+                    "请核对 Mac 的日期、时间和时区，再确认验证码对应的服务、账号及设置密钥。"))
+                .foregroundStyle(.secondary)
+            HStack {
+                Button(tr("Refresh Time and Codes", "刷新时间与验证码"), action: recalculate)
+                    .accessibilityIdentifier("diagnostics-recalculate")
+                    .disabled(store.model == nil || recalculation != nil)
+                Button(tr("Open System Settings", "打开系统设置")) {
+                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.systempreferences") {
+                        NSWorkspace.shared.open(url)
                     }
-                    Button(tr("Open System Settings", "打开系统设置")) {
-                        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.systempreferences") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                }
-                Text(tr("Automatic time is managed in System Settings → General → Date & Time.",
-                        "自动设置时间由系统设置 → 通用 → 日期与时间管理。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                Divider()
-                Text(tr("Resources", "资源")).font(.headline).accessibilityAddTraits(.isHeader)
-                if refreshed {
-                    LabeledContent(tr("Process resident memory", "进程常驻内存"), value: formatBytes(residentBytes))
-                    LabeledContent(tr("Private vault files", "私有库文件"), value: formatBytes(privateBytes.flatMap { UInt64(exactly: $0) }))
-                    LabeledContent(tr("Unlocked entries", "已解锁账号数"), value: store.model.map { "\($0.items.count)" } ?? "—")
-                }
-                Button(tr("Sample Resources", "采样资源")) {
-                    residentBytes = Self.sampleResidentBytes()
-                    Task { privateBytes = await store.diskBytes(); refreshed = true }
                 }
             }
+            if let recalculatedCount {
+                let text = recalculatedCount == 1 ? "Recalculated 1 TOTP code" : "Recalculated \(recalculatedCount) TOTP codes"
+                Text(tr(text, "已重新计算 \(recalculatedCount) 个 TOTP 验证码"))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("diagnostics-recalculated")
+            }
+            Text(tr("Automatic time is managed in System Settings → General → Date & Time.",
+                    "自动设置时间由系统设置 → 通用 → 日期与时间管理。"))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var resourceDetails: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text(tr("Resources", "资源")).font(.headline).accessibilityAddTraits(.isHeader)
+            if refreshed {
+                LabeledContent(tr("Process resident memory", "进程常驻内存"), value: formatBytes(residentBytes))
+                    .accessibilityIdentifier("diagnostics-resource-result")
+                LabeledContent(tr("Private vault files", "私有库文件"), value: formatBytes(privateBytes.flatMap { UInt64(exactly: $0) }))
+                LabeledContent(tr("Unlocked entries", "已解锁账号数"), value: store.model.map { "\($0.items.count)" } ?? "—")
+            }
+            Button(tr("Sample Resources", "采样资源"), action: sampleResources)
+                .accessibilityIdentifier("diagnostics-sample-resources")
+                .disabled(resourceSampling != nil)
+        }
+    }
+
+    private func recalculate() {
+        guard recalculation == nil else { return }
+        let timestamp = Date.now
+        recalculation = Task {
+            defer { recalculation = nil }
+            guard let count = await store.recalculateCodes(at: timestamp), !Task.isCancelled else { return }
+            sampledTime = timestamp
+            clockChanged = false
+            recalculatedCount = count
+        }
+    }
+
+    private func sampleResources() {
+        guard resourceSampling == nil, NSApplication.shared.isActive else { return }
+        let revision = store.lockRevision
+        let resident = Self.sampleResidentBytes()
+        resourceSampling = Task {
+            defer { resourceSampling = nil }
+            let bytes = await store.diskBytes()
+            guard !Task.isCancelled, store.lockRevision == revision else { return }
+            residentBytes = resident
+            privateBytes = bytes
+            refreshed = true
         }
     }
 
@@ -264,13 +326,24 @@ struct DiagnosticsSheet: View {
     }
 }
 
+@MainActor
 struct AboutSheet: View {
+    @ObservedObject var store: VaultStore
     let close: () -> Void
     @State private var selectedLicense = 0
+    @State private var showingPrivacy = false
     private let version = (Bundle.main.object(forInfoDictionaryKey: "InkOTPReleaseVersion") as? String)
         ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "—"
 
     var body: some View {
+        if showingPrivacy {
+            PrivacySheet(store: store, close: { showingPrivacy = false }, allowConsent: false)
+        } else {
+            about
+        }
+    }
+
+    private var about: some View {
         InformationDialog(title: tr("About and Licenses", "关于与开源许可"), close: close, width: 628) {
             HStack(spacing: 15) {
                 Image(nsImage: NSApplication.shared.applicationIconImage)
@@ -282,7 +355,12 @@ struct AboutSheet: View {
                 }
                 Spacer()
             }
-            Link(tr("Source Code", "查看源代码"), destination: URL(string: "https://github.com/rhczz/ink-otp")!)
+            HStack(spacing: 16) {
+                Link(tr("Source Code", "查看源代码"), destination: URL(string: "https://github.com/rhczz/ink-otp")!)
+                Button(tr("Privacy Statement", "隐私声明")) { showingPrivacy = true }
+                    .buttonStyle(.link)
+                    .accessibilityIdentifier("about-privacy")
+            }
             Picker(tr("License", "许可证"), selection: $selectedLicense) {
                 Text("GPL-3.0").tag(0)
                 Text(tr("Third-Party Notices", "第三方声明")).tag(1)
@@ -321,19 +399,26 @@ struct InformationDialog<Content: View>: View {
     let title: String
     let close: () -> Void
     var width: CGFloat = 530
+    var titleIdentifier = "info-title"
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 17) {
-            Text(title).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+            Text(title)
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier(titleIdentifier)
             content
             HStack {
                 Spacer()
-                Button(tr("Done", "完成"), action: close).keyboardShortcut(.cancelAction)
+                Button(tr("Done", "完成"), action: close)
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("info-done")
             }
         }
         .padding(24)
         .frame(width: width)
+        .modifier(DesktopPrivacyCurtain())
     }
 }
 

@@ -6,7 +6,7 @@ import Security
 
 enum VaultAccessError: LocalizedError {
     case corrupt, locked, alreadyCreated, unavailable, authentication, signing, cancelled, noPassword
-    case invalidPassword, tooLarge, needsConfirmation, counterExhausted, keychain(OSStatus)
+    case invalidPassword, tooLarge, needsConfirmation, keychain(OSStatus)
 
     var errorDescription: String? {
         switch self {
@@ -21,7 +21,6 @@ enum VaultAccessError: LocalizedError {
         case .invalidPassword: return tr("Use 8 to 1024 characters and avoid all-numeric or commonly used recovery passwords.", "请使用 8 至 1024 个字符的恢复口令，避免纯数字或常见口令。")
         case .tooLarge: return tr("The selected file exceeds the 12 MiB size limit.", "所选文件超过 12 MiB。")
         case .needsConfirmation: return tr("Confirm that you want to replace the locked vault.", "请确认替换已锁定的验证码库。")
-        case .counterExhausted: return tr("This account has reached its maximum HOTP counter.", "此账号的 HOTP 计数器已达到上限。")
         case .keychain: return tr("The Mac Keychain could not complete the operation.", "Mac 钥匙串无法完成此操作。")
         }
     }
@@ -45,6 +44,14 @@ struct VaultOpenResult: Sendable {
     let model: VaultModel
     let session: VaultSession
     let record: VaultRecord
+    let deviceCredentialRepairFailed: Bool
+
+    init(model: VaultModel, session: VaultSession, record: VaultRecord, deviceCredentialRepairFailed: Bool = false) {
+        self.model = model
+        self.session = session
+        self.record = record
+        self.deviceCredentialRepairFailed = deviceCredentialRepairFailed
+    }
 }
 
 struct VaultDiskStatus: Sendable {
@@ -53,6 +60,8 @@ struct VaultDiskStatus: Sendable {
 }
 
 actor VaultDisk {
+    private static let legacyInteractionLock = NSLock()
+
     private let root: URL
     private let keychainService: String
     private var lockDescriptor: Int32 = -1
@@ -76,30 +85,57 @@ actor VaultDisk {
         return VaultDiskStatus(initialized: true, record: try? readRecord())
     }
 
-    func unlock(password: String?) throws -> VaultOpenResult {
+    func unlock(password: String?, context: LAContext = LAContext(), allowLegacyUI: Bool = false) throws -> VaultOpenResult {
         try prepare()
         let record = try readRecord()
         let bytes = try Self.read(file(for: record.active))
         do {
             guard try VaultFile.hasPassword(bytes) == record.hasPassword else { throw VaultAccessError.corrupt }
-            let result: (VaultModel, VaultSession)
             if let password {
-                result = try VaultFile.open(bytes, password: password)
-                // The state owner authenticates the Mac before calling this recovery path.
-                // A recovery-password unlock can repair a lost device credential.
-                try? repairCredential(result.1, generation: record.active)
-            } else {
-                let context = LAContext()
-                defer { context.invalidate() }
-                result = try VaultFile.open(bytes, deviceCredential: readCredential(record.active, context: context))
+                let (model, session) = try VaultFile.open(bytes, password: password)
+                return recoverDeviceCredential(model, session: session, record: record, context: context)
             }
-            return VaultOpenResult(model: result.0, session: result.1, record: record)
+
+            let credential = try readCredential(record.active, context: context, allowLegacyUI: allowLegacyUI)
+            let (model, session) = try VaultFile.open(bytes, deviceCredential: credential)
+            return VaultOpenResult(model: model, session: session, record: record)
         } catch let error as VaultAccessError {
             throw error
         } catch let error as CoreError where ["VLT_E_WRAP_AUTH", "VLT_E_DEVICE_WRAP_AUTH"].contains(error.code) {
             throw VaultAccessError.authentication
         } catch {
             throw VaultAccessError.corrupt
+        }
+    }
+
+    private func recoverDeviceCredential(_ model: VaultModel, session: VaultSession,
+                                         record: VaultRecord, context: LAContext) -> VaultOpenResult {
+        if record.systemAuthentication {
+            // The caller performed system authentication before verifying this recovery password.
+            try? restoreMissingProtectedCredential(session, generation: record.active)
+            return VaultOpenResult(model: model, session: session, record: record)
+        }
+        if var credential = try? readCredential(record.active, context: context) {
+            var verified = session.deviceCredential
+            defer {
+                credential.resetBytes(in: 0..<credential.count)
+                verified.resetBytes(in: 0..<verified.count)
+            }
+            if credential.count == verified.count,
+               zip(credential, verified).reduce(UInt8(0), { $0 | ($1.0 ^ $1.1) }) == 0 {
+                return VaultOpenResult(model: model, session: session, record: record)
+            }
+        }
+
+        // Only a verified password reaches here. Keep the password derivation and
+        // model intact, and give the new build its own device key and identity.
+        do {
+            let generated = try VaultSession.new(password: nil)
+            let replacement = VaultSession(dataKey: generated.dataKey, passwordKey: session.passwordKey)
+            return try replace(model, session: replacement, systemAuthentication: false, expected: record,
+                               allowLegacyKeychainUI: false)
+        } catch {
+            return VaultOpenResult(model: model, session: session, record: record, deviceCredentialRepairFailed: true)
         }
     }
 
@@ -122,7 +158,7 @@ actor VaultDisk {
     // Writes a complete new generation before publishing its pointer. The previous
     // generation stays usable across interruption until the pointer is replaced.
     func replace(_ model: VaultModel, session: VaultSession, systemAuthentication: Bool,
-                 expected: VaultRecord?, rescue: Bool = false) throws -> VaultOpenResult {
+                 expected: VaultRecord?, rescue: Bool = false, allowLegacyKeychainUI: Bool = true) throws -> VaultOpenResult {
         try prepare()
         let previous: VaultRecord?
         if FileManager.default.fileExists(atPath: recordURL.path) {
@@ -147,7 +183,7 @@ actor VaultDisk {
         var insertedCredential = false
         do {
             try atomicWrite(bytes, to: file(for: record.active))
-            try addCredential(session.deviceCredential, generation: generation)
+            try addCredential(session.deviceCredential, generation: generation, allowLegacyUI: allowLegacyKeychainUI)
             insertedCredential = true
             try atomicWrite(JSONEncoder().encode(record), to: recordURL)
         } catch {
@@ -173,6 +209,13 @@ actor VaultDisk {
         precondition(keychainService.hasPrefix("io.github.rhczz.inkotp.macos.ci-smoke."))
         deleteCredential(record.active)
         if let rescue = record.rescue { deleteCredential(rescue) }
+    }
+
+    func replaceSmokeCredential(_ data: Data, record: VaultRecord) throws {
+        precondition(keychainService.hasPrefix("io.github.rhczz.inkotp.macos.ci-smoke."))
+        precondition(!record.systemAuthentication)
+        deleteCredential(record.active)
+        try addCredential(data, generation: record.active)
     }
 
     func readImport(_ url: URL) throws -> Data {
@@ -273,7 +316,7 @@ actor VaultDisk {
         return query
     }
 
-    private func addCredential(_ data: Data, generation: VaultGeneration) throws {
+    private func addCredential(_ data: Data, generation: VaultGeneration, allowLegacyUI: Bool = true) throws {
         var query = credentialQuery(generation)
         query[kSecValueData as String] = data
         if generation.systemAuthentication {
@@ -283,31 +326,69 @@ actor VaultDisk {
             }
             query[kSecAttrAccessControl as String] = access
         }
-        try checkKeychain(SecItemAdd(query as CFDictionary, nil))
+        let status = generation.systemAuthentication || allowLegacyUI
+            ? SecItemAdd(query as CFDictionary, nil)
+            : try withLegacyInteractionDisabled { SecItemAdd(query as CFDictionary, nil) }
+        try checkKeychain(status)
     }
 
-    private func repairCredential(_ session: VaultSession, generation: VaultGeneration) throws {
-        // Recreate a missing item. Never destroy a working credential as part of a recovery attempt.
-        let status = SecItemCopyMatching(credentialQuery(generation) as CFDictionary, nil)
+    private func restoreMissingProtectedCredential(_ session: VaultSession, generation: VaultGeneration) throws {
+        // Keep the existing protected group and policy. A denied authentication
+        // is different from a missing item and must never remove the existing credential.
+        var query = credentialQuery(generation)
+        let context = LAContext()
+        defer { context.invalidate() }
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
         if status == errSecItemNotFound { try addCredential(session.deviceCredential, generation: generation) }
     }
 
-    private func readCredential(_ generation: VaultGeneration, context: LAContext) throws -> Data {
+    private func readCredential(_ generation: VaultGeneration, context: LAContext, allowLegacyUI: Bool = false) throws -> Data {
         var query = credentialQuery(generation)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status: OSStatus
         if generation.systemAuthentication {
             query[kSecUseAuthenticationContext as String] = context
             context.localizedReason = tr("Unlock your InkOTP vault", "解锁 InkOTP 验证码库")
+            status = SecItemCopyMatching(query as CFDictionary, &result)
+        } else if allowLegacyUI {
+            status = SecItemCopyMatching(query as CFDictionary, &result)
+        } else {
+            status = try withLegacyInteractionDisabled { SecItemCopyMatching(query as CFDictionary, &result) }
         }
-        var result: CFTypeRef?
-        try checkKeychain(SecItemCopyMatching(query as CFDictionary, &result))
+        try checkKeychain(status)
         guard let data = result as? Data else { throw VaultAccessError.authentication }
         return data
     }
 
     private func deleteCredential(_ generation: VaultGeneration) {
-        _ = SecItemDelete(credentialQuery(generation) as CFDictionary)
+        var query = credentialQuery(generation)
+        if generation.systemAuthentication {
+            // Retiring a generation is best effort and must not present another prompt.
+            let context = LAContext()
+            defer { context.invalidate() }
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
+            _ = SecItemDelete(query as CFDictionary)
+        } else {
+            _ = try? withLegacyInteractionDisabled { SecItemDelete(query as CFDictionary) }
+        }
+    }
+
+    private func withLegacyInteractionDisabled<Result>(_ action: () -> Result) throws -> Result {
+        // The ordinary vault uses the file-based Keychain. Suppress its legacy
+        // ACL UI only around this synchronous operation and restore the prior mode.
+        Self.legacyInteractionLock.lock()
+        defer { Self.legacyInteractionLock.unlock() }
+        var previous = DarwinBoolean(false)
+        try checkKeychain(SecKeychainGetUserInteractionAllowed(&previous))
+        guard previous.boolValue else { return action() }
+        try checkKeychain(SecKeychainSetUserInteractionAllowed(false))
+        defer { _ = SecKeychainSetUserInteractionAllowed(true) }
+        return action()
     }
 
     private func checkKeychain(_ status: OSStatus) throws {
@@ -315,7 +396,7 @@ actor VaultDisk {
         case errSecSuccess: return
         case errSecMissingEntitlement: throw VaultAccessError.signing
         case errSecUserCanceled: throw VaultAccessError.cancelled
-        case errSecItemNotFound, errSecAuthFailed: throw VaultAccessError.authentication
+        case errSecItemNotFound, errSecAuthFailed, errSecInteractionNotAllowed: throw VaultAccessError.authentication
         default: throw VaultAccessError.keychain(status)
         }
     }
