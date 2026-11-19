@@ -1,12 +1,19 @@
-# iOS（Phase 2 占位）
+# InkOTP for iOS
 
-**v1.0 不实施 iOS。** 本目录只保留位置与计划，不创建 Xcode 工程、不写 Swift 代码。
+InkOTP 使用 SwiftUI 和 Apple 系统框架，最低支持 iOS / iPadOS 17。应用层包含界面、会话、加密仓储和平台服务。Swift Package 单独实现 OTP、解析、库和交换格式。Android 与 iOS 共用 [格式与测试契约](../spec/README.md)。
 
-Phase 2 启动时按设计文档第 9 章 + `spec/` 实现：
+- `Core/` 包含 Swift 核心和两种 Apple 框架未提供的离线 KDF。源代码、许可证和校验和值见 [原始来源](Core/Sources/CInkKDF/PROVENANCE.md)。
+- `App/` 包含 SwiftUI、Keychain、LocalAuthentication、AVFoundation、PhotosUI、Vision 和 Files 集成。
+- `AppTests/` 验证仓储和权限状态。 `UITests/` 用 XCUITest 驱动实际界面。
 
-- SwiftUI 主 App；Keychain + `SecAccessControl`（`.biometryCurrentSet`）；swift-sodium Argon2id（参数与 Android 一致）。
-- App Group 共享容器供 AutoFill 扩展访问库文件；扩展独立解锁。
-- Credential Provider Extension（P1）。
-- **Step 0**：用 `spec/vectors.json` 复跑向量；与 Android 互读 `.2fab`；10 个账号验证码逐位一致；库 JSON 字段兼容性断言。
+## GitHub Actions
 
-详见 [docs/platform-neutrality.md](../docs/platform-neutrality.md)。
+[CI](../.github/workflows/ci.yaml) 运行 Android 既有检查、iOS XCTest、双向互读和独立 Python 核对。iOS 项目由 Actions 从 `project.yml` 生成。每次运行保留 XCTest 结果、覆盖率及构建产物。
+
+[Release](../.github/workflows/ios-release.yaml) 从已合入 `master` 的 `ios-vX.Y.Z-preview.N` 或 `ios-vX.Y.Z` 标签发布。GitHub Actions 生成 `InkOTP-iOS-Simulator.zip` 和 `SHA256SUMS-iOS`。在带 Xcode 的测试环境中解压 ZIP，并使用模拟器安装其中的 `InkOTP.app`。
+
+真机 IPA 使用 Apple Ad Hoc 分发签名，安装资格由 provisioning profile 的设备名单决定。启用签名时将 GitHub Actions 变量 `INKOTP_IOS_RELEASE_SIGNED` 设为 `true`，并在仓库 Secrets 配置 `INKOTP_IOS_CERTIFICATE_BASE64`、`INKOTP_IOS_CERTIFICATE_PASSWORD` 和 `INKOTP_IOS_PROFILE_BASE64`。证书对应 Apple Distribution，profile 对应 `io.github.rhczz.inkotp`。已签名的 IPA 和校验和由 Actions 生成。App Store 和 TestFlight 走 Apple 的分发流程。
+
+## 真机验收
+
+在最低支持版本和当前 iOS 版本上核对相机、照片二维码、Face ID、Touch ID、设备密码回退、生物识别配置变动后的重新绑定、后台和录屏遮挡、剪贴板到期、Files 提供商的导入和导出、安装覆盖升级以及卸载后重新安装。还需用 Aegis 和 2FAS 实际导入导出，与测试夹具覆盖的格式对应。测试结果记录到本次变更。

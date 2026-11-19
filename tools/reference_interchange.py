@@ -139,11 +139,11 @@ def verify_fixtures(folder: Path) -> None:
     print("[PASS] 10 upstream fixture hashes; Aegis and 2FAS crypto/URI profile cross-checks")
 
 
-def verify_exports(folder: Path) -> None:
+def verify_exports(folder: Path, prefix: str = "kotlin") -> None:
     from reference_backup import decrypt_to_json
     expected = native_profiles(json.loads((folder / "expected.json").read_bytes()))
     checked = 0
-    for file in sorted(folder.glob("kotlin-*")):
+    for file in sorted(folder.glob(f"{prefix}-*")):
         raw = file.read_bytes()
         if "OTPAUTH_TEXT" in file.name:
             actual = uri_profiles(raw)
@@ -161,17 +161,18 @@ def verify_exports(folder: Path) -> None:
         checked += 1
         print("[PASS] independent decrypt/profile validation:", file.name)
     if checked != 6:
-        raise ValueError("expected all six Kotlin export formats")
+        raise ValueError(f"expected all six {prefix} export formats")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, default=Path("spec/fixtures/interoperability"))
     parser.add_argument("--exports", type=Path)
+    parser.add_argument("--prefix", choices=("kotlin", "swift"), default="kotlin")
     args = parser.parse_args()
     verify_fixtures(args.fixtures)
     if args.exports:
-        verify_exports(args.exports)
+        verify_exports(args.exports, args.prefix)
     print("INTERCHANGE CROSSCHECK PASS")
 
 

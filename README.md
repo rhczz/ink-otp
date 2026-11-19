@@ -1,7 +1,7 @@
 # InkOTP
 
 > 完全离线的 Android 两步验证器（TOTP），设计语言 **Quiet Ink**。
-> v1.0 只做 Android；`ios/` 与 `spec/` 已为 Phase 2 预留，跨端只共享规格与测试向量，不共享代码。
+> Android 先行发布。[iOS 原生版](ios/README.md) 与 Android 共用格式和测试契约。
 
 ## Android 0.5 公测
 

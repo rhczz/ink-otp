@@ -31,3 +31,12 @@ __pycache__/
 *.p12
 *.pem
 *.bak
+
+# iOS CI projects and signing
+.build/
+DerivedData/
+ios/InkOTP.xcodeproj/
+*.xcarchive/
+*.xcresult/
+*.ipa
+*.mobileprovision
