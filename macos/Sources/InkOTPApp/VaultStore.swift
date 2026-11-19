@@ -17,22 +17,32 @@ final class VaultStore: ObservableObject {
     @Published var errorMessage: String?
     let supportsSystemAuthentication = Bundle.main.object(forInfoDictionaryKey: "InkOTPProtectedKeychainEnabled") as? Bool == true
 
-    private struct CachedCode {
+    private struct CachedCode: Sendable {
         let step: Int64
         let text: String
     }
+
+    private struct CodeRefresh: Sendable {
+        let values: [String: CachedCode]
+        let count: Int
+    }
+
+    private static let maximumCachedCodes = 1_024
 
     private let disk = VaultDisk()
     private let consentKey = "privacy-consent-revision"
     private var record: VaultRecord?
     private var session: VaultSession?
     private var cache: [String: CachedCode] = [:]
+    private var codeRefreshTask: Task<CodeRefresh?, Never>?
     private var observations = Set<AnyCancellable>()
     private var activeAuthentication: LAContext?
+    private var authenticationDeadline: ContinuousClock.Instant?
     private var backgroundLock: Task<Void, Never>?
+    private var backgroundDeadline: ContinuousClock.Instant?
     private var clipboardClear: Task<Void, Never>?
     private var clipboardChangeCount: Int?
-    private var requiresForegroundAuthentication = false
+    private var shouldUnlockOnReturn = false
 
     init() {
         consent = DesktopPrivacy.available && UserDefaults.standard.string(forKey: consentKey) == DesktopPrivacy.revision
@@ -44,6 +54,7 @@ final class VaultStore: ObservableObject {
         guard DesktopPrivacy.available else { return }
         UserDefaults.standard.set(DesktopPrivacy.revision, forKey: consentKey)
         consent = true
+        scheduleInitialUnlock()
     }
 
     func withdrawPrivacy() {
@@ -74,7 +85,7 @@ final class VaultStore: ObservableObject {
     }
 
     @discardableResult
-    func unlock(password: String? = nil) async -> Bool {
+    func unlock(password: String? = nil, userInitiated: Bool = true) async -> Bool {
         await operation { [self] epoch in
             guard initialized, model == nil, record != nil else { throw VaultAccessError.locked }
             let password = password == "" ? nil : password
@@ -82,19 +93,27 @@ final class VaultStore: ObservableObject {
                 try await authenticateDevice(reason: tr("Recover access to your InkOTP vault", "恢复 InkOTP 验证库访问"))
             }
             try check(epoch)
-            let output = try await disk.unlock(password: password)
+            let context = LAContext()
+            let interactive = password == nil && (systemAuthentication || userInitiated)
+            if interactive { activeAuthentication = context }
+            defer { finishAuthentication(context) }
+            let output = try await disk.unlock(password: password, context: context, allowLegacyUI: userInitiated)
             return publish(output, epoch: epoch)
         } ?? false
     }
 
     func lock(clearClipboard: Bool = true) {
         lockRevision &+= 1
-        requiresForegroundAuthentication = false
+        shouldUnlockOnReturn = false
         activeAuthentication?.invalidate()
+        activeAuthentication = nil
+        authenticationDeadline = nil
         backgroundLock?.cancel()
         backgroundLock = nil
+        backgroundDeadline = nil
         model = nil
         session = nil
+        codeRefreshTask?.cancel()
         cache.removeAll(keepingCapacity: false)
         if clearClipboard { clearOwnedClipboard() }
     }
@@ -142,16 +161,22 @@ final class VaultStore: ObservableObject {
 
     @discardableResult
     func save(_ item: VaultItem) async -> Bool {
-        await mutate { model in
-            var item = item
-            item.updatedAt = VaultJSON.timestamp()
+        guard let model, !busy else { return false }
+        if item.type != .totp, !model.items.contains(where: { $0.id == item.id }) {
+            errorMessage = AccountSetupInput.manualHOTP.errorDescription
+            return false
+        }
+        return await mutate { model in
+            let updatedAt = VaultJSON.timestamp()
             if let position = model.items.firstIndex(where: { $0.id == item.id }) {
-                item.sortIndex = model.items[position].sortIndex
-                model.items[position] = item
+                model.items[position].issuer = item.issuer
+                model.items[position].accountName = item.accountName
+                model.items[position].updatedAt = updatedAt
             } else {
+                var added = item
+                added.updatedAt = updatedAt
                 model.items.sort { $0.sortIndex < $1.sortIndex }
-                item.sortIndex = (model.items.count + 1) * 1000
-                model.items.append(item)
+                model.items.append(added)
                 for index in model.items.indices { model.items[index].sortIndex = (index + 1) * 1000 }
             }
         }
@@ -175,41 +200,64 @@ final class VaultStore: ObservableObject {
     }
 
     @discardableResult
-    func advance(_ id: String) async -> Bool {
-        await mutate { model in
-            guard let index = model.items.firstIndex(where: { $0.id == id }),
-                  model.items[index].type == .hotp, let counter = model.items[index].counter else { return }
-            guard counter < Int64.max else { throw VaultAccessError.counterExhausted }
-            model.items[index].counter = counter + 1
-            model.items[index].updatedAt = VaultJSON.timestamp()
-        }
-    }
-
-    @discardableResult
     func updateSettings(_ settings: VaultSettings) async -> Bool {
         await mutate { $0.settings = settings }
     }
 
     func code(_ item: VaultItem, at date: Date = .now) -> String? {
-        guard model != nil, item.period > 0, let time = Int64(exactly: date.timeIntervalSince1970.rounded(.down)),
-              time >= 0 else { return nil }
-        let step = item.type == .totp ? time / Int64(item.period) : (item.counter ?? -1)
-        guard step >= 0 else { return nil }
+        guard model != nil, item.type == .totp, item.period > 0,
+              let time = Int64(exactly: date.timeIntervalSince1970.rounded(.down)), time >= 0 else { return nil }
+        let step = time / Int64(item.period)
         if let cached = cache[item.id], cached.step == step { return cached.text }
 
-        let value = try? OTP.hotp(secret: item.secret, algorithm: item.algorithm, digits: item.digits,
-                                  counter: UInt64(step))
-        if let value {
-            if cache.count >= 1024 { cache.removeAll(keepingCapacity: true) }
-            cache[item.id] = CachedCode(step: step, text: value)
+        guard let value = Self.calculateTOTP(item, step: step) else { return nil }
+        if cache.count >= Self.maximumCachedCodes { cache.removeAll(keepingCapacity: true) }
+        cache[item.id] = value
+        return value.text
+    }
+
+    func recalculateCodes(at date: Date) async -> Int? {
+        guard let model, NSApplication.shared.isActive, codeRefreshTask == nil, !Task.isCancelled,
+              let time = Int64(exactly: date.timeIntervalSince1970.rounded(.down)), time >= 0 else { return nil }
+        let revision = lockRevision
+        let maximumCachedCodes = Self.maximumCachedCodes
+        let entries = model.items
+        let task = Task.detached(priority: .userInitiated) { () -> CodeRefresh? in
+            var refreshed = [String: CachedCode]()
+            var count = 0
+            for item in entries {
+                guard !Task.isCancelled else { return nil }
+                guard item.type == .totp, item.period > 0,
+                      let code = Self.calculateTOTP(item, step: time / Int64(item.period)) else { continue }
+                count += 1
+                if refreshed.count < maximumCachedCodes { refreshed[item.id] = code }
+            }
+            return CodeRefresh(values: refreshed, count: count)
         }
-        return value
+        codeRefreshTask = task
+        defer { codeRefreshTask = nil }
+
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        guard let result, !Task.isCancelled, !task.isCancelled, lockRevision == revision,
+              NSApplication.shared.isActive, self.model?.items == entries else { return nil }
+        cache = result.values
+        return result.count
+    }
+
+    private nonisolated static func calculateTOTP(_ item: VaultItem, step: Int64) -> CachedCode? {
+        guard let text = try? OTP.hotp(secret: item.secret, algorithm: item.algorithm, digits: item.digits,
+                                       counter: UInt64(step)) else { return nil }
+        return CachedCode(step: step, text: text)
     }
 
     @discardableResult
     func copy(_ item: VaultItem, at date: Date = .now) -> Bool {
         guard let model, let item = model.items.first(where: { $0.id == item.id }),
-              let code = code(item, at: date) else { return false }
+              item.type == .totp, let code = code(item, at: date) else { return false }
         clearOwnedClipboard()
         let clipboard = NSPasteboard.general
         let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
@@ -338,7 +386,7 @@ final class VaultStore: ObservableObject {
         let epoch = lockRevision
         defer {
             busy = false
-            if requiresForegroundAuthentication && NSApplication.shared.isActive {
+            if shouldUnlockOnReturn && NSApplication.shared.isActive {
                 Task { await enteredForeground() }
             }
         }
@@ -374,6 +422,13 @@ final class VaultStore: ObservableObject {
             errorMessage = tr("The local vault is inaccessible. Your data will not be replaced.", "无法访问本地验证库。现有数据不会被覆盖。")
         }
         ready = true
+        scheduleInitialUnlock()
+    }
+
+    private func scheduleInitialUnlock() {
+        guard ready, consent, record != nil, model == nil else { return }
+        shouldUnlockOnReturn = true
+        Task { await enteredForeground() }
     }
 
     private func updateRecord(_ record: VaultRecord?) {
@@ -387,12 +442,16 @@ final class VaultStore: ObservableObject {
         updateRecord(output.record)
         guard lockRevision == epoch, consent else { return false }
         guard NSApplication.shared.isActive else {
-            requiresForegroundAuthentication = output.record.systemAuthentication
+            lockForReturn(clearClipboard: false)
             return false
         }
         cache.removeAll(keepingCapacity: true)
         session = output.session
         model = output.model
+        if output.deviceCredentialRepairFailed {
+            errorMessage = tr("Vault opened with your recovery password. Device access could not be restored. Keep your recovery password and export an encrypted backup.",
+                              "已使用恢复口令打开验证库。设备解锁暂时无法恢复。请保留恢复口令并导出加密备份。")
+        }
         return true
     }
 
@@ -425,10 +484,7 @@ final class VaultStore: ObservableObject {
     private func authenticateDevice(reason: String) async throws {
         let context = LAContext()
         activeAuthentication = context
-        defer {
-            context.invalidate()
-            activeAuthentication = nil
-        }
+        defer { finishAuthentication(context) }
 
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else {
             throw VaultAccessError.authentication
@@ -441,6 +497,22 @@ final class VaultStore: ObservableObject {
         } catch {
             throw VaultAccessError.authentication
         }
+    }
+
+    private func finishAuthentication(_ context: LAContext) {
+        context.invalidate()
+        guard activeAuthentication === context else { return }
+        activeAuthentication = nil
+        if let deadline = authenticationDeadline {
+            authenticationDeadline = nil
+            backgroundLock?.cancel()
+            backgroundLock = nil
+            if ContinuousClock.now >= deadline {
+                lock(clearClipboard: false)
+                return
+            }
+        }
+        if !NSApplication.shared.isActive { enteredBackground() }
     }
 
     private func listenForLifecycle() {
@@ -458,7 +530,7 @@ final class VaultStore: ObservableObject {
                 .store(in: &observations)
         }
         NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
-            .sink { [weak self] _ in Task { @MainActor in self?.enteredBackground() } }
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.enteredBackground() } }
             .store(in: &observations)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in Task { @MainActor in await self?.enteredForeground() } }
@@ -469,34 +541,64 @@ final class VaultStore: ObservableObject {
     }
 
     private func enteredBackground() {
-        guard let model, !NSApplication.shared.isActive else { return }
-        if activeAuthentication != nil { return }
-        if systemAuthentication {
-            lock(clearClipboard: false)
-            requiresForegroundAuthentication = true
+        codeRefreshTask?.cancel()
+        if activeAuthentication != nil {
+            guard authenticationDeadline == nil else { return }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+            authenticationDeadline = deadline
+            backgroundLock?.cancel()
+            backgroundLock = Task { [weak self] in
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                guard !Task.isCancelled, self?.authenticationDeadline == deadline else { return }
+                self?.lock(clearClipboard: false)
+            }
             return
         }
-        backgroundLock?.cancel()
+        guard let model else { return }
         let timeout = model.settings.lockTimeoutSeconds
+        if systemAuthentication || timeout == 0 {
+            lockForReturn(clearClipboard: false)
+            return
+        }
+        guard backgroundDeadline == nil else { return }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(timeout))
+        backgroundDeadline = deadline
         backgroundLock = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(timeout))
+            try? await Task.sleep(until: deadline, clock: .continuous)
             guard !Task.isCancelled, !NSApplication.shared.isActive else { return }
-            self?.lock(clearClipboard: false)
+            self?.lockForReturn(clearClipboard: false)
         }
     }
 
+    private func lockForReturn(clearClipboard: Bool) {
+        lock(clearClipboard: clearClipboard)
+        shouldUnlockOnReturn = true
+    }
+
     private func lockForSessionPause() {
-        let shouldAuthenticate = requiresForegroundAuthentication || (systemAuthentication && model != nil)
-        lock()
-        requiresForegroundAuthentication = shouldAuthenticate
+        if model != nil || shouldUnlockOnReturn {
+            lockForReturn(clearClipboard: true)
+        } else {
+            lock()
+        }
     }
 
     private func enteredForeground() async {
         guard NSApplication.shared.isActive else { return }
-        backgroundLock?.cancel()
-        guard requiresForegroundAuthentication, ready, consent, !busy else { return }
-        requiresForegroundAuthentication = false
-        await unlock()
+        if let deadline = authenticationDeadline {
+            if ContinuousClock.now >= deadline { lock(clearClipboard: false) }
+            return
+        }
+        if let deadline = backgroundDeadline, ContinuousClock.now >= deadline {
+            lockForReturn(clearClipboard: false)
+        } else {
+            backgroundLock?.cancel()
+            backgroundLock = nil
+            backgroundDeadline = nil
+        }
+        guard shouldUnlockOnReturn, ready, consent, !busy else { return }
+        shouldUnlockOnReturn = false
+        await unlock(userInitiated: false)
     }
 
     private func clearOwnedClipboard() {

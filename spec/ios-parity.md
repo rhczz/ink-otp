@@ -9,6 +9,8 @@
 iOS、Android 和 macOS 消费仓库内同一套 [公共协议测试集](conformance.md)，包括 `vectors.json`、`otpauth-cases.json`、`conformance-cases.json` 和 `fixtures/`。平台适配器逐个断言向量结果，并由独立 Python 参考实现验证跨端导出的内容。新增夹具由参考工具生成。GitHub Actions 执行 Android 检查、iOS XCTest、模拟器构建和打包与 GitHub Release。真机安装包需要 Apple 签名证书和相匹配的 provisioning profile。模拟器产物以明确的模拟器标签交付。
 iOS CI 同时归档并解包验证面向 iPhone 与 iPad 的 Release IPA。预览版提供明确标记的未签名真机产物，供使用者按自己的 Apple 分发方式签名。正式版须通过签名导出与验签。模拟器与真机包分别核对平台和架构。
 
+iOS、Android 和 macOS 导出同一个含三条公开账号的样本。对端的 InkOTP 原生备份须保留完整模型，包括图标、标签、网址和安全设置。外部格式须保留协议支持的 OTP 字段及顺序。各端写出的期望文件另外与公开样本对照。
+
 ## 剪贴板与诊断
 
 剪贴板清理选择「立即」时，在下一次主队列调度中清除仍由 InkOTP 持有的验证码。其他定时间隔通过 iOS 剪贴板过期执行。后台自动锁定保留所有权标记，随后通过「立即锁定」或撤回隐私同意可以清除仍由 InkOTP 持有的内容。其他应用或用户已替换的剪贴板内容保持原样。

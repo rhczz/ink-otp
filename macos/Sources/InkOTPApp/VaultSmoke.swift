@@ -53,18 +53,38 @@ enum VaultSmoke {
             let reopened = try await disk.unlock(password: recovery)
             let viaDevice = try await disk.unlock(password: nil)
             guard reopened.model == model, viaDevice.model == model else { throw CoreError("SMOKE_RECOVERY") }
+            await disk.clearSmokeCredential(record: active)
+            try await expectDeviceDenied(disk)
+            let oldPath = root.appending(path: active.active.id.uuidString.lowercased()).appending(path: "vault.bin")
+            let ciphertext = try Data(contentsOf: oldPath)
             do {
                 _ = try await disk.unlock(password: "incorrect public CI passphrase")
                 throw CoreError("SMOKE_WRONG_PASSWORD_ACCEPTED")
             } catch VaultAccessError.authentication {}
+            guard try await disk.status().record == active, try Data(contentsOf: oldPath) == ciphertext else {
+                throw CoreError("SMOKE_WRONG_PASSWORD_MUTATED_VAULT")
+            }
+
+            let previousMissing = active
+            let reboundMissing = try await disk.unlock(password: recovery)
+            active = reboundMissing.record
+            try await checkRebound(disk, result: reboundMissing, previous: previousMissing, model: model)
+
+            let previousMismatched = active
+            try await disk.replaceSmokeCredential(Data(repeating: 0xA5, count: 64), record: active)
+            try await expectDeviceDenied(disk)
+            let reboundMismatched = try await disk.unlock(password: recovery)
+            active = reboundMismatched.record
+            try await checkRebound(disk, result: reboundMismatched, previous: previousMismatched, model: model)
 
             var rescued = VaultModel.new()
             rescued.items = model.items
+            let archived = active.active
             let restored = try await disk.replace(rescued, session: VaultSession.new(password: recovery),
                                                  systemAuthentication: false, expected: active, rescue: true)
             active = restored.record
-            guard active.rescue == replacement.record.active else { throw CoreError("SMOKE_RESCUE_POINTER") }
-            let rescuePath = root.appending(path: replacement.record.active.id.uuidString.lowercased()).appending(path: "vault.bin")
+            guard active.rescue == archived else { throw CoreError("SMOKE_RESCUE_POINTER") }
+            let rescuePath = root.appending(path: archived.id.uuidString.lowercased()).appending(path: "vault.bin")
             let snapshot = try VaultFile.open(Data(contentsOf: rescuePath), password: recovery).0
             guard snapshot == model, try await disk.unlock(password: nil).model == rescued else {
                 throw CoreError("SMOKE_RESCUE_GENERATIONS")
@@ -75,4 +95,24 @@ enum VaultSmoke {
             throw error
         }
     }
+
+    private static func expectDeviceDenied(_ disk: VaultDisk) async throws {
+        do {
+            _ = try await disk.unlock(password: nil)
+            throw CoreError("SMOKE_STALE_DEVICE_CREDENTIAL_ACCEPTED")
+        } catch VaultAccessError.authentication {}
+    }
+
+    private static func checkRebound(_ disk: VaultDisk, result: VaultOpenResult,
+                                     previous: VaultRecord, model: VaultModel) async throws {
+        guard !result.deviceCredentialRepairFailed, result.model == model,
+              result.record.active.id != previous.active.id,
+              result.record.active.systemAuthentication == previous.active.systemAuthentication,
+              result.record.active.hasPassword == previous.active.hasPassword,
+              result.record.rescue == previous.rescue,
+              try await disk.unlock(password: nil).model == model else {
+            throw CoreError("SMOKE_DEVICE_CREDENTIAL_REBIND")
+        }
+    }
+
 }

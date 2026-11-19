@@ -2,12 +2,10 @@ package io.github.rhczz.inkotp.core.interchange
 
 import io.github.rhczz.inkotp.core.TestVault
 import io.github.rhczz.inkotp.core.otp.OtpType
-import io.github.rhczz.inkotp.core.json.VaultJson
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
-import java.io.File
 
 class InterchangeCodecTest {
     private fun fixture(name: String) = javaClass.getResourceAsStream("/fixtures/interoperability/$name")!!.use { it.readBytes() }
@@ -189,23 +187,6 @@ class InterchangeCodecTest {
         assertEquals(InterchangeError.UNSUPPORTED_ENTRIES, code { InterchangeCodec.decode(bad) })
         val metadata = JsonObject(source + ("futureMetadata" to JsonPrimitive(true))).toString().toByteArray()
         assertTrue(InterchangeCodec.decode(metadata).warnings.any { it.code == InterchangeWarningCode.METADATA_NOT_TRANSFERRED })
-    }
-
-    @Test fun currentEncryptedExportsAreIndependentlyInspectableWithoutSensitiveLogs() {
-        val base = TestVault.twoItemModel()
-        val model = base.copy(items = base.items + TestVault.item(
-            id = "00000000-0000-4000-8000-000000000003", issuer = "Public Counter", accountName = "sample",
-            type = OtpType.HOTP, counter = 10300, sortIndex = 3000,
-        ))
-        val folder = File("build/interoperability").apply { mkdirs() }
-        File(folder, "expected.json").writeBytes(VaultJson.encode(model))
-        for (format in InterchangeFormat.entries) {
-            val password = TestVault.PASSWORD.toCharArray()
-            val result = InterchangeCodec.encode(model, format, password)
-            assertTrue(password.all { it == '\u0000' })
-            assertEquals(profiles(model), profiles(InterchangeCodec.decode(result.bytes, TestVault.PASSWORD.toCharArray()).model))
-            File(folder, "kotlin-${format.name}.${format.extension}").writeBytes(result.bytes)
-        }
     }
 
     private fun profiles(model: io.github.rhczz.inkotp.core.model.VaultModel) = model.items.map {
