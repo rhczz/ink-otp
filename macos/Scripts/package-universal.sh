@@ -37,7 +37,8 @@ marketing_version="${version%%-beta.*}"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${INKOTP_BUILD_NUMBER:-1}" "$app/Contents/Info.plist"
 ln -s /Applications "$stage/Applications"
 
-entitlements="$root/macos/Resources/InkOTP.entitlements"
+base_entitlements="$root/macos/Resources/InkOTP.entitlements"
+entitlements="$base_entitlements"
 dmg="$output/InkOTP-$version-macOS-universal.dmg"
 signature="adhoc"
 developer_id="${INKOTP_MACOS_DEVELOPER_ID:-}"
@@ -46,10 +47,11 @@ p12_password="${INKOTP_MACOS_P12_PASSWORD:-}"
 apple_id="${INKOTP_MACOS_NOTARY_APPLE_ID:-}"
 team_id="${INKOTP_MACOS_TEAM_ID:-}"
 notary_password="${INKOTP_MACOS_NOTARY_PASSWORD:-}"
+provisioning_profile="${INKOTP_MACOS_PROFILE_BASE64:-}"
 
-if [[ -n "$developer_id$p12$p12_password$apple_id$team_id$notary_password" ]]; then
-    if [[ "$developer_id" != "Developer ID Application: "* || -z "$p12" || -z "$p12_password" || -z "$apple_id" || -z "$team_id" || -z "$notary_password" ]]; then
-        echo "Configure the complete Developer ID and notarization credentials." >&2
+if [[ -n "$developer_id$p12$p12_password$apple_id$team_id$notary_password$provisioning_profile" ]]; then
+    if [[ "$developer_id" != "Developer ID Application: "* || -z "$p12" || -z "$p12_password" || -z "$apple_id" || -z "$team_id" || -z "$notary_password" || -z "$provisioning_profile" ]]; then
+        echo "Configure Developer ID, provisioning profile, and notarization credentials." >&2
         exit 1
     fi
     keychain="$scratch/signing.keychain-db"
@@ -60,6 +62,37 @@ if [[ -n "$developer_id$p12$p12_password$apple_id$team_id$notary_password" ]]; t
     printf '%s' "$p12" | base64 --decode > "$scratch/signing.p12"
     security import "$scratch/signing.p12" -k "$keychain" -P "$p12_password" -T /usr/bin/codesign
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+    printf '%s' "$provisioning_profile" | base64 --decode > "$app/Contents/embedded.provisionprofile"
+    security cms -D -i "$app/Contents/embedded.provisionprofile" -o "$scratch/profile.plist"
+    entitlements="$scratch/distribution.entitlements"
+    python3 - "$scratch/profile.plist" "$base_entitlements" "$app/Contents/Info.plist" "$team_id" "$entitlements" <<'PYPROFILE'
+import datetime
+import fnmatch
+import plistlib
+import sys
+from pathlib import Path
+
+profile_path, base_path, app_path, team_id, output_path = sys.argv[1:]
+profile = plistlib.loads(Path(profile_path).read_bytes())
+app = plistlib.loads(Path(app_path).read_bytes())
+base = plistlib.loads(Path(base_path).read_bytes())
+allowed = profile["Entitlements"]
+app_id = f'{team_id}.{app["CFBundleIdentifier"]}'
+if (profile["ExpirationDate"] <= datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        or allowed.get("com.apple.application-identifier") != app_id
+        or allowed.get("com.apple.developer.team-identifier") != team_id
+        or not any(fnmatch.fnmatchcase(app_id, group) for group in allowed.get("keychain-access-groups", []))
+        or allowed.get("get-task-allow") is True
+        or not profile.get("ProvisionsAllDevices")
+        or profile.get("ProvisionedDevices")):
+    raise SystemExit("Profile must authorize direct distribution and InkOTP's exact application and keychain identifiers")
+base.update({
+    "com.apple.application-identifier": app_id,
+    "com.apple.developer.team-identifier": team_id,
+    "keychain-access-groups": [app_id],
+})
+Path(output_path).write_bytes(plistlib.dumps(base))
+PYPROFILE
     codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$developer_id" --entitlements "$entitlements" "$app"
     signature="developer-id-notarized"
 else
@@ -79,6 +112,14 @@ import sys
 with open(sys.argv[1], "rb") as expected, open(sys.argv[2], "rb") as actual:
     assert plistlib.load(expected) == plistlib.load(actual), "Unexpected application entitlements"
 PY
+
+# This code path performs a sandbox storage/key round trip without showing a window.
+python3 - "$app/Contents/MacOS/InkOTP" <<'PYSMOKE'
+import subprocess
+import sys
+
+subprocess.run([sys.argv[1], "--ci-vault-smoke"], check=True, timeout=90)
+PYSMOKE
 
 if [[ "$signature" == "developer-id-notarized" ]]; then
     # Staple the app itself before constructing the image so offline installs can retain the ticket.

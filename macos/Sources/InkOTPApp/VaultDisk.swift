@@ -155,6 +155,15 @@ actor VaultDisk {
         return VaultOpenResult(model: normalized, session: session, record: record)
     }
 
+    func diskBytes(record: VaultRecord) -> Int? {
+        try? file(for: record).resourceValues(forKeys: [.fileSizeKey]).fileSize
+    }
+
+    func clearSmokeCredential(record: VaultRecord) {
+        precondition(keychainService.hasPrefix("io.github.rhczz.inkotp.macos.ci-smoke."))
+        deleteCredential(record)
+    }
+
     func readImport(_ url: URL) throws -> Data {
         let hasAccess = url.startAccessingSecurityScopedResource()
         defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }

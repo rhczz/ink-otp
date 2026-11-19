@@ -181,6 +181,7 @@ jobs:
           INKOTP_MACOS_P12_PASSWORD: ${{ secrets.INKOTP_MACOS_P12_PASSWORD }}
           INKOTP_MACOS_NOTARY_APPLE_ID: ${{ secrets.INKOTP_MACOS_NOTARY_APPLE_ID }}
           INKOTP_MACOS_TEAM_ID: ${{ secrets.INKOTP_MACOS_TEAM_ID }}
+          INKOTP_MACOS_PROFILE_BASE64: ${{ secrets.INKOTP_MACOS_PROFILE_BASE64 }}
           INKOTP_MACOS_NOTARY_PASSWORD: ${{ secrets.INKOTP_MACOS_NOTARY_PASSWORD }}
         run: macos/Scripts/package-universal.sh "$RUNNER_TEMP/arm/InkOTP.app" "$RUNNER_TEMP/intel/InkOTP.app" release-bundle "$INKOTP_VERSION"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -206,6 +207,7 @@ jobs:
       - name: Publish verified disk image and release evidence
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           INKOTP_VERSION: ${{ needs.package.outputs.version }}
           INKOTP_BETA: ${{ needs.package.outputs.beta }}
         shell: bash
@@ -220,7 +222,7 @@ jobs:
             developer-id-notarized) description='使用 Developer ID 签名，已通过 Apple 公证。' ;;
             adhoc)
               test "$INKOTP_BETA" = true
-              description='本测试版采用临时签名，未经 Apple 公证。macOS 的 Gatekeeper 可能拦截首次打开。'
+              description='本测试版采用临时签名，未经 Apple 公证。macOS 的 Gatekeeper 可能拦截首次打开。本测试版的受保护 Keychain 系统认证模式需要正式签名和授权。'
               ;;
             *) echo "Invalid signature evidence" >&2; exit 1 ;;
           esac

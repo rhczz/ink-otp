@@ -44,4 +44,6 @@ otool -L "$contents/MacOS/InkOTP" | awk '
 NR > 1 && $1 !~ /^\/(usr\/lib|System\/Library)\// {
     print "Unexpected runtime dependency: " $1 > "/dev/stderr"; invalid = 1
 } END {exit invalid}'
+minos="$(vtool -show-build "$contents/MacOS/InkOTP" | awk '$1 == "minos" { print $2 }')"
+[[ "$minos" == "14.0" ]]
 plutil -lint "$contents/Info.plist"

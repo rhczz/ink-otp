@@ -249,6 +249,33 @@ final class SharedContractTests: XCTestCase {
         }
     }
 
+    func testPublishedPlatformNeutralVaultExample() throws {
+        let document = try String(decoding: data("vault-format.md"), as: UTF8.self)
+        let fileHex = try XCTUnwrap(document.components(separatedBy: "fileHex =\n").dropFirst().first)
+            .components(separatedBy: "\n```")[0]
+            .filter { !$0.isWhitespace }
+        let jsonMarker = "### 6.1 明文 JSON（240 字节）\n\n```json\n"
+        let modelSource = try XCTUnwrap(document.components(separatedBy: jsonMarker).dropFirst().first)
+            .components(separatedBy: "\n```")[0]
+        let fixture = try hex(fileHex)
+        XCTAssertEqual(fixture.count, 371)
+        let decoded = try VaultFile.open(fixture, password: Self.fixturePassword)
+        let expected = try VaultJSON.decode(Data(modelSource.utf8))
+        XCTAssertEqual(decoded.0, expected)
+        XCTAssertEqual(try VaultFile.open(fixture, deviceCredential: decoded.1.deviceCredential).0, expected)
+
+        let session = try VaultSession.new(password: nil)
+        let deviceOnly = try VaultFile.seal(expected, session: session)
+        XCTAssertFalse(try VaultFile.hasPassword(deviceOnly))
+        XCTAssertEqual(try VaultFile.open(deviceOnly, deviceCredential: session.deviceCredential).0, expected)
+        XCTAssertThrowsError(try VaultFile.open(deviceOnly, password: Self.fixturePassword))
+        var future = deviceOnly
+        future[4] = 2
+        XCTAssertThrowsError(try VaultFile.open(future, deviceCredential: session.deviceCredential)) {
+            XCTAssertEqual(($0 as? CoreError)?.code, "VLT_E_VERSION")
+        }
+    }
+
     func testVaultUpgradeCompatibilityAndAuthenticatedWrites() throws {
         let model = try VaultJSON.decode(data("fixtures/backup-v1.expected.json"))
         let password = "cafe\u{0301}-public-fixture"

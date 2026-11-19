@@ -1,3 +1,4 @@
+import Accessibility
 import AppKit
 import Combine
 import InkOTPCore
@@ -9,6 +10,10 @@ import UniformTypeIdentifiers
 struct InkOTPDesktop: App {
     @StateObject private var store = VaultStore()
     @StateObject private var commands = DesktopCommands()
+
+    init() {
+        if CommandLine.arguments.contains("--ci-vault-smoke") { VaultSmoke.runAndExit() }
+    }
 
     var body: some Scene {
         Window("InkOTP", id: "vault") {
@@ -61,7 +66,7 @@ enum DesktopRequest {
 
 @MainActor
 final class DesktopCommands: ObservableObject {
-    let requests = PassthroughSubject<DesktopRequest, Never>()
+    let requests = CurrentValueSubject<DesktopRequest?, Never>(nil)
     @Published var hasSelection = false
 
     func send(_ request: DesktopRequest) {
@@ -106,6 +111,7 @@ struct DesktopVaultView: View {
     @State private var fileBusy = false
     @State private var didStart = false
     @State private var appActive = true
+    @State private var clockChanged = false
 
     private var ink: QuietInk { QuietInk(dark: scheme == .dark) }
     private var items: [VaultItem] {
@@ -124,7 +130,9 @@ struct DesktopVaultView: View {
 
     var body: some View {
         Group {
-            if !store.consent {
+            if !store.ready {
+                ProgressView(tr("Opening InkOTP…", "正在打开 InkOTP…"))
+            } else if !store.consent {
                 gate(icon: "hand.raised", title: tr("Privacy Statement", "隐私声明"),
                      message: tr("InkOTP generates verification codes on this Mac. Review the privacy statement to continue.", "InkOTP 在这台 Mac 上生成验证码。请阅读隐私声明后继续。")) {
                     Button(tr("Read Privacy Statement", "阅读隐私声明")) { present(.privacy) }
@@ -150,6 +158,7 @@ struct DesktopVaultView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ink.background)
+        .background(PrivateWindowConfiguration())
         .tint(ink.accent)
         .overlay(alignment: .bottom) {
             if sheet == nil, let message = store.errorMessage {
@@ -185,7 +194,11 @@ struct DesktopVaultView: View {
         } message: {
             Text(tr("After deleting the account, InkOTP can no longer generate its codes. Verify that you have another recovery method.", "删除后，InkOTP 将无法再为该账号生成验证码。请确认你还有其他恢复方式。"))
         }
-        .onReceive(commands.requests) { handle($0) }
+        .onReceive(commands.requests.compactMap { $0 }) { request in
+            commands.requests.send(nil)
+            handle(request)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSSystemClockDidChange)) { _ in clockChanged = true }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in appActive = true }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             appActive = false
@@ -215,8 +228,8 @@ struct DesktopVaultView: View {
             commands.hasSelection = false
             if store.model != nil { store.lock() }
         }
-        .task {
-            guard !didStart else { return }
+        .task(id: store.ready) {
+            guard store.ready, !didStart else { return }
             didStart = true
             appActive = NSApplication.shared.isActive
             if store.consent && store.initialized && store.model == nil {
@@ -378,17 +391,15 @@ struct DesktopVaultView: View {
             }
             Spacer(minLength: 6)
             if appActive {
-                if defaultHidden != revealed.contains(item.id) {
-                    Text(grouped(String(repeating: "•", count: item.digits)))
-                        .font(.system(.caption, design: .monospaced))
-                        .accessibilityLabel(tr("Code hidden", "验证码已隐藏"))
-                } else {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(grouped(store.code(item, at: context.date) ?? "—"))
-                            .font(.system(.caption, design: .monospaced).weight(.medium))
-                            .foregroundStyle(item.type == .totp && secondsRemaining(item, at: context.date) <= 5
-                                             ? ink.danger : .primary)
-                    }
+                let hidden = defaultHidden != revealed.contains(item.id)
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let warning = item.type == .totp && secondsRemaining(item, at: context.date) <= 5
+                    let code = hidden ? String(repeating: "•", count: item.digits)
+                        : store.code(item, at: context.date) ?? "—"
+                    Text(grouped(code))
+                        .font(.system(.caption, design: .monospaced).weight(.medium))
+                        .foregroundStyle(warning ? ink.warningText : Color.primary)
+                        .accessibilityLabel(Text(hidden ? tr("Code hidden", "验证码已隐藏") : code))
                 }
             }
         }
@@ -456,6 +467,7 @@ struct DesktopVaultView: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let remaining = secondsRemaining(item, at: context.date)
                 let expiring = item.type == .totp && remaining <= 5
+                let rawCode = hidden ? nil : store.code(item, at: context.date)
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(tr("VERIFICATION CODE", "验证码"))
@@ -466,21 +478,21 @@ struct DesktopVaultView: View {
                         if item.type == .totp {
                             Text(tr("\(remaining)s remaining", "剩余 \(remaining) 秒"))
                                 .font(.caption.monospacedDigit())
-                                .foregroundStyle(expiring ? ink.danger : ink.secondary)
+                                .foregroundStyle(expiring ? ink.warningText : ink.secondary)
                         }
                     }
                     Text(hidden
                          ? grouped(String(repeating: "•", count: item.digits))
-                         : grouped(store.code(item, at: context.date) ?? "—"))
+                         : grouped(rawCode ?? "—"))
                         .font(.system(size: 42, weight: .semibold, design: .monospaced))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
-                        .foregroundStyle(expiring && !hidden ? ink.danger : ink.foreground)
-                        .accessibilityLabel(hidden ? tr("Verification code hidden", "验证码已隐藏") : tr("Verification code", "验证码"))
-                        .accessibilityValue(hidden ? "" : (store.code(item, at: context.date) ?? ""))
+                        .foregroundStyle(expiring ? ink.warningText : ink.foreground)
+                        .accessibilityLabel(Text(hidden ? tr("Verification code hidden", "验证码已隐藏") : tr("Verification code", "验证码")))
+                        .accessibilityValue(Text(rawCode ?? ""))
                     if item.type == .totp {
                         ProgressView(value: Double(remaining), total: Double(max(1, item.period)))
-                            .tint(expiring ? ink.danger : ink.accent)
+                            .tint(expiring ? ink.warning : ink.accent)
                             .accessibilityHidden(true)
                     }
                 }
@@ -542,9 +554,7 @@ struct DesktopVaultView: View {
     private func copy(_ item: VaultItem) {
         guard appActive, store.copy(item) else { return }
         codeFeedback = tr("Code copied", "验证码已复制")
-        if #available(macOS 14.0, *) {
-            AccessibilityNotification.Announcement(tr("Verification code copied", "验证码已复制")).post()
-        }
+        AccessibilityNotification.Announcement(tr("Verification code copied", "验证码已复制")).post()
         feedbackTask?.cancel()
         feedbackTask = Task {
             do {
@@ -596,7 +606,12 @@ struct DesktopVaultView: View {
             } close: { close() }
         case let .importBackup(url, format):
             ImportSheet(store: store, url: url, format: format, close: close)
-        case .exportBackup: ExportSheet(store: store, close: close)
+        case .exportBackup:
+            if store.hasRecoveryPassword {
+                ExportSheet(store: store, close: close)
+            } else {
+                PasswordSheet(store: store, close: close)
+            }
         case .camera:
             CameraSheet(close: close) { value in
                 close()
@@ -609,7 +624,7 @@ struct DesktopVaultView: View {
             }
         case .changePassword: PasswordSheet(store: store, close: close)
         case .privacy: PrivacySheet(store: store, close: close)
-        case .diagnostics: DiagnosticsSheet(store: store, close: close)
+        case .diagnostics: DiagnosticsSheet(store: store, clockChanged: $clockChanged, close: close)
         case .about: AboutSheet(close: close)
         case .onboarding: OnboardingSheet(close: close)
         }
@@ -708,7 +723,8 @@ struct QuietInk {
     var border: Color { color(0xE2E6EB, 0x232830) }
     var accent: Color { color(0x2B4EFF, 0x7C93FF) }
     var accentSoft: Color { color(0xE9EEFF, 0x1B2140) }
-    var danger: Color { color(0xD92D20, 0xF97066) }
+    var warning: Color { color(0xF79009, 0xFDB022) }
+    var warningText: Color { color(0x8A5A10, 0xFDB022) }
     var success: Color { color(0x0B6B5B, 0x3DDC97) }
 
     private func color(_ light: UInt32, _ darkColor: UInt32) -> Color {
@@ -754,4 +770,16 @@ struct DesktopNotice: View {
 
 func tr(_ english: String, _ chinese: String) -> String {
     Locale.preferredLanguages.first?.hasPrefix("zh") == true ? chinese : english
+}
+
+private struct PrivateWindowConfiguration: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { PrivateWindowView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class PrivateWindowView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.sharingType = .none
+        }
+    }
 }

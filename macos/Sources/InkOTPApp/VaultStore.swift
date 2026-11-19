@@ -82,7 +82,7 @@ final class VaultStore: ObservableObject {
         } ?? false
     }
 
-    func lock() {
+    func lock(clearClipboard: Bool = true) {
         generation &+= 1
         activeAuthentication?.invalidate()
         backgroundLock?.cancel()
@@ -90,7 +90,7 @@ final class VaultStore: ObservableObject {
         model = nil
         session = nil
         cache.removeAll(keepingCapacity: false)
-        clearOwnedClipboard()
+        if clearClipboard { clearOwnedClipboard() }
     }
 
     @discardableResult
@@ -219,6 +219,11 @@ final class VaultStore: ObservableObject {
             }
         }
         return true
+    }
+
+    func diskBytes() async -> Int? {
+        guard let record else { return nil }
+        return await disk.diskBytes(record: record)
     }
 
     func detectImport(_ url: URL) async -> InterchangeFormat? {
@@ -422,7 +427,7 @@ final class VaultStore: ObservableObject {
         guard let model, !NSApplication.shared.isActive else { return }
         if activeAuthentication != nil { return }
         if systemAuthentication {
-            lock()
+            lock(clearClipboard: false)
             return
         }
         backgroundLock?.cancel()
@@ -430,7 +435,7 @@ final class VaultStore: ObservableObject {
         backgroundLock = Task { [weak self] in
             try? await Task.sleep(for: .seconds(timeout))
             guard !Task.isCancelled, !NSApplication.shared.isActive else { return }
-            self?.lock()
+            self?.lock(clearClipboard: false)
         }
     }
 

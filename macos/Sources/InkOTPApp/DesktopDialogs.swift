@@ -14,7 +14,7 @@ struct DesktopDialog<Content: View, Actions: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(title).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
-            content
+            content.disabled(store.busy)
             if let message = store.errorMessage {
                 DesktopNotice(message: message) { store.errorMessage = nil }
             }
@@ -355,8 +355,13 @@ struct ImportSheet: View {
         let password = format.requiresPassword ? backupPassword : nil
         Task {
             if let result = await store.previewImport(url, password: password) {
-                preview = result
                 backupPassword = ""
+                if result.format == format {
+                    preview = result
+                } else {
+                    store.errorMessage = tr("The selected file changed. Close this preview and choose it again.",
+                                            "所选文件已变化。请关闭预览并重新选择。")
+                }
             }
         }
     }
@@ -386,7 +391,6 @@ struct ExportSheet: View {
     @AppStorage("export.last-success") private var lastBackup = 0.0
     @State private var format: InterchangeFormat = .aegisEncrypted
     @State private var password = ""
-    @State private var confirmation = ""
     @State private var plaintextAcknowledged = false
     @State private var choosingLocation = false
 
@@ -397,9 +401,11 @@ struct ExportSheet: View {
                     ForEach(InterchangeFormat.allCases) { format in Text(format.title).tag(format) }
                 }
                 .disabled(choosingLocation || store.busy)
+                SecureField(tr("Current recovery password", "当前恢复口令"), text: $password)
                 if format.requiresPassword {
-                    SecureField(tr("Backup password", "备份口令"), text: $password)
-                    SecureField(tr("Confirm backup password", "确认备份口令"), text: $confirmation)
+                    Text(tr("The exported backup uses your current recovery password.",
+                            "加密备份将使用当前恢复口令。"))
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if format.plaintext {
                     Toggle(tr("I understand that anyone with this file can generate codes for the exported accounts.",
@@ -418,17 +424,15 @@ struct ExportSheet: View {
         } actions: {
             Button(tr("Choose Save Location…", "选择保存位置…"), action: chooseLocation)
                 .keyboardShortcut(.defaultAction)
-                .disabled(choosingLocation
-                          || (format.plaintext && !plaintextAcknowledged)
-                          || (format.requiresPassword && (password.isEmpty || password != confirmation)))
+                .disabled(choosingLocation || password.isEmpty || (format.plaintext && !plaintextAcknowledged))
         }
-        .onChange(of: format) { _, _ in password = ""; confirmation = ""; plaintextAcknowledged = false }
-        .onDisappear { password = ""; confirmation = "" }
+        .onChange(of: format) { _, _ in plaintextAcknowledged = false }
+        .onDisappear { password = "" }
     }
 
     private func chooseLocation() {
         let selectedFormat = format
-        let chosenPassword = selectedFormat.requiresPassword ? password : nil
+        let chosenPassword = password
         let panel = NSSavePanel()
         let stamp = Date.now.formatted(.iso8601.year().month().day().dateSeparator(.dash))
         panel.nameFieldStringValue = "InkOTP-\(stamp).\(selectedFormat.fileExtension)"
@@ -449,11 +453,8 @@ struct ExportSheet: View {
                 }
             }
         }
-        if let window = NSApplication.shared.keyWindow {
-            panel.beginSheetModal(for: window, completionHandler: completion)
-        } else {
-            panel.begin(completionHandler: completion)
-        }
+        // The backup options already occupy the vault window’s sheet.
+        panel.begin(completionHandler: completion)
     }
 }
 

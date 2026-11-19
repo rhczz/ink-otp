@@ -6,6 +6,7 @@
 |---|---|
 | `vectors.json` | 全部 RFC 向量、固定随机 TOTP、Base32 正反向、非规范输入、算法及数字边界 |
 | `otpauth-cases.json` | 全部成功字段、迁移路由、警告与拒绝码 |
+| `vault-format.md` 的二进制示例 | 跨端库布局、已认证头部和密码包装可读 |
 | `fixtures/backup-v1.2fab` 和关联描述 | 口令认证、完整模型、已上线的格式兼容 |
 | `fixtures/interoperability/sources.json` 引用的十个来源文件 | 内容识别、接受的版本、错误口令、完整拒绝、不支持条目的原始序号 |
 | `conformance-cases.json` | 来源文件的共同预期结果和对既有 .2fab 的逐字节变异规则 |
