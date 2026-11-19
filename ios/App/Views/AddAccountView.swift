@@ -89,16 +89,20 @@ struct AddAccountView: View {
                 Text(formError).font(.footnote).foregroundStyle(Ink.danger)
             }
             if let error = state.error { inkText(error).font(.footnote).foregroundStyle(Ink.danger) }
-            Button("Save", action: save)
-                .buttonStyle(InkButtonStyle())
-                .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || state.busy)
-                .accessibilityIdentifier("account.save")
-            Button("Cancel", action: done)
-                .buttonStyle(InkButtonStyle(prominent: false))
-                .disabled(state.busy)
         }
         .navigationTitle("Enter account")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", action: done)
+                    .disabled(state.busy)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save", action: save)
+                    .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || state.busy)
+                    .accessibilityIdentifier("account.save")
+            }
+        }
         .onAppear { inspectLink() }
         .onChange(of: input) { _, _ in
             formError = nil

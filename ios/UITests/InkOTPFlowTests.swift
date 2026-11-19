@@ -27,12 +27,14 @@ final class InkOTPFlowTests: XCTestCase {
 
         tap("vault.add", in: app)
         tap("account.manual", in: app)
-        let editor = app.scrollViews.containing(.button, identifier: "account.save").firstMatch
+        let editor = app.scrollViews.containing(.secureTextField, identifier: "account.secret").firstMatch
         type("Public test account", in: app.textFields["account.name"], scrolling: editor, app: app)
         let secret = app.secureTextFields.matching(identifier: "account.secret").firstMatch
         type("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", in: secret, scrolling: editor, app: app)
-        let save = app.buttons["account.save"]
-        show(save, scrolling: editor, app: app)
+        let save = app.navigationBars["Enter account"].buttons.matching(identifier: "account.save").firstMatch
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(save.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(save.isHittable && save.isEnabled, app.debugDescription)
         save.tap()
         let accountRow = app.buttons["account.copy"]
         XCTAssertTrue(accountRow.waitForExistence(timeout: 8), app.debugDescription)
