@@ -85,6 +85,25 @@ final class VaultRepositoryTests: XCTestCase {
         XCTAssertEqual(metadata?.systemAuthenticationEnabled, false)
     }
 
+    func testAuthorizedRestorePreservesOneEncryptedPredecessorAndEraseRemovesIt() async throws {
+        let (url, _, repository) = makeRepository()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let password = "public fixture password"
+        _ = try await repository.create(model: VaultModel(), password: password)
+        let original = try Data(contentsOf: url)
+        let restored = VaultModel(items: [
+            VaultItem(accountName: "Restored test account", secret: Data("public-test-seed".utf8))
+        ])
+        _ = try await repository.restore(model: restored, password: password, authorized: true)
+        let predecessor = url.deletingLastPathComponent().appendingPathComponent("vault-before-restore.json")
+        XCTAssertEqual(try Data(contentsOf: predecessor), original)
+        let opened = try await repository.open(context: LAContext())
+        XCTAssertEqual(opened.model, restored)
+        try await repository.erase()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: predecessor.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
     private func makeRepository() -> (URL, MemoryKeys, VaultRepository) {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString).appendingPathComponent("vault.json")

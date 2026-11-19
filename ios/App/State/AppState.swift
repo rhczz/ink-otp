@@ -216,6 +216,10 @@ final class AppState: ObservableObject {
         await mutate { model in
             var new = item
             new.sortIndex = (model.items.count + 1) * 1000
+            let key = BackupMerge.keyOf(new)
+            guard !model.items.contains(where: { BackupMerge.keyOf($0) == key }) else {
+                throw VaultFailure.duplicateAccount
+            }
             model.items.append(new)
         }
     }
@@ -226,6 +230,10 @@ final class AppState: ObservableObject {
             model.items[index].issuer = item.issuer
             model.items[index].accountName = item.accountName
             model.items[index].updatedAt = VaultJson.isoTimestamp()
+            let key = BackupMerge.keyOf(model.items[index])
+            guard !model.items.contains(where: { $0.id != item.id && BackupMerge.keyOf($0) == key }) else {
+                throw VaultFailure.duplicateAccount
+            }
         }
     }
 
@@ -371,7 +379,7 @@ final class AppState: ObservableObject {
             if phase == .unlocked { endSession(clearClipboard: false) }
             return false
         }
-        return scene == .active
+        return scene != .background
     }
 
     func sceneChanged(_ value: ScenePhase) {

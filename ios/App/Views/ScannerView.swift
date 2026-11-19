@@ -16,6 +16,10 @@ struct ScannerView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
     @StateObject private var scanner = CameraScanner()
+    @State private var choosingPhoto = false
+    @State private var readingPolicy = false
+
+    private var cameraActive: Bool { scenePhase == .active && !choosingPhoto && !readingPolicy }
 
     var body: some View {
         InkPage {
@@ -53,7 +57,9 @@ struct ScannerView: View {
             } else {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             }
-            QRPhotoButton(state: state, onFound: onFound)
+            QRPhotoButton(state: state, onFound: onFound, onWorkingChange: { choosingPhoto = $0 })
+            Button("Privacy notice") { readingPolicy = true }
+                .frame(maxWidth: .infinity, minHeight: Ink.touch)
             Button("Enter manually", action: onManual).buttonStyle(InkButtonStyle(prominent: false))
         }
         .navigationTitle("Scan QR code")
@@ -61,8 +67,18 @@ struct ScannerView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Back", action: onCancel) }
         }
-        .task(id: scenePhase) {
-            if scenePhase == .active {
+        .sheet(isPresented: $readingPolicy) {
+            NavigationStack {
+                PrivacyPolicyView()
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { readingPolicy = false }
+                        }
+                    }
+            }
+        }
+        .task(id: cameraActive) {
+            if cameraActive {
                 scanner.onFound = onFound
                 await scanner.start()
             } else {
@@ -215,6 +231,7 @@ private struct CameraSurface: UIViewRepresentable {
 struct QRPhotoButton: View {
     @ObservedObject var state: AppState
     let onFound: (String) -> Void
+    var onWorkingChange: (Bool) -> Void = { _ in }
     @State private var picker = false
     @State private var selection: PhotosPickerItem?
     @State private var actionInProgress = false
@@ -227,6 +244,7 @@ struct QRPhotoButton: View {
                 photoError = nil
                 pickerSession = state.sessionID
                 state.beginPicker()
+                onWorkingChange(true)
                 picker = true
             }
             .buttonStyle(InkButtonStyle(prominent: false))
@@ -247,12 +265,14 @@ struct QRPhotoButton: View {
                     if selection == nil, pickerSession != nil, !picker {
                         state.endPicker()
                         pickerSession = nil
+                        onWorkingChange(false)
                     }
                 }
             }
         }
         .onDisappear {
             if pickerSession != nil { state.endPicker(); pickerSession = nil }
+            onWorkingChange(false)
         }
     }
 
@@ -262,6 +282,7 @@ struct QRPhotoButton: View {
         defer {
             actionInProgress = false
             self.selection = nil
+            onWorkingChange(false)
             if pickerSession != nil { state.endPicker(); pickerSession = nil }
         }
         do {

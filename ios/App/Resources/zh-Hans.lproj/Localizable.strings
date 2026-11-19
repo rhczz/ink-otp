@@ -260,3 +260,4 @@
 "privacy.changes.body" = "InkOTP 面向一般用户。依法需要监护人同意时，请在监护人同意与指导下使用。隐私声明有实质变化时会告知你，并在需要时重新征求同意。";
 "Use device authentication" = "使用系统验证";
 "No recovery password is set. Set one before changing devices or reinstalling the app." = "当前为设备绑定模式。换机或重装前请先设置恢复口令。";
+"scrypt license" = "scrypt 许可证";

@@ -16,94 +16,140 @@ struct RootView: View {
     private var canShowContent: Bool { scenePhase == .active && !isCaptured }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                switch state.phase {
-                case .privacy:
-                    PrivacyGate(state: state, showingPolicy: $showingPolicy)
-                case .setup:
-                    OnboardingView(state: state, showingPolicy: $showingPolicy) {
-                        transfer = .importBackup
-                    }
-                case .locked:
-                    UnlockView(state: state) { transfer = .importBackup }
-                case .unlocked:
-                    VaultScreen(
-                        state: state, canShowCodes: canShowContent,
-                        showingPolicy: $showingPolicy, transfer: $transfer, alert: $alert, completingSetup: $completingSetup
-                    )
-                    .id(state.sessionID)
-                case .unavailable:
-                    InkPage {
-                        InkHeading(title: "Vault unavailable", message: "InkOTP could not open the vault. Try again or restore a backup.", symbol: "lock.trianglebadge.exclamationmark")
-                        Button("Restore from backup") { transfer = .importBackup }
-                            .buttonStyle(InkButtonStyle())
-                    }
-                }
+        protectedNavigation
+            .alert(alertTitle, isPresented: alertPresented) {
+                Button("OK", role: .cancel, action: clearAlert)
+            } message: {
+                alertMessage
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Ink.background)
+    }
+
+    private var protectedNavigation: some View {
+        presentedNavigation
+            .onChange(of: state.phase) { old, new in phaseChanged(from: old, to: new) }
+            .onChange(of: state.sessionID) { _, _ in resetPresentation() }
+            .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
+                isCaptured = UIScreen.main.isCaptured
+            }
+            .overlay { screenCover }
+            .accessibilityHidden(!canShowContent && !isCaptured)
+    }
+
+    private var presentedNavigation: some View {
+        navigation
+            .modifier(VaultTransfers(state: state, request: $transfer, notice: $alert))
+            .sheet(isPresented: $showingPolicy) { policySheet }
+    }
+
+    private var navigation: some View {
+        NavigationStack {
+            phaseContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Ink.background)
         }
         .id(state.sessionID)
         .foregroundStyle(Ink.text)
         .tint(Ink.accent)
         .preferredColorScheme(Appearance(rawValue: appearance)?.scheme)
-        .modifier(VaultTransfers(state: state, request: $transfer, notice: $alert))
-        .sheet(isPresented: $showingPolicy) {
-            NavigationStack {
-                PrivacyPolicyView()
-                    .toolbar { ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { showingPolicy = false }
-                    } }
-            }
-            .tint(Ink.accent)
-        }
-        .onChange(of: state.phase) { old, new in
-            completingSetup = old == .setup && new == .unlocked && transfer == nil
-        }
-        .onChange(of: state.sessionID) { _, _ in
-            showingPolicy = false
-            transfer = nil
-            alert = nil
-        }
-        .task(id: AutomaticEntry(scenePhase: scenePhase, session: state.sessionID)) {
-            if scenePhase == .active && !showingPolicy && transfer == nil {
-                await state.requestAutomaticUnlock()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
-            isCaptured = UIScreen.main.isCaptured
-        }
-        .overlay {
-            if !canShowContent {
-                Ink.surface.ignoresSafeArea()
-                    .overlay {
-                        if isCaptured {
-                            InkHeading(title: "Screen sharing active",
-                                       message: "InkOTP hides vault content while the screen is being recorded or mirrored.",
-                                       symbol: "eye.slash").padding(Ink.xxl)
-                        }
-                    }
-            }
-        }
-        .accessibilityHidden(!canShowContent && !isCaptured)
-        .alert(
-            state.error == nil ? LocalizedStringKey("Notice") : LocalizedStringKey("Operation incomplete"),
-            isPresented: Binding(
-                get: { transfer == nil && (alert != nil || (state.error != nil && state.phase != .locked)) },
-                set: { if !$0 { alert = nil; state.error = nil } }
+    }
+
+    @ViewBuilder
+    private var phaseContent: some View {
+        switch state.phase {
+        case .privacy:
+            PrivacyGate(state: state, showingPolicy: $showingPolicy)
+        case .setup:
+            OnboardingView(state: state, showingPolicy: $showingPolicy, restore: chooseRestore)
+        case .locked:
+            UnlockView(state: state, restore: chooseRestore)
+        case .unlocked:
+            VaultScreen(
+                state: state, canShowCodes: canShowContent,
+                showingPolicy: $showingPolicy, transfer: $transfer,
+                alert: $alert, completingSetup: $completingSetup
             )
-        ) {
-            Button("OK", role: .cancel) { alert = nil; state.error = nil }
-        } message: {
-            if let error = state.error { inkText(error) }
-            else if let alert { Text(alert) }
+            .id(state.sessionID)
+        case .unavailable:
+            unavailableView
         }
     }
 
-    private struct AutomaticEntry: Hashable {
-        let scenePhase: ScenePhase
-        let session: UUID
+    private var unavailableView: some View {
+        InkPage {
+            InkHeading(
+                title: "Vault unavailable",
+                message: "InkOTP could not open the vault. Try again or restore a backup.",
+                symbol: "lock.trianglebadge.exclamationmark"
+            )
+            Button("Restore from backup", action: chooseRestore)
+                .buttonStyle(InkButtonStyle())
+        }
+    }
+
+    private var policySheet: some View {
+        NavigationStack {
+            PrivacyPolicyView()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { showingPolicy = false }
+                    }
+                }
+        }
+        .tint(Ink.accent)
+    }
+
+    @ViewBuilder
+    private var screenCover: some View {
+        if !canShowContent {
+            Ink.surface.ignoresSafeArea()
+                .overlay {
+                    if isCaptured {
+                        InkHeading(title: "Screen sharing active",
+                                   message: "InkOTP hides vault content while the screen is being recorded or mirrored.",
+                                   symbol: "eye.slash").padding(Ink.xxl)
+                    }
+                }
+        }
+    }
+
+    private var alertTitle: LocalizedStringKey {
+        state.error == nil ? "Notice" : "Operation incomplete"
+    }
+
+    private var alertPresented: Binding<Bool> {
+        Binding {
+            transfer == nil && (alert != nil || (state.error != nil && state.phase != .locked))
+        } set: { presented in
+            if !presented { clearAlert() }
+        }
+    }
+
+    @ViewBuilder
+    private var alertMessage: some View {
+        if let error = state.error {
+            inkText(error)
+        } else if let alert {
+            Text(alert)
+        }
+    }
+
+    private func chooseRestore() {
+        transfer = .importBackup
+    }
+
+    private func phaseChanged(from old: AppState.Phase, to new: AppState.Phase) {
+        completingSetup = old == .setup && new == .unlocked && transfer == nil
+    }
+
+    private func resetPresentation() {
+        showingPolicy = false
+        transfer = nil
+        alert = nil
+    }
+
+    private func clearAlert() {
+        alert = nil
+        state.error = nil
     }
 }
 

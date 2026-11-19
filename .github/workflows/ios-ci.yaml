@@ -28,6 +28,7 @@ jobs:
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate --spec ios/project.yml --project ios
       - name: Verify iOS application and UI with XCTest
+        id: simulator
         run: |
           simulator=$(python3 ios/Scripts/select-simulator.py)
           mkdir -p ios/build/reports
@@ -39,7 +40,7 @@ jobs:
         if: always()
         run: |
           mkdir -p ios/build/reports
-          if [[ -d ios/build/results.xcresult ]]; then
+          if [[ "${{ steps.simulator.outcome }}" == success ]]; then
             xcrun xcresulttool get test-results summary --path ios/build/results.xcresult > ios/build/reports/simulator-tests.json
             xcrun xccov view --report --json ios/build/results.xcresult > ios/build/reports/simulator-line-coverage.json
           fi

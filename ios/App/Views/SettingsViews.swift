@@ -285,6 +285,7 @@ struct AboutView: View {
                 if Bundle.main.url(forResource: "Argon2-LICENSE", withExtension: "txt") != nil {
                     NavigationLink("Argon2 license") { LicenseView(resource: "Argon2-LICENSE", title: "Argon2 license") }
                 }
+                NavigationLink("scrypt license") { LicenseView(resource: "Scrypt-LICENSE", title: "scrypt license") }
                 Button("Privacy notice", action: showPolicy)
             }
         }

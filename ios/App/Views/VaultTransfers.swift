@@ -20,7 +20,6 @@ struct VaultTransfers: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onChange(of: request) { _, next in begin(next) }
-            .onDisappear { finish() }
             .sheet(item: $route) { destination in
                 Group {
                     switch destination {

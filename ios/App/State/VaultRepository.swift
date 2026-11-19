@@ -18,6 +18,7 @@ enum VaultFailure: String, Error {
     case passwordCommon = "Choose a less common recovery password."
     case noSession = "Unlock the vault first."
     case stale = "The vault changed. Review the import again."
+    case duplicateAccount = "An account with the same service, name, and key already exists."
     case exists = "A vault already exists."
 }
 
@@ -163,14 +164,33 @@ actor VaultRepository {
         let previous = try? readIfPresent()
         let requireAuthentication = previous?.systemAuthentication ?? exists
         let session = try newSession(model: model, password: password)
-        if !exists { try keys.deleteAll() }
+        if exists {
+            try preservePreviousVault()
+        } else {
+            try keys.deleteAll()
+        }
         try replaceKey(for: session, systemAuthentication: requireAuthentication, oldKeyID: previous?.keyID)
         return session
     }
 
     func erase() throws {
+        if FileManager.default.fileExists(atPath: previousVaultURL.path) {
+            try FileManager.default.removeItem(at: previousVaultURL)
+        }
         if try hasStorageFile() { try FileManager.default.removeItem(at: url) }
         try keys.deleteAll()
+    }
+
+    private var previousVaultURL: URL {
+        url.deletingLastPathComponent().appendingPathComponent("vault-before-restore.json")
+    }
+
+    private func preservePreviousVault() throws {
+        guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= Self.maxStoredBytes else { throw VaultFailure.unreadable }
+        let bytes = try Data(contentsOf: url)
+        guard bytes.count <= Self.maxStoredBytes else { throw VaultFailure.unreadable }
+        try bytes.write(to: previousVaultURL, options: [.atomic, .completeFileProtection])
     }
 
     private func newSession(model: VaultModel, password: String?) throws -> VaultSession {
@@ -271,7 +291,7 @@ actor VaultRepository {
         guard password.unicodeScalars.count >= 8 else { throw VaultFailure.passwordShort }
         guard password.utf16.count <= 1024 else { throw VaultFailure.passwordLong }
         guard !password.unicodeScalars.allSatisfy(CharacterSet.decimalDigits.contains) else { throw VaultFailure.passwordNumeric }
-        guard !["password", "password123", "qwerty123", "abcdefgh"].contains(password.lowercased()) else {
+        guard !["password", "password1", "password123", "qwertyui", "qwerty123", "abcdefgh", "letmein123"].contains(password.lowercased()) else {
             throw VaultFailure.passwordCommon
         }
     }
