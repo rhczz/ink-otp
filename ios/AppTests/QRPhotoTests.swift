@@ -17,7 +17,9 @@ final class QRPhotoTests: XCTestCase {
 
         for edge in [320, 2560] {
             let url = directory.appendingPathComponent("verification-\(edge).png")
-            try qrPNG(edge: edge).write(to: url)
+            let png = try qrPNG(edge: edge)
+            try checkGeneratedPNG(png)
+            try png.write(to: url)
             let photo = try QRPhoto.read(url)
             XCTAssertEqual(try photo.decode(), content, "\(edge)-pixel PNG")
         }
@@ -46,6 +48,17 @@ final class QRPhotoTests: XCTestCase {
         XCTAssertThrowsError(try QRPhoto(bytes: oversized).decode()) { error in
             XCTAssertEqual((error as? CocoaError)?.code, .fileReadTooLarge)
         }
+    }
+
+    private func checkGeneratedPNG(_ data: Data) throws {
+        let image = try XCTUnwrap(CIImage(data: data))
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let detector = try XCTUnwrap(CIDetector(
+            ofType: CIDetectorTypeQRCode, context: context,
+            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
+        ))
+        let payloads = detector.features(in: image).compactMap { ($0 as? CIQRCodeFeature)?.messageString }
+        XCTAssertEqual(payloads, [content], "The rendered PNG must contain the reference QR payload")
     }
 
     @MainActor

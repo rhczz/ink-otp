@@ -104,19 +104,25 @@ final class VaultRepositoryTests: XCTestCase {
         let password = "public fixture password"
         _ = try await repository.create(model: VaultModel(), password: password)
         let original = try Data(contentsOf: url)
+        let originalByteCount = await repository.byteCount()
+        XCTAssertEqual(originalByteCount, original.count)
         let restored = VaultModel(items: [
             VaultItem(accountName: "Restored test account", secret: Data("public-test-seed".utf8))
         ])
         _ = try await repository.restore(model: restored, password: password, authorized: true)
         let predecessor = url.deletingLastPathComponent().appendingPathComponent("vault-before-restore.json")
         XCTAssertEqual(try Data(contentsOf: predecessor), original)
+        let restoredByteCount = try Data(contentsOf: url).count
+        XCTAssertNotEqual(restoredByteCount, original.count)
         let byteCount = await repository.byteCount()
-        XCTAssertEqual(byteCount, try Data(contentsOf: url).count + original.count)
+        XCTAssertEqual(byteCount, restoredByteCount + original.count)
         let opened = try await repository.open(context: LAContext())
         XCTAssertEqual(opened.model, restored)
         try await repository.erase()
         XCTAssertFalse(FileManager.default.fileExists(atPath: predecessor.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        let erasedByteCount = await repository.byteCount()
+        XCTAssertNil(erasedByteCount)
     }
 
     func testImportRotatesKeyAndHonorsSystemAuthenticationPolicy() async throws {

@@ -64,12 +64,14 @@ actor VaultRepository {
     }
 
     func byteCount() -> Int? {
-        let keys: Set<URLResourceKey> = [.fileSizeKey]
-        guard let activeSize = try? url.resourceValues(forKeys: keys).fileSize else { return nil }
-        let previous = previousVaultURL
-        guard FileManager.default.fileExists(atPath: previous.path) else { return activeSize }
-        guard let previousSize = try? previous.resourceValues(forKeys: keys).fileSize else { return nil }
-        return activeSize + previousSize
+        do {
+            guard let activeSize = try storedFileSize(at: url) else { return nil }
+            let previousSize = try storedFileSize(at: previousVaultURL) ?? 0
+            let (total, overflow) = activeSize.addingReportingOverflow(previousSize)
+            return overflow ? nil : total
+        } catch {
+            return nil
+        }
     }
 
     func create(model: VaultModel, password: String?) throws -> VaultSession {
@@ -204,7 +206,7 @@ actor VaultRepository {
     }
 
     private func preservePreviousVault() throws {
-        guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+        guard let size = try storedFileSize(at: url),
               size <= Self.maxStoredBytes else { throw VaultFailure.unreadable }
         let bytes = try Data(contentsOf: url)
         guard bytes.count <= Self.maxStoredBytes else { throw VaultFailure.unreadable }
@@ -263,12 +265,20 @@ actor VaultRepository {
     }
 
     private func hasStorageFile() throws -> Bool {
+        try storedFileSize(at: url) != nil
+    }
+
+    private func storedFileSize(at file: URL) throws -> Int? {
         do {
-            _ = try FileManager.default.attributesOfItem(atPath: url.path)
-            return true
+            // The repository replaces these paths atomically. URL resource values can retain the old size.
+            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+            guard let size = attributes[.size] as? Int, size >= 0 else {
+                throw VaultFailure.unreadable
+            }
+            return size
         } catch let error as NSError where error.domain == NSCocoaErrorDomain
             && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) {
-            return false
+            return nil
         } catch {
             throw VaultFailure.unreadable
         }
@@ -281,7 +291,7 @@ actor VaultRepository {
 
     private func read() throws -> File {
         do {
-            guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+            guard let size = try storedFileSize(at: url),
                   size <= Self.maxStoredBytes else { throw VaultFailure.unreadable }
             let data = try Data(contentsOf: url)
             guard data.count <= Self.maxStoredBytes else { throw VaultFailure.unreadable }
