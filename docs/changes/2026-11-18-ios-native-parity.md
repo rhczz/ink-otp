@@ -25,3 +25,5 @@ Apple 框架提供 AES-GCM、系统随机源和 PBKDF2。现有跨端格式另�
 模拟器以真实 Keychain 读取并删除本机专用密钥，仓储测试共 8 项通过。XCUITest 从接受隐私声明走到恢复口令建库和手动填写账号，发现键盘会遮住原来的底部保存按钮。保存与取消改用 iOS 导航栏原生操作。 [iOS Keychain 与界面试跑](https://github.com/rhczz/ink-otp/actions/runs/44451603299)
 
 最新公共契约在 macOS ARM64、Intel 及通用磁盘映像上通过，平台流程分别提交验收记录。 [macOS Actions](https://github.com/rhczz/ink-otp/actions/runs/44452716880)
+
+iOS 在模拟器上通过 8 项仓储测试和完整 XCUITest。界面覆盖隐私同意、设置恢复口令、键盘打开时保存、搜索筛选及重启后读取账号。公共测试的 24 项分为主任务 23 项与独立的 Android 导出互读 1 项，两项任务均通过。Swift 核心生产代码行覆盖率为 91.85%。该轮 Release 配置已编译出 ARM64 和 Intel 双架构应用，二进制核验命令的参数顺序已修正。 [iOS 验证记录](https://github.com/rhczz/ink-otp/actions/runs/44453825286)

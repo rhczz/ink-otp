@@ -63,7 +63,7 @@ jobs:
             ONLY_ACTIVE_ARCH=NO ARCHS='arm64 x86_64' CODE_SIGNING_ALLOWED=NO build
           build_app=ios/build/DerivedData/Build/Products/Release-iphonesimulator/InkOTP.app
           test -f "$build_app/PrivacyInfo.xcprivacy"
-          lipo -verify_arch arm64 x86_64 "$build_app/InkOTP"
+          lipo "$build_app/InkOTP" -verify_arch arm64 x86_64
           mkdir -p ios/build/packages
           ditto -c -k --keepParent "$build_app" ios/build/packages/InkOTP-iOS-Simulator.zip
       - name: Preserve verified simulator app
