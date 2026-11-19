@@ -1,7 +1,10 @@
 import AppKit
 import AVFoundation
 import CoreMedia
+import CoreVideo
+import Darwin
 import ImageIO
+import InkOTPCore
 import SwiftUI
 import Vision
 
@@ -21,19 +24,30 @@ enum QRFailure: LocalizedError, Sendable {
 }
 
 enum QRImage {
+    private static let maxFileBytes = 16 * 1_024 * 1_024
+    private static let maxSourceEdge = 32_768
+    private static let maxSourcePixels = 100_000_000
+    private static let maxDecodedEdge = 2_048
+
     static func read(_ url: URL) throws -> String {
         let didAccess = url.startAccessingSecurityScopedResource()
         defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard values.isRegularFile == true, let size = values.fileSize,
-              (1...(40 * 1024 * 1024)).contains(size),
-              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+
+        var encoded = try readBoundedImage(url)
+        defer { encoded.resetBytes(in: 0..<encoded.count) }
+        guard let source = CGImageSourceCreateWithData(encoded as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = properties[kCGImagePropertyPixelWidth as String] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight as String] as? Int,
+              (1...maxSourceEdge).contains(width), (1...maxSourceEdge).contains(height),
+              width * height <= maxSourcePixels,
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: 4_096,
+                kCGImageSourceThumbnailMaxPixelSize: maxDecodedEdge,
                 kCGImageSourceShouldCacheImmediately: true,
-              ] as CFDictionary) else { throw QRFailure.unreadable }
+              ] as CFDictionary),
+              image.width <= maxDecodedEdge, image.height <= maxDecodedEdge else { throw QRFailure.unreadable }
 
         let request = VNDetectBarcodesRequest()
         request.symbologies = [.qr]
@@ -44,10 +58,30 @@ enum QRImage {
         return code
     }
 
+    private static func readBoundedImage(_ url: URL) throws -> Data {
+        let fd = Darwin.open(url.path, O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW)
+        guard fd >= 0 else { throw QRFailure.unreadable }
+        let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? file.close() }
+        var info = stat()
+        guard Darwin.fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+              info.st_size > 0, info.st_size <= maxFileBytes else { throw QRFailure.unreadable }
+
+        var bytes = Data()
+        while let next = try file.read(upToCount: min(65_536, maxFileBytes + 1 - bytes.count)), !next.isEmpty {
+            bytes.append(next)
+            guard bytes.count <= maxFileBytes else { throw QRFailure.unreadable }
+        }
+        return bytes
+    }
+
     fileprivate static func isSetup(_ value: String) -> Bool {
-        guard value.utf8.count <= 65_536 else { return false }
-        let prefix = value.prefix(20).lowercased()
-        return prefix.hasPrefix("otpauth://") || prefix.hasPrefix("otpauth-migration://")
+        guard value.utf8.count <= 16_384 else { return false }
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = text.prefix(20).lowercased()
+        if prefix.hasPrefix("otpauth://") || prefix.hasPrefix("otpauth-migration://") { return true }
+        guard let data = try? OTP.base32Decode(text) else { return false }
+        return (1...255).contains(data.count)
     }
 }
 
@@ -193,7 +227,12 @@ private final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBuffe
 
         session.beginConfiguration()
         defer { session.commitConfiguration() }
-        if session.canSetSessionPreset(.high) { session.sessionPreset = .high }
+        for preset in [AVCaptureSession.Preset.hd1920x1080, .hd1280x720, .medium] {
+            if session.canSetSessionPreset(preset) {
+                session.sessionPreset = preset
+                break
+            }
+        }
         guard session.canAddInput(input) else { throw QRFailure.camera }
         session.addInput(input)
         guard session.canAddOutput(output) else {
@@ -208,6 +247,10 @@ private final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBuffe
                        from connection: AVCaptureConnection) {
         let now = ProcessInfo.processInfo.systemUptime
         guard finish != nil, now - lastFrame >= 0.2, let image = CMSampleBufferGetImageBuffer(buffer) else { return }
+        let width = CVPixelBufferGetWidth(image)
+        let height = CVPixelBufferGetHeight(image)
+        guard (1...4096).contains(width), (1...4096).contains(height),
+              width * height <= 4_194_304 else { return }
         lastFrame = now
         let request = VNDetectBarcodesRequest()
         request.symbologies = [.qr]

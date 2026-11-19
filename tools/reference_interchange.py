@@ -180,7 +180,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, default=Path("spec/fixtures/interoperability"))
     parser.add_argument("--exports", type=Path)
-    parser.add_argument("--export-prefix", choices=["kotlin", "swift", "ios"], default="kotlin")
+    parser.add_argument("--export-prefix", "--prefix", choices=["kotlin", "swift", "ios"], default="kotlin")
     args = parser.parse_args()
     verify_fixtures(args.fixtures)
     if args.exports:

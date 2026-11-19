@@ -20,7 +20,10 @@ Android 有原生客户端和既有协议夹具。仓库尚无 macOS 应用、Ma
 
 ## 实际结果
 
-GitHub Actions 的早期运行已在 Apple Silicon 与 Intel 上通过 Swift 公共协议测试；打包架构检查的 `lipo` 参数顺序已修正，最终 DMG 验证运行中。Android 原有门禁和新增公共用例已在 [早期 Android CI](https://github.com/rhczz/ink-otp/actions/runs/44446401730) 通过。iOS 独立分支接入与跑测未验证。没有在本机安装工具链、构建、打包或执行自动测试。
+- [macOS GitHub Actions](https://github.com/rhczz/ink-otp/actions/runs/44449043570) 在 Apple Silicon 与 Intel 分别通过公共协议、独立 Python 验证六种导出格式及 Release 构建。Swift 内核两架构均记录行覆盖率 89.3%（1,535 / 1,718），该工具链未报告 Swift 分支覆盖率。
+- 同一次运行在沙箱 App 中验证了设备钥匙串、恢复口令、错误口令拒绝、并发文件锁与救援副本。Actions 还挂载并验证通用 DMG、双架构 Mach-O、签名和权限。
+- Android 原有门禁和新增公共用例已在 [Android CI](https://github.com/rhczz/ink-otp/actions/runs/44446401730) 通过。iOS 的共享向量已在独立分支接入，整套新增公共合约的结果未验证。
+- 公测采用临时签名，版本标签为 `macos-v0.1.0-beta.1`。正式签名与 Apple 公证待仓库配置。没有在本机安装工具链、构建、打包或执行自动测试。
 
 ## 真机待测
 
