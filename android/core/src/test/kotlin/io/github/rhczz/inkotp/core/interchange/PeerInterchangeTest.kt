@@ -16,19 +16,22 @@ import java.io.File
 class PeerInterchangeTest {
     @Test
     fun productionInterchangeAgreement() {
-        val expected = publicExample()
+        val expected = PublicInterchangeContract.publicExample()
         val peerPath = System.getenv("INKOTP_TEST_PEER_EXPORTS")
         if (peerPath == null) {
             check(System.getenv("INKOTP_TEST_PEER_REQUIRED") != "1") { "macOS exports are required" }
-            writeAndroidExports(expected)
+            PublicInterchangeContract.writeAndroidExports(expected)
         } else {
-            readMacOSExports(File(peerPath), expected)
+            PublicInterchangeContract.assertSwiftExports(File(peerPath), expected, platform = "macOS")
         }
     }
+}
 
-    private fun publicExample(): VaultModel {
-        val baseline = requireNotNull(javaClass.getResourceAsStream("/fixtures/backup-v1.expected.json"))
-            .use { VaultJson.decode(it.readBytes()) }
+internal object PublicInterchangeContract {
+    fun publicExample(): VaultModel {
+        val baseline = checkNotNull(javaClass.getResourceAsStream("/fixtures/backup-v1.expected.json")) {
+            "Missing public vault fixture"
+        }.use { VaultJson.decode(it.readBytes()) }
         val counter = TestVault.item(
             id = "00000000-0000-4000-8000-000000000003",
             issuer = "Public Counter",
@@ -48,7 +51,7 @@ class PeerInterchangeTest {
         )
     }
 
-    private fun writeAndroidExports(expected: VaultModel) {
+    fun writeAndroidExports(expected: VaultModel) {
         val directory = File("build/interoperability")
         check(directory.isDirectory || directory.mkdirs()) { "Android export directory is unavailable" }
         File(directory, "expected.json").writeBytes(VaultJson.encode(expected))
@@ -61,22 +64,22 @@ class PeerInterchangeTest {
         }
     }
 
-    private fun readMacOSExports(directory: File, expected: VaultModel) {
+    fun assertSwiftExports(directory: File, expected: VaultModel, platform: String) {
         val filenames = InterchangeFormat.entries.associateWith { filename("swift", it) }
-        val entries = checkNotNull(directory.list()) { "macOS export directory is unavailable" }
-        assertEquals(filenames.values.toSet() + "expected.json", entries.toSet(), "macOS export inventory")
+        val entries = checkNotNull(directory.list()) { "$platform export directory is unavailable" }
+        assertEquals(filenames.values.toSet() + "expected.json", entries.toSet(), "$platform export inventory")
         val claimedInput = VaultJson.decode(File(directory, "expected.json").readBytes())
-        assertTrue(claimedInput == expected, "macOS producer input must match the independent public example")
+        assertTrue(claimedInput == expected, "$platform producer input must match the independent public example")
         for ((format, filename) in filenames) {
             assertMatches(format, File(directory, filename).readBytes(), expected)
         }
     }
 
     private fun assertMatches(format: InterchangeFormat, bytes: ByteArray, expected: VaultModel) {
-        assertEquals(format, InterchangeCodec.detect(bytes))
-        val password = TestVault.PASSWORD.toCharArray().takeIf { format.requiresPassword }
+        assertEquals(format, InterchangeCodec.detect(bytes), format.name)
+        val password = if (format.requiresPassword) TestVault.PASSWORD.toCharArray() else null
         val decoded = InterchangeCodec.decode(bytes, password)
-        assertEquals(format, decoded.format)
+        assertEquals(format, decoded.format, format.name)
         if (format == InterchangeFormat.INKOTP_2FAB) {
             assertTrue(decoded.model == expected, "${format.name}: complete vault JSON changed")
         } else {

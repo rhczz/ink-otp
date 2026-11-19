@@ -141,6 +141,7 @@ final class DesktopUpgradeTests: XCTestCase {
         let save = element("account-save", in: app)
         let qrAccount = account(app, named: "me@example.com")
 
+        @MainActor
         func assertOriginalVault() {
             expectAccountCount(initialCount, in: app)
             XCTAssertTrue(account(app, named: legacyAccount).exists)

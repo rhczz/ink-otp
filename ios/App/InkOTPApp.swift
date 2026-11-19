@@ -19,9 +19,6 @@ struct InkOTPApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(state: state)
-                .background {
-                    CurtainView().frame(width: 0, height: 0)
-                }
                 .task { await state.start() }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
                     state.updateClockDrift()

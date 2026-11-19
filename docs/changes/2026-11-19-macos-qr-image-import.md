@@ -16,6 +16,6 @@ GitHub 托管 Mac 从已有公共 `otpauth` 用例生成测试图片。桌面 XC
 - 在系统面板按 Escape，或在已经识别账号的预览里点击取消，原有账号和总数保持一致。
 - 空白图提示未识别到验证码二维码，双码图提示只能选择一个账号。两次操作都保留原库，也没有写入图片里的任一账号。
 
-[测试证据](https://github.com/rhczz/ink-otp/actions/runs/44472753339/artifacts/14504669215)包含单独的二维码 XCTest 结果和完整日志。这项测试也进入了[常规打包流程](https://github.com/rhczz/ink-otp/pull/14/checks)。本次只增加验收工具和记录，公开下载继续使用已验证的 Beta 2。打包应用未插桩，桌面 UI 的源码行和分支覆盖率未验证。内核覆盖率见[跨端验收记录](2026-11-19-macos-cross-platform.md)。
+[测试证据](https://github.com/rhczz/ink-otp/actions/runs/44472753339/artifacts/14504669215)包含单独的二维码 XCTest 结果和完整日志。[macOS 15 的常规打包流程](https://github.com/rhczz/ink-otp/actions/runs/44472694751)也通过全部七项桌面测试，使用同一套用例验收从源码构建的通用 DMG。本次只增加验收工具和记录，公开下载继续使用已验证的 Beta 2。打包应用未插桩，桌面 UI 的源码行和分支覆盖率未验证。内核覆盖率见[跨端验收记录](2026-11-19-macos-cross-platform.md)。
 
 实体摄像头扫码、Touch ID 与登录密码授权、VoiceOver 听感及首次下载后的 Gatekeeper 体验仍需在真实 Mac 上验证。复核时仓库未配置用于正式发布的 Apple 签名、公证凭据或自托管 Mac 运行器。每次进入时的系统身份验证仍受 [EX-008](../exceptions.md) 限制。

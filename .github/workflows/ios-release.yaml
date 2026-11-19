@@ -80,6 +80,11 @@ jobs:
         with:
           name: inkotp-ios-simulator
           path: distribution
+      - if: needs.sign.result == 'skipped'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: inkotp-ios-device-unsigned
+          path: distribution
       - if: needs.sign.result == 'success'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -100,10 +105,13 @@ jobs:
           assets=(InkOTP-iOS-Simulator.zip)
           if [[ -f InkOTP-iOS.ipa ]]; then
             assets+=(InkOTP-iOS.ipa)
-            printf '%s\n' 'The IPA is Apple-signed for the devices registered in the Ad Hoc provisioning profile.' > release.md
+            printf '%s\n' 'InkOTP-iOS.ipa 使用 Apple Ad Hoc 分发签名，可安装到描述文件中登记的 iPhone 或 iPad。' > release.md
           else
-            printf '%s\n' 'Simulator preview. It runs in Xcode Simulator and has no iPhone or iPad installer.' > release.md
+            test -f InkOTP-iOS-unsigned.ipa
+            assets+=(InkOTP-iOS-unsigned.ipa)
+            printf '%s\n' 'InkOTP-iOS-unsigned.ipa 是为 iPhone 和 iPad 归档的未签名应用。安装前需要 Apple 签名和覆盖目标设备的描述文件。' > release.md
           fi
-          printf '\nCross-platform contract checks and XCTest passed in [GitHub Actions](%s/%s/actions/runs/%s).\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release.md
+          printf '\n%s\n' 'InkOTP-iOS-Simulator.zip 适用于 Xcode 模拟器。CI 已用这个 ZIP 在 iPad 模拟器验证升级后读取原账号，以及卸载重装后重新建库。校验文件 SHA256SUMS-iOS 包含两个下载件的 SHA-256。' >> release.md
+          printf '\n公共协议测试、iPhone XCTest 和 iPad 安装测试详见 [GitHub Actions 验收记录](%s/%s/actions/runs/%s)。\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release.md
           sha256sum "${assets[@]}" > SHA256SUMS-iOS
           gh release create "$IOS_TAG" "${assets[@]}" SHA256SUMS-iOS --repo "$GITHUB_REPOSITORY" "${args[@]}" --notes-file release.md

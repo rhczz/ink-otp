@@ -819,6 +819,8 @@ TOTP(secret, unixSeconds, digits=6, period=30, hashAlg=SHA1):
 
 > ⚠️ **本节在 v1.0 不实施**。保留目的：① 保证库/备份格式不绑定 Android；② Phase 2 启动时直接有规格可依。Android 首发不需要触碰任何 iOS 代码。
 > 2026-11-18 启动 iOS 原生实现。与已发布 Android v0.5.3 的行为对照、平台差异及验收以 [iOS 互通与验收规格](../../spec/ios-parity.md) 为准。本章早期 Phase 2 描述保留为历史设计背景。
+>
+> 2026-11-19 补充 iPhoneOS 归档、已发布版本覆盖安装，以及剪贴板、离线图像扫码与诊断的验收方式。[变更记录](../changes/2026-11-19-ios-device-verification.md)
 
 ### 9.1 能力映射
 

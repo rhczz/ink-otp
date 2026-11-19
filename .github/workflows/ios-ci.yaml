@@ -8,6 +8,9 @@ permissions:
   contents: read
 
 jobs:
+  upgrade:
+    uses: ./.github/workflows/ios-upgrade.yaml
+
   verify:
     runs-on: macos-15
     timeout-minutes: 35
@@ -27,6 +30,16 @@ jobs:
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate --spec ios/project.yml --project ios
+      - name: Archive Release for iPhone and iPad
+        run: bash ios/Scripts/package-device.sh
+      - name: Verify device package after extraction
+        run: bash ios/Scripts/verify-device.sh ios/build/packages/InkOTP-iOS-unsigned.ipa
+      - name: Preserve verified unsigned device IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: inkotp-ios-device-unsigned
+          path: ios/build/packages/InkOTP-iOS-unsigned.ipa
+          if-no-files-found: error
       - name: Verify iOS application and UI with XCTest
         id: simulator
         run: |
@@ -56,22 +69,15 @@ jobs:
             xcrun llvm-cov report "$core_binary" -instr-profile="$core_profile" -ignore-filename-regex='(/Tests/|PackageTests[.]derived/)' > ios/build/reports/core-coverage.txt
             cat ios/build/reports/core-coverage.txt
           fi
-      - name: Build and package the Release simulator app
+      - name: Summarize and check simulator evidence
+        working-directory: ios/build/reports
         run: |
-          xcodebuild -project ios/InkOTP.xcodeproj -scheme InkOTP -configuration Release \
-            -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/build/DerivedData \
-            ONLY_ACTIVE_ARCH=NO ARCHS='arm64 x86_64' CODE_SIGNING_ALLOWED=NO build
-          build_app=ios/build/DerivedData/Build/Products/Release-iphonesimulator/InkOTP.app
-          test -f "$build_app/PrivacyInfo.xcprivacy"
-          lipo "$build_app/InkOTP" -verify_arch arm64 x86_64
-          mkdir -p ios/build/packages
-          ditto -c -k --keepParent "$build_app" ios/build/packages/InkOTP-iOS-Simulator.zip
-      - name: Preserve verified simulator app
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: inkotp-ios-simulator
-          path: ios/build/packages/InkOTP-iOS-Simulator.zip
-          if-no-files-found: error
+          jq -e '.totalTestCount > 0 and .passedTests == .totalTestCount and .result == "Passed"' simulator-tests.json >/dev/null
+          {
+            jq -r '.devicesAndConfigurations[] | "\(.device.deviceName) · iOS \(.device.osVersion) · \(.passedTests) tests passed"' simulator-tests.json
+            jq -er '.targets[] | select(.name == "InkOTP.app" and .executableLines > 0) | "App line coverage: \(.coveredLines)/\(.executableLines) (\(.lineCoverage * 10000 | round / 100)%)"' simulator-line-coverage.json
+            awk '$1 == "TOTAL" {print "Core line coverage: " $10; print "Core branch coverage: " $13; found=1} END {if (!found) exit 1}' core-coverage.txt
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Preserve generated public contract exports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
