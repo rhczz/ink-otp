@@ -29,4 +29,8 @@
 
 [早期升级测试](https://github.com/rhczz/ink-otp/actions/runs/44458961485)发现窗口已遮住时，原生输入框仍可从辅助功能树读取。修复将敏感控件从失焦窗口移除，并将草稿状态保留在编辑器里。最终回归同时验证了隐藏和恢复。
 
+同一份应用源码还在 [macOS 26 补充验收](https://github.com/rhczz/ink-otp/actions/runs/44467199287)通过全部六项桌面测试。Apple Silicon 运行器为 macOS 26.7.2、Xcode 26.6，Intel 构建继续使用 macOS 15。运行器也完成了真实备份互读、通用 DMG 打包和挂载验证。
+
+[Beta 2 标签发布流程](https://github.com/rhczz/ink-otp/actions/runs/44468564960)会对合入 master 的版本重新执行双架构构建、备份互读与桌面升级。安装包和对应 SHA-256 文件使用同一个[公开 Release](https://github.com/rhczz/ink-otp/releases/tag/macos-v0.1.0-beta.2)。
+
 两种架构的内核覆盖率见[跨端记录](2026-11-19-macos-cross-platform.md)。已打包应用的桌面测试没有插桩，未测其源码行及分支覆盖率。真实 Mac 的 Touch ID、登录密码授权与取消、相机扫码、VoiceOver 听感和 Gatekeeper 首次打开均未验证。临时签名公测版的每次进入身份验证限制见 [EX-008](../exceptions.md)。
