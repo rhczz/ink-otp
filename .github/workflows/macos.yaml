@@ -345,10 +345,18 @@ jobs:
 
           - [桌面安装及从 Beta 1 升级的说明](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/macos/README.md)
           - [公共测试集与备份格式](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/spec/conformance.md)
-          - [此版本的桌面行为和验证记录](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/docs/changes/2026-11-19-macos-desktop-lifecycle.md)
+          - [桌面行为与验收范围](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/spec/macos-parity.md)
           - [源码提交](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA)
           - [本次流程](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
           NOTES
+          if [[ "$INKOTP_VERSION" == '0.1.0-beta.2' ]]; then
+            cat >> notes.md <<NOTES
+
+          此版本修复普通自动锁定返回、失焦时的窗口遮挡和临时签名升级后的设备绑定。手动添加现在可预览完整的设置链接。隐藏验证码和 HOTP 的行为与 Android 0.5.3 对齐。GitHub Actions 使用真实安装包覆盖升级，并检查 Android 与 Mac 的六种备份互读。
+
+          [本次修复与验证结果](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/docs/changes/2026-11-19-macos-desktop-lifecycle.md)
+          NOTES
+          fi
           flags=()
           if [[ "$INKOTP_BETA" == true ]]; then flags+=(--prerelease); fi
           gh release create "$GITHUB_REF_NAME" "$dmg" SHA256SUMS.txt --verify-tag --latest=false \

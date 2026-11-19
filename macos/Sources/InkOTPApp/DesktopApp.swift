@@ -63,7 +63,6 @@ struct InkOTPDesktop: App {
 
         Settings {
             DesktopSettings(store: store, commands: commands)
-                .modifier(DesktopPrivacyCurtain())
                 .environmentObject(activity)
         }
     }
@@ -104,31 +103,27 @@ struct DesktopPrivacyCurtain: ViewModifier {
     @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
-        content
-            // Preserve the view's identity and draft values while the app is inactive.
-            .opacity(activity.isActive ? 1 : 0)
-            .allowsHitTesting(activity.isActive)
-            .accessibilityHidden(!activity.isActive)
-            .overlay {
-                if !activity.isActive {
-                    let ink = QuietInk(dark: scheme == .dark)
-                    Rectangle()
-                        .fill(ink.background)
-                        .overlay {
-                            Label(tr("InkOTP is inactive", "InkOTP 已切换至后台"), systemImage: "lock.shield")
-                                .foregroundStyle(ink.secondary)
-                                .accessibilityIdentifier("desktop-privacy-curtain")
-                        }
-                        .transition(.identity)
-                        .allowsHitTesting(false)
-                }
+        // Keep this container and its presenter alive. Native fields must be
+        // removed from the host while inactive, including their AX elements.
+        ZStack {
+            if activity.isActive {
+                content
+            } else {
+                let ink = QuietInk(dark: scheme == .dark)
+                Label(tr("InkOTP is inactive", "InkOTP 已切换至后台"), systemImage: "lock.shield")
+                    .foregroundStyle(ink.secondary)
+                    .accessibilityIdentifier("desktop-privacy-curtain")
+                    .frame(minWidth: 400, minHeight: 164)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(ink.background)
             }
-            .transaction { transaction in
-                if !activity.isActive {
-                    transaction.disablesAnimations = true
-                    transaction.animation = nil
-                }
+        }
+        .transaction { transaction in
+            if !activity.isActive {
+                transaction.disablesAnimations = true
+                transaction.animation = nil
             }
+        }
     }
 }
 
@@ -240,7 +235,6 @@ struct DesktopVaultView: View {
         .modifier(DesktopPrivacyCurtain())
         .sheet(item: $sheet) { current in
             sheetView(current.content, sheetID: current.id)
-                .modifier(DesktopPrivacyCurtain())
                 .environmentObject(activity)
         }
         .confirmationDialog(tr("Delete account?", "删除账号？"), isPresented: Binding(

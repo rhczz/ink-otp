@@ -11,6 +11,7 @@ targets:
     platform: macOS
     sources:
       - DesktopUpgradeTests.swift
+      - DesktopDiagnosticsTests.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

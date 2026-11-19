@@ -11,12 +11,15 @@ struct DesktopSettings: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage("export.last-success") private var lastBackup = 0.0
     @State private var confirmingWithdrawal = false
+    @State private var selectedTab = SettingsTab.security
+
+    private enum SettingsTab: Hashable { case security, backups, help }
 
     var body: some View {
-        TabView {
-            security.tabItem { Label(tr("Security", "安全"), systemImage: "lock.shield") }
-            backups.tabItem { Label(tr("Backup", "备份"), systemImage: "externaldrive") }
-            help.tabItem { Label(tr("Help", "帮助"), systemImage: "questionmark.circle") }
+        TabView(selection: $selectedTab) {
+            security.tabItem { Label(tr("Security", "安全"), systemImage: "lock.shield") }.tag(SettingsTab.security)
+            backups.tabItem { Label(tr("Backup", "备份"), systemImage: "externaldrive") }.tag(SettingsTab.backups)
+            help.tabItem { Label(tr("Help", "帮助"), systemImage: "questionmark.circle") }.tag(SettingsTab.help)
         }
         .padding(18)
         .frame(width: 530, height: 400)
@@ -33,6 +36,7 @@ struct DesktopSettings: View {
                 DesktopNotice(message: errorMessage) { store.errorMessage = nil }.padding(8)
             }
         }
+        .modifier(DesktopPrivacyCurtain())
     }
 
     private var security: some View {
@@ -405,6 +409,7 @@ struct InformationDialog<Content: View>: View {
         }
         .padding(24)
         .frame(width: width)
+        .modifier(DesktopPrivacyCurtain())
     }
 }
 

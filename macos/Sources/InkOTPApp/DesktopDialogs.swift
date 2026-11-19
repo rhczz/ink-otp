@@ -42,6 +42,7 @@ struct DesktopDialog<Content: View, Actions: View>: View {
         }
         .padding(24)
         .frame(width: 540)
+        .modifier(DesktopPrivacyCurtain())
         .interactiveDismissDisabled(store.busy)
     }
 }

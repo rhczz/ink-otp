@@ -60,12 +60,18 @@ stage_bundle() {
     staged_version="$version"
 }
 
-run_ui_test() {
-    local method="$1" bundle="$2" status=0
-    local summary="${bundle%.xcresult}.summary.json"
+run_ui_tests() {
+    local bundle="$1" status=0
+    shift
+    local summary="${bundle%.xcresult}.summary.json" count="$#"
+    local -a selectors=()
+    local test_path
+    for test_path in "$@"; do
+        selectors+=("-only-testing:InkOTPDesktopUITests/$test_path")
+    done
     xcodebuild test -project "$scratch/UITests/InkOTPDesktopUI.xcodeproj" -scheme InkOTPDesktopUI \
         -destination 'platform=macOS' -derivedDataPath "$scratch/build" -parallel-testing-enabled NO \
-        -only-testing:"InkOTPDesktopUITests/DesktopUpgradeTests/$method" -resultBundlePath "$bundle" || status=$?
+        "${selectors[@]}" -resultBundlePath "$bundle" || status=$?
     if [[ "$status" != 0 ]]; then
         if [[ -d "$bundle" ]]; then
             xcrun xcresulttool get test-results summary --path "$bundle" > "$summary" || true
@@ -74,23 +80,28 @@ run_ui_test() {
         fi
         return "$status"
     fi
-    # Require evidence that the selected test ran and passed. An empty selection cannot pass.
+    # Require evidence that every selected test ran and passed. An empty or partial selection cannot pass.
     xcrun xcresulttool get test-results summary --path "$bundle" > "$summary"
-    python3 - "$summary" <<'PY'
+    python3 - "$summary" "$count" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 report = json.loads(Path(sys.argv[1]).read_text())
-if report.get("totalTestCount") != 1 or report.get("passedTests") != 1:
-    raise SystemExit("Expected one passed desktop XCTest in the result bundle")
+expected = int(sys.argv[2])
+if report.get("totalTestCount") != expected or report.get("passedTests") != expected:
+    raise SystemExit(f"Expected {expected} passed desktop XCTests in the result bundle")
 PY
 }
 
 stage_bundle "$baseline"
 [[ "$staged_version" == 0.1.0-beta.1 ]]
-run_ui_test testPublishedBetaCreatesVaultAndAccount "${result%.xcresult}-beta1.xcresult"
+run_ui_tests "${result%.xcresult}-beta1.xcresult" DesktopUpgradeTests/testPublishedBetaCreatesVaultAndAccount
 
 stage_bundle "$candidate"
 [[ "$staged_version" != 0.1.0-beta.1 ]]
-run_ui_test testCandidatePreservesAccountAndDesktopBehavior "$result"
+run_ui_tests "${result%.xcresult}-seed.xcresult" DesktopUpgradeTests/testCandidateRecoversAndSeedsAdvancedAccount
+run_ui_tests "$result" \
+    DesktopUpgradeTests/testCandidateHiddenCopyAndImportedHOTP \
+    DesktopUpgradeTests/testCandidatePrivacyCurtainAndLockLifecycle \
+    DesktopDiagnosticsTests/testCandidateDiagnosticsAndOfflinePrivacy

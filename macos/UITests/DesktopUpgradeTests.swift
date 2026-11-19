@@ -38,25 +38,51 @@ final class DesktopUpgradeTests: XCTestCase {
     }
 
     @MainActor
-    func testCandidatePreservesAccountAndDesktopBehavior() throws {
+    func testCandidateRecoversAndSeedsAdvancedAccount() throws {
         continueAfterFailure = false
         let app = try launchInkOTP()
         defer { app.terminate() }
         // A replacement can need recovery when the login Keychain denies the old identity.
         // The recovery password is entered through InkOTP's normal visible form.
-        let previousAccount = account(app, named: legacyAccount)
-        if !previousAccount.waitForExistence(timeout: timeout) {
+        let unlocked = element("vault-lock", in: app)
+        if !unlocked.waitForExistence(timeout: timeout) {
             click(element("vault-recovery-open", in: app))
             type(recoveryPassword, into: element("vault-recovery-password", in: app))
             click(element("vault-recovery-submit", in: app))
         }
-        XCTAssertTrue(previousAccount.waitForExistence(timeout: timeout), "The Beta 1 account survived replacement")
+        guard unlocked.waitForExistence(timeout: timeout) else {
+            XCTFail("The vault stayed locked after recovery. Accessibility tree:\n\(app.debugDescription)")
+            return
+        }
+        let previousAccount = account(app, named: legacyAccount)
+        guard previousAccount.waitForExistence(timeout: timeout) else {
+            XCTFail("The vault reopened, but the Beta 1 account was not found. Accessibility tree:\n\(app.debugDescription)")
+            return
+        }
 
         try addURIAccount(in: app)
-        let fixture = account(app, named: uriAccount)
-        verifyPrivacyCurtainPreservesDraft(in: app, savedAccount: fixture)
+    }
+
+    @MainActor
+    func testCandidateHiddenCopyAndImportedHOTP() throws {
+        continueAfterFailure = false
+        let app = try launchInkOTP()
+        defer { app.terminate() }
+        XCTAssertTrue(element("vault-lock", in: app).waitForExistence(timeout: timeout))
+        setLockTimeout("After 30 Seconds", in: app)
         verifyHiddenCopy(in: app)
         try verifyImportedHOTP(in: app)
+    }
+
+    @MainActor
+    func testCandidatePrivacyCurtainAndLockLifecycle() throws {
+        continueAfterFailure = false
+        let app = try launchInkOTP()
+        defer { app.terminate() }
+        XCTAssertTrue(element("vault-lock", in: app).waitForExistence(timeout: timeout))
+        let fixture = account(app, named: uriAccount)
+        let previousAccount = account(app, named: legacyAccount)
+        verifyPrivacyCurtainPreservesDraft(in: app, savedAccount: fixture)
         setLockTimeout("Immediately", in: app)
         app.typeKey("n", modifierFlags: .command)
         let openEditor = element("account-setup-input", in: app)
@@ -233,8 +259,7 @@ final class DesktopUpgradeTests: XCTestCase {
 
     @MainActor
     private func account(_ app: XCUIApplication, named name: String) -> XCUIElement {
-        app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@ OR value == %@", name, name)).firstMatch
+        app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", name, name)).firstMatch
     }
 
     @MainActor

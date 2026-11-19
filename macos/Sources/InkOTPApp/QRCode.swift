@@ -103,7 +103,7 @@ struct CameraSheet: View {
             if showingPrivacy {
                 PrivacySheet(store: store, close: returnToCamera, allowConsent: false)
             } else {
-                scanner
+                scanner.modifier(DesktopPrivacyCurtain())
             }
         }
         .onAppear(perform: refreshAuthorization)
