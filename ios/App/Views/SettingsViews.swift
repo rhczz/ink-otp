@@ -275,7 +275,8 @@ struct AboutView: View {
         InkPage {
             InkHeading(title: "InkOTP", message: "Offline two-factor authenticator", symbol: "shield")
             InkCard {
-                let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+                let version = Bundle.main.object(forInfoDictionaryKey: "InkOTPReleaseVersion") as? String
+                    ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
                 LabeledContent("Version", value: version)
                 LabeledContent("License", value: "GPL-3.0")
                 NavigationLink("Read the license") { LicenseView(resource: "InkOTP-LICENSE", title: "GPL-3.0") }

@@ -11,8 +11,9 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.5.3"
-    CURRENT_PROJECT_VERSION: "2"
+    MARKETING_VERSION: "0.5.4"
+    CURRENT_PROJECT_VERSION: "3"
+    INKOTP_RELEASE_VERSION: "$(MARKETING_VERSION)"
 targets:
   InkOTP:
     type: application

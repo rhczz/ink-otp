@@ -2,6 +2,11 @@ name: iOS verification
 
 on:
   workflow_call:
+    inputs:
+      release-version:
+        description: Full version from the shared release tag
+        type: string
+        default: ''
   workflow_dispatch:
 
 permissions:
@@ -10,6 +15,8 @@ permissions:
 jobs:
   upgrade:
     uses: ./.github/workflows/ios-upgrade.yaml
+    with:
+      release-version: ${{ inputs.release-version }}
 
   verify:
     runs-on: macos-15
@@ -31,6 +38,8 @@ jobs:
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate --spec ios/project.yml --project ios
       - name: Archive Release for iPhone and iPad
+        env:
+          INKOTP_RELEASE_VERSION: ${{ inputs.release-version }}
         run: bash ios/Scripts/package-device.sh
       - name: Verify device package after extraction
         run: bash ios/Scripts/verify-device.sh ios/build/packages/InkOTP-iOS-unsigned.ipa

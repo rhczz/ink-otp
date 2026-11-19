@@ -10,6 +10,7 @@ macOS 接入与公共验收范围见 [桌面版规格](macos-parity.md)。
 | `otpauth-cases.json` | `otpauth://` 解析器的 40 个一致性用例与错误码 |
 | `backup-format.md` | 可移植加密备份 `.2fab` v1（已冻结） |
 | `vault-format.md` | 设备本地加密库 `vault.bin` v1（已冻结） |
+| [release.md](release.md) | 三端共用版本、GitHub Release 资产与签名要求 |
 | `android-interaction.md` | Android 系统认证、无闪屏操作反馈、验证码到期及相册授权回归边界 |
 | `fixtures/` | 固定参数、可复现的 `.2fab` 测试夹具 |
 

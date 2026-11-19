@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import plistlib
 from pathlib import Path
 import sys
 import tempfile
@@ -65,6 +66,13 @@ class ReleaseArtifactsTest(unittest.TestCase):
                                      {"v0.5.0": {"version_name": "0.5.0", "version_code": 3}}, [])
         with self.assertRaises(release.ReleaseError):
             release.validate_history(self.version, "v0.4.0-beta.1", previous, [{"tag_name": "deleted-tag"}])
+
+    def test_existing_platform_releases_are_accepted_only_with_their_historical_tags(self):
+        legacy_tags = {"ios-v0.5.3-preview.2", "macos-v0.1.0-beta.2"}
+        records = [{"tag_name": tag} for tag in legacy_tags]
+        release.validate_history(self.version, "v0.4.0-beta.1", {}, records, legacy_tags)
+        with self.assertRaisesRegex(release.ReleaseError, "cannot be matched"):
+            release.validate_history(self.version, "v0.4.0-beta.1", {}, records, set())
 
     def test_permission_allowlist_rejects_network_storage_and_unknown_permissions(self):
         allowed = ["android.permission.CAMERA", "io.github.rhczz.inkotp.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"]
@@ -169,16 +177,91 @@ class ReleaseArtifactsTest(unittest.TestCase):
                 commands.assert_not_called()
 
     def test_prerelease_command_uses_verified_tag_notes_file_and_exact_assets(self):
-        args = release.publish_command("v0.4.0-beta.1", self.version, self.root, "rhczz/ink-otp")
+        names = release.payload_names(self.version) + [
+            "InkOTP-0.4.0-beta.1-macOS-universal.dmg", "InkOTP-iOS-Simulator.zip", "InkOTP-iOS-unsigned.ipa"
+        ]
+        args = release.publish_command("v0.4.0-beta.1", self.version, self.root, "rhczz/ink-otp", names)
         self.assertIn("--verify-tag", args)
         self.assertIn("--prerelease", args)
         self.assertIn("--notes-file", args)
-        self.assertEqual({"InkOTP-0.4.0-beta.1.apk", "SHA256SUMS", "build-info.json", "release-notes.md"},
+        self.assertIn("--latest=false", args)
+        self.assertEqual(set(names + ["SHA256SUMS"]),
                          {Path(arg).name for arg in args if arg.startswith(str(self.root))})
         stable = release.publish_command("v1.0.0", {"version_name": "1.0.0", "version_code": 20},
-                                         self.root, "rhczz/ink-otp")
+                                         self.root, "rhczz/ink-otp", names)
         self.assertNotIn("--prerelease", stable)
         self.assertNotIn("--clobber", args)
+
+    def platform_artifacts(self, number, *, signed=False):
+        output, android, macos, ios = [self.root / name for name in ["output", "android", "macos", "ios"]]
+        for directory in [output, android, macos, ios]:
+            directory.mkdir()
+        for name in release.payload_names({"version_name": number}):
+            (android / name).write_text("Android artifact fixture\n")
+        dmg = macos / f"InkOTP-{number}-macOS-universal.dmg"
+        dmg.write_bytes(b"DMG fixture")
+        (macos / "SHA256SUMS.txt").write_text(f"{release.sha256(dmg)}  {dmg.name}\n")
+        (macos / "signature.txt").write_text("developer-id-notarized\n" if signed else "adhoc\n")
+        metadata = {
+            "CFBundleIdentifier": "io.github.rhczz.inkotp",
+            "CFBundleShortVersionString": number.split("-", 1)[0],
+            "InkOTPReleaseVersion": number,
+        }
+        ipa = "InkOTP-iOS.ipa" if signed else "InkOTP-iOS-unsigned.ipa"
+        for filename, plist in [
+            ("InkOTP-iOS-Simulator.zip", "InkOTP.app/Info.plist"),
+            (ipa, "Payload/InkOTP.app/Info.plist"),
+        ]:
+            with zipfile.ZipFile(ios / filename, "w") as archive:
+                archive.writestr(plist, plistlib.dumps(metadata, fmt=plistlib.FMT_BINARY))
+        return output, android, macos, ios
+
+    def test_one_manifest_covers_all_platforms_and_notes_describe_unsigned_ios(self):
+        directories = self.platform_artifacts(self.version["version_name"])
+        with patch.object(release, "build_context", return_value={
+            "commit": "b" * 40, "repository": "rhczz/ink-otp", "run_id": "5",
+        }):
+            names = release.assemble_distribution(*directories, self.version, ios_signed=False)
+        output = directories[0]
+        self.assertEqual(6, len(names))
+        self.assertIn("InkOTP-iOS-unsigned.ipa", names)
+        self.assertIn("未签名", (output / "release-notes.md").read_text())
+        release.verify_checksums(output, names)
+
+    def test_unified_bundle_rejects_wrong_ios_version_and_tampered_dmg(self):
+        output, android, macos, ios = self.platform_artifacts(self.version["version_name"])
+        dmg = next(macos.glob("*.dmg"))
+        dmg.write_bytes(b"tampered")
+        with self.assertRaisesRegex(release.ReleaseError, "checksum mismatch"):
+            release.assemble_distribution(output, android, macos, ios, self.version, ios_signed=False)
+        dmg.write_bytes(b"DMG fixture")
+        with zipfile.ZipFile(ios / "InkOTP-iOS-unsigned.ipa", "w") as archive:
+            archive.writestr("Payload/InkOTP.app/Info.plist", plistlib.dumps({
+                "CFBundleIdentifier": "io.github.rhczz.inkotp",
+                "CFBundleShortVersionString": "0.4.0",
+                "InkOTPReleaseVersion": "0.4.0-beta.2",
+            }))
+        with self.assertRaisesRegex(release.ReleaseError, "shared version mismatch"):
+            release.assemble_distribution(output, android, macos, ios, self.version, ios_signed=False)
+        (ios / "InkOTP-iOS-unsigned.ipa").unlink()
+        with self.assertRaisesRegex(release.ReleaseError, "missing files"):
+            release.assemble_distribution(output, android, macos, ios, self.version, ios_signed=False)
+        self.assertEqual([], list(output.iterdir()))
+
+    def test_stable_bundle_requires_macos_notarization_and_signed_ios(self):
+        stable = {"version_name": "0.5.4", "version_code": 12}
+        directories = self.platform_artifacts(stable["version_name"], signed=True)
+        output, _, macos, _ = directories
+        (macos / "signature.txt").write_text("adhoc\n")
+        with self.assertRaisesRegex(release.ReleaseError, "macOS signature"):
+            release.assemble_distribution(*directories, stable, ios_signed=True)
+        (macos / "signature.txt").write_text("developer-id-notarized\n")
+        with self.assertRaisesRegex(release.ReleaseError, "signed iOS IPA"):
+            release.assemble_distribution(*directories, stable, ios_signed=False)
+        names = release.assemble_distribution(*directories, stable, ios_signed=True)
+        self.assertIn("InkOTP-iOS.ipa", names)
+        self.assertIn("Apple Ad Hoc", (output / "release-notes.md").read_text())
+        release.verify_checksums(output, names)
 
     def test_public_bundle_cannot_contain_a_symlink_or_duplicate_checksum_entry(self):
         (self.root / "safe.apk").write_bytes(b"apk")
@@ -297,6 +380,8 @@ class ReleaseArtifactsTest(unittest.TestCase):
                 patch.object(release, "run", side_effect=external), patch.object(release, "build_context", return_value=context):
             release.sign("v0.4.0-beta.1", source, directory, Path("36.0.0"), key_path, cfg)
             self.assertEqual(self.version, release.verify_bundle("v0.4.0-beta.1", directory, Path("36.0.0"), cfg))
+            context["run_attempt"] = "2"
+            self.assertEqual(self.version, release.verify_bundle("v0.4.0-beta.1", directory, Path("36.0.0"), cfg))
             info = json.loads((directory / "build-info.json").read_text())
             self.assertEqual("a" * 40, info["commit"])
             self.assertEqual(cfg["certificate_sha256"], info["apk"]["certificate_sha256"])
@@ -314,8 +399,10 @@ class ReleaseArtifactsTest(unittest.TestCase):
         stderr = io.StringIO()
         with patch.object(release, "verify_bundle", return_value=self.version), \
                 patch.object(release, "preflight", side_effect=release.ReleaseError("release already exists")), \
+                patch.object(release, "assemble_distribution", return_value=[]), \
                 patch.object(release, "run") as commands, contextlib.redirect_stderr(stderr):
-            status = release.main(["publish", "--tag", "v0.4.0-beta.1", "--build-tools", "36.0.0"])
+            status = release.main(["publish", "--tag", "v0.4.0-beta.1", "--build-tools", "36.0.0",
+                                   "--macos-dir", "macos", "--ios-dir", "ios", "--ios-signing", "unsigned"])
         self.assertEqual(1, status)
         commands.assert_not_called()
 

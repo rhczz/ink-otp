@@ -16,14 +16,67 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.number }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the shared tag, history and signing policy
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          IOS_RELEASE_SIGNED: ${{ vars.INKOTP_IOS_RELEASE_SIGNED }}
+        run: |
+          python3 tools/release_artifacts.py preflight --tag "$RELEASE_TAG"
+          version="${RELEASE_TAG#v}"
+          if [[ "$version" != *-* && "$IOS_RELEASE_SIGNED" != true ]]; then
+            echo '::error::Stable releases require an Apple-signed IPA.'
+            exit 1
+          fi
+          echo "number=$version" >> "$GITHUB_OUTPUT"
+
   verify:
+    if: ${{ !cancelled() && (needs.preflight.result == 'success' || github.event_name == 'workflow_dispatch') }}
+    needs: preflight
     uses: ./.github/workflows/ci.yaml
-    permissions:
-      contents: read
+    with:
+      release-version: ${{ needs.preflight.outputs.version }}
+
+  macos:
+    needs: preflight
+    uses: ./.github/workflows/macos.yaml
+    with:
+      release-version: ${{ needs.preflight.outputs.version }}
+    secrets:
+      INKOTP_MACOS_DEVELOPER_ID: ${{ secrets.INKOTP_MACOS_DEVELOPER_ID }}
+      INKOTP_MACOS_P12_BASE64: ${{ secrets.INKOTP_MACOS_P12_BASE64 }}
+      INKOTP_MACOS_P12_PASSWORD: ${{ secrets.INKOTP_MACOS_P12_PASSWORD }}
+      INKOTP_MACOS_NOTARY_APPLE_ID: ${{ secrets.INKOTP_MACOS_NOTARY_APPLE_ID }}
+      INKOTP_MACOS_TEAM_ID: ${{ secrets.INKOTP_MACOS_TEAM_ID }}
+      INKOTP_MACOS_PROFILE_BASE64: ${{ secrets.INKOTP_MACOS_PROFILE_BASE64 }}
+      INKOTP_MACOS_NOTARY_PASSWORD: ${{ secrets.INKOTP_MACOS_NOTARY_PASSWORD }}
+
+  ios-sign:
+    if: vars.INKOTP_IOS_RELEASE_SIGNED == 'true'
+    needs: [preflight, verify]
+    uses: ./.github/workflows/ios-release.yaml
+    with:
+      release-version: ${{ needs.preflight.outputs.version }}
+    secrets:
+      INKOTP_IOS_CERTIFICATE_BASE64: ${{ secrets.INKOTP_IOS_CERTIFICATE_BASE64 }}
+      INKOTP_IOS_CERTIFICATE_PASSWORD: ${{ secrets.INKOTP_IOS_CERTIFICATE_PASSWORD }}
+      INKOTP_IOS_PROFILE_BASE64: ${{ secrets.INKOTP_IOS_PROFILE_BASE64 }}
 
   sign:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: verify
+    name: Sign Android APK
+    needs: [preflight, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -50,11 +103,6 @@ jobs:
         with:
           name: inkotp-unsigned-apk
           path: unsigned
-      - name: Reject existing releases and incompatible version history
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: python3 tools/release_artifacts.py preflight --tag "$RELEASE_TAG"
       - name: Sign and verify release bundle
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -77,7 +125,8 @@ jobs:
       - name: Preserve only verified public release files
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: inkotp-release-bundle
+          name: inkotp-android-release
+          overwrite: true
           if-no-files-found: error
           retention-days: 14
           path: |
@@ -87,7 +136,11 @@ jobs:
             release-bundle/release-notes.md
 
   publish:
-    needs: sign
+    if: >-
+      ${{ !cancelled() && needs.sign.result == 'success' && needs.macos.result == 'success' &&
+      ((vars.INKOTP_IOS_RELEASE_SIGNED == 'true' && needs.ios-sign.result == 'success') ||
+       (vars.INKOTP_IOS_RELEASE_SIGNED != 'true' && needs.ios-sign.result == 'skipped')) }}
+    needs: [sign, macos, ios-sign]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -112,13 +165,33 @@ jobs:
         run: sdkmanager --install 'build-tools;36.0.0'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: inkotp-release-bundle
+          name: inkotp-android-release
           path: release-bundle
-      - name: Recheck public bundle and create a new GitHub Release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: inkotp-macos-universal
+          path: macos-bundle
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: inkotp-ios-simulator
+          path: ios-bundle
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.ios-sign.result == 'skipped'
+        with:
+          name: inkotp-ios-device-unsigned
+          path: ios-bundle
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.ios-sign.result == 'success'
+        with:
+          name: inkotp-ios-ipa
+          path: ios-bundle
+      - name: Verify all platform bundles and publish one GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
+          IOS_SIGNING: ${{ needs.ios-sign.result == 'success' && 'signed' || 'unsigned' }}
         run: |
           python3 tools/release_artifacts.py publish \
             --tag "$RELEASE_TAG" --output-dir release-bundle \
+            --macos-dir macos-bundle --ios-dir ios-bundle --ios-signing "$IOS_SIGNING" \
             --build-tools "$ANDROID_HOME/build-tools/36.0.0"

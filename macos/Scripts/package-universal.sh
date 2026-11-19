@@ -32,7 +32,7 @@ ditto "$arm_app" "$app"
 lipo -create "$arm_app/Contents/MacOS/InkOTP" "$intel_app/Contents/MacOS/InkOTP" -output "$scratch/InkOTP"
 install -m 755 "$scratch/InkOTP" "$app/Contents/MacOS/InkOTP"
 lipo "$app/Contents/MacOS/InkOTP" -verify_arch arm64 x86_64
-marketing_version="${version%%-beta.*}"
+marketing_version="${version%%-*}"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $marketing_version" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${INKOTP_BUILD_NUMBER:-1}" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :InkOTPReleaseVersion $version" "$app/Contents/Info.plist"

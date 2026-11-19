@@ -1,58 +1,39 @@
-name: iOS Release
+name: iOS signing
 
 on:
-  push:
-    tags: ['ios-v*']
+  workflow_call:
+    inputs:
+      release-version:
+        description: Full version from the shared release tag
+        required: true
+        type: string
+    secrets:
+      INKOTP_IOS_CERTIFICATE_BASE64:
+        required: true
+      INKOTP_IOS_CERTIFICATE_PASSWORD:
+        required: true
+      INKOTP_IOS_PROFILE_BASE64:
+        required: true
 
 permissions:
   contents: read
 
-concurrency:
-  group: inkotp-ios-release
-  cancel-in-progress: false
-
 jobs:
-  preflight:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Require a versioned release from master
-        env:
-          IOS_TAG: ${{ github.ref_name }}
-          IOS_RELEASE_SIGNED: ${{ vars.INKOTP_IOS_RELEASE_SIGNED }}
-        run: |
-          [[ "$IOS_TAG" =~ ^ios-v[0-9]+\.[0-9]+\.[0-9]+(-preview\.[0-9]+)?$ ]]
-          git merge-base --is-ancestor HEAD origin/master
-          project_version=$(awk '/MARKETING_VERSION:/ {gsub(/"/,"",$2); print $2}' ios/project.yml)
-          [[ "$IOS_TAG" == "ios-v$project_version" || "$IOS_TAG" == "ios-v$project_version"-preview.* ]]
-          if [[ "$IOS_TAG" != *-preview.* && "$IOS_RELEASE_SIGNED" != true ]]; then
-            echo '::error::A stable release requires the signed IPA job and Apple provisioning.'
-            exit 1
-          fi
-
-  verify:
-    needs: preflight
-    uses: ./.github/workflows/ci.yaml
-    permissions:
-      contents: read
-
   sign:
-    if: vars.INKOTP_IOS_RELEASE_SIGNED == 'true'
-    needs: verify
     runs-on: macos-15
     timeout-minutes: 35
+    env:
+      INKOTP_RELEASE_VERSION: ${{ inputs.release-version }}
+      HOMEBREW_NO_AUTO_UPDATE: 1
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Require the shared release tag
+        run: test "$GITHUB_REF" = "refs/tags/v$INKOTP_RELEASE_VERSION"
       - name: Select Xcode
         run: bash ios/Scripts/select-xcode.sh
       - name: Generate project
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate --spec ios/project.yml --project ios
@@ -67,51 +48,3 @@ jobs:
           name: inkotp-ios-ipa
           path: ios/build/signed/InkOTP-iOS.ipa
           if-no-files-found: error
-
-  publish:
-    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.sign.result == 'success' || needs.sign.result == 'skipped') }}
-    needs: [verify, sign]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: inkotp-ios-simulator
-          path: distribution
-      - if: needs.sign.result == 'skipped'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: inkotp-ios-device-unsigned
-          path: distribution
-      - if: needs.sign.result == 'success'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: inkotp-ios-ipa
-          path: distribution
-      - name: Publish verified iOS release files
-        working-directory: distribution
-        env:
-          GH_TOKEN: ${{ github.token }}
-          IOS_TAG: ${{ github.ref_name }}
-        run: |
-          args=(--verify-tag --latest=false --title "InkOTP iOS ${IOS_TAG#ios-v}")
-          if [[ "$IOS_TAG" == *-preview.* ]]; then
-            args+=(--prerelease)
-          else
-            test -f InkOTP-iOS.ipa
-          fi
-          assets=(InkOTP-iOS-Simulator.zip)
-          if [[ -f InkOTP-iOS.ipa ]]; then
-            assets+=(InkOTP-iOS.ipa)
-            printf '%s\n' 'InkOTP-iOS.ipa 使用 Apple Ad Hoc 分发签名，可安装到描述文件中登记的 iPhone 或 iPad。' > release.md
-          else
-            test -f InkOTP-iOS-unsigned.ipa
-            assets+=(InkOTP-iOS-unsigned.ipa)
-            printf '%s\n' 'InkOTP-iOS-unsigned.ipa 是为 iPhone 和 iPad 归档的未签名应用。安装前需要 Apple 签名和覆盖目标设备的描述文件。' > release.md
-          fi
-          printf '\n%s\n' 'InkOTP-iOS-Simulator.zip 适用于 Xcode 模拟器。CI 已用这个 ZIP 在 iPad 模拟器验证升级后读取原账号，以及卸载重装后重新建库。校验文件 SHA256SUMS-iOS 包含两个下载件的 SHA-256。' >> release.md
-          printf '\n公共协议测试、iPhone XCTest 和 iPad 安装测试详见 [GitHub Actions 验收记录](%s/%s/actions/runs/%s)。\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release.md
-          sha256sum "${assets[@]}" > SHA256SUMS-iOS
-          gh release create "$IOS_TAG" "${assets[@]}" SHA256SUMS-iOS --repo "$GITHUB_REPOSITORY" "${args[@]}" --notes-file release.md

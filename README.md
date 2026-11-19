@@ -3,11 +3,11 @@
 > 完全离线的两步验证器，设计语言 **Quiet Ink**。
 > Android、[iOS](ios/README.md) 和 [macOS](macos/README.md) 使用原生技术栈，并共用 [协议与测试合约](spec/conformance.md)。
 
-## Android 0.5 公测
+## 下载安装
 
-InkOTP 0.5 面向 Android 8.0 及以上，通过 GitHub Release 分发签名 APK。已有用户建议先导出一份加密备份，再直接覆盖安装。安装、恢复、测试范围与反馈入口见 [0.5 公测指南](docs/testing/0.5-public-beta.md)。
+进入 [GitHub Releases](https://github.com/rhczz/ink-otp/releases)，在同一个版本的 **Assets** 里按平台选择 Android APK、macOS 通用 DMG 或 iOS 安装包。iOS 同时提供模拟器 ZIP，iPhone/iPad 安装要求见 [iOS 说明](ios/README.md)。
 
-[公测 APK 与校验文件](https://github.com/rhczz/ink-otp/releases/tag/v0.5.0-beta.1) · [0.5 版本说明](docs/releases/0.5.0-beta.1.md)
+Android 支持 Android 8.0 及以上。已有用户建议先导出一份加密备份，再直接覆盖安装。历史版本的安装、恢复与反馈见 [Android 0.5 公测指南](docs/testing/0.5-public-beta.md)。
 
 ## 状态
 
@@ -63,7 +63,7 @@ spec/     平台中立的数据格式、测试向量与用例
 tools/    Python 参考实现与检查脚本（不随 App 发布）
 android/  Gradle 工程（:core 纯 JVM，:app Compose）
 macos/    SwiftPM 原生桌面应用、协议实现与 CI 打包脚本
-ios/      Phase 2 占位，仅 README
+ios/      SwiftUI 原生应用、Swift 核心和 Xcode 测试
 ```
 
 ## 安全
@@ -84,4 +84,4 @@ ios/      Phase 2 占位，仅 README
 
 ## GitHub 检查与发布
 
-分支推送和 PR 执行真实 CI；版本 tag 复用完整检查后签名并发布 APK、校验和及来源说明。执行入口在 `.github/workflows/`，实际质量/发布配置为 `.github/ci.yaml`、`.github/release.yaml`。本地用 `make ci` 复现无签名 CI；具体门禁与边界见 [CI 指南](docs/testing/github-ci.md) 和 [发布指南](docs/releasing.md)。
+分支推送和 PR 执行 CI。`v{版本}` 标签触发三端的验证、打包和统一发布，同时提供 SHA-256 校验和及构建来源。本地用 `make ci` 复现 Android 无签名 CI。具体门禁和下载文件见 [CI 指南](docs/testing/github-ci.md) 和 [发布指南](docs/releasing.md)。

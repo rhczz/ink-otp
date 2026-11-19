@@ -1,17 +1,16 @@
 ---
-
-> Android 0.5.3 的后续桌面实现见 [macOS 桌面版规格](../../spec/macos-parity.md)。桌面返回窗口、手动锁定和输入链接遵循 Android 交互合同，并适配多窗口失焦。历史 Android v1.0 设计仍适用于 Android，对应协议由 `spec/` 约束。 临时签名覆盖升级时，已验证恢复口令可在保留本机库与安全策略的前提下重新绑定普通设备凭据。
 title: InkOTP · 2FA 验证器技术设计文档（Android 首发）
 aliases:
   - Authenticator Design Doc
   - 两步验证器设计文档
 created: 2026-11-04
-updated: 2026-11-17
-version: 0.10
+updated: 2026-11-19
+version: 0.11
 status: implementation-ready
 platforms:
-  - Android 8.0+（Kotlin + Jetpack Compose）— v1.0 首发，唯一实施平台
-  - iOS 17+（SwiftUI）— Phase 2，暂不实施
+  - Android 8.0+（Kotlin + Jetpack Compose）
+  - iOS 17+（SwiftUI）
+  - macOS 14+（SwiftUI）
 tags:
   - project/authenticator
   - design-doc
@@ -23,10 +22,11 @@ tags:
 
 # InkOTP · 2FA 验证器技术设计文档（v1.0 Android 首发）
 
-> **状态**：v0.10（M4 标准互通与系统验证实施中）｜ **日期**：2026-11-17 ｜ **仓库**：`/Users/renhc/projects/java/ink-otp` ｜ **文档**：`docs/design/2FA验证器-技术设计文档.md`
+> **状态**：v0.11（三端统一发布）｜ **日期**：2026-11-19 ｜ **仓库**：`/Users/renhc/projects/java/ink-otp` ｜ **文档**：`docs/design/2FA验证器-技术设计文档.md`
 > **权威性**：本文件是 InkOTP 的**权威规格**；`spec/` 是平台中立数据契约的可执行副本。Obsidian vault 内的同名副本只是**快照**，冲突时以仓库版本为准。
-> **范围**：**v1.0 只做 Android**（Kotlin + Jetpack Compose）；iOS 规格保留为 Phase 2 参考，本期不实施。应用名 **InkOTP**，applicationId `io.github.rhczz.inkotp`，许可证 **GPL-3.0**。
-> **说明**：本文是设计与规格文档，文中代码片段是接口骨架/示意（不一定可直接编译），不是成品实现。设计与实现同仓管理：文档在 `docs/`，平台中立规格在 `spec/`，代码在 `android/`。
+> **范围**：本文保留 Android 首发的设计。后续 [iOS](../../spec/ios-parity.md) 与 [macOS](../../spec/macos-parity.md) 实施按各自规格验收，并与 Android 共用 [发布契约](../../spec/release.md)。应用名 **InkOTP**，Android applicationId `io.github.rhczz.inkotp`，许可证 **GPL-3.0**。
+> **说明**：本文是设计与规格文档，文中代码片段是接口骨架/示意（不一定可直接编译），不是成品实现。设计与实现同仓管理：文档在 `docs/`，平台中立规格在 `spec/`，工程分别位于 `android/`、`ios/` 和 `macos/`。
+> Android 0.5.3 的后续桌面实现见 [macOS 桌面版规格](../../spec/macos-parity.md)。桌面返回窗口、手动锁定和输入链接遵循 Android 交互合同，并适配多窗口失焦。历史 Android v1.0 设计仍适用于 Android，对应协议由 `spec/` 约束。 临时签名覆盖升级时，已验证恢复口令可在保留本机库与安全策略的前提下重新绑定普通设备凭据。
 
 ---
 
@@ -206,6 +206,7 @@ tags:
 | ADR-030 | Android 以「每次进入时验证身份」统一控制进门验证。关闭时使用本机 Keystore 包装解锁；开启时使用认证绑定包装与 Android 系统验证。 | 系统认证用于进门、授权改变进入策略和更新系统绑定。恢复口令保留为可移植备份和包装恢复的独立凭据，旧库首次有效解锁时迁移本机包装。此项取代 ADR-020/021/026 中有恢复口令库只能使用生物识别或口令打开的旧约定。`vault.bin` 和备份格式不变。设备包装细节见 `spec/vault-format.md` §7。 |
 | ADR-031 | 增加首启恢复与锁定救援。通过 Android 系统文件选择器读取持有的独立备份，验证后从备份建立本机库。 | 无法解锁时不能走正常合并。救援仅导入备份，不从旧库提取账号。已有库救援须明确确认替换，保留原库密文，继续执行原系统验证策略。复用现有加密格式、Keystore、DataStore 和原子写入机制。 |
 | ADR-029 | 使用 Android 系统安全窗口、最近任务截图控制及悬浮窗保护；剪贴板只按当次复制的所有权标记做尽力清理。 | Android 剪贴板没有按项目设定过期时间或条件删除的公开接口，因此使用随机标记核对最新一次复制，无法确认所有权时跳过。屏幕保护按 API 能力启用，补充后台遮挡和遮挡触摸检查。 |
+| ADR-032 | Android、macOS 和 iOS 共用版本标签和 GitHub Release。 | 各平台在同一标签提交上独立通过门禁，再由一个发布任务统一上传。保留各平台签名和构建号规则，历史标签继续供下载与升级验收。见 [跨平台发布契约](../../spec/release.md)。 |
 
 系统验证策略保留恢复口令作为灾备材料。密钥失效后恢复需标准系统确认与恢复口令；更改口令或导入不得静默关闭策略。手机锁屏凭据与应用恢复口令不是同一个密码。
 
@@ -1673,7 +1674,7 @@ flowchart TD
 
 - 许可证定为 **GPL-3.0**（2026-11-05 确认，Q2 关闭；防止闭源分叉滥用）。若未来希望被企业/闭源生态采用，需重新评估 Apache-2.0 并走 ADR。
 - 仓库必须包含：`SECURITY.md`（漏洞披露流程）、`docs/threat-model.md`、构建说明（含可复现构建的尽力说明）。
-- 发布：签名产物 + SHA-256 校验和；版本号语义化；每次发布附变更与安全说明。
+- 发布采用语义化版本。Android、macOS 和 iOS 的产物来自同一个 `v{版本}` 标签，在同一 Release 提供下载，附 SHA-256 校验和、变更和安全说明。各平台签名与构建号遵守 [发布契约](../../spec/release.md)。
 
 ---
 
@@ -1921,7 +1922,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 
 | 对象 | 当前版本 | 规则 |
 |---|---|---|
-| 设计文档 | **v0.10（M4 标准互通、系统验证与性能完善）** | 每次实质变更 +0.1 并记录附录 G |
+| 设计文档 | **v0.11（三端统一发布）** | 每次实质变更 +0.1 并记录附录 G |
 | Design Language | **v1.0（冻结）** | 变更走 §11.0.9，升 v1.x；页面不得私自扩展 |
 | 备份格式 | **v1（`.2fab`）** | 布局变更 = `formatVersion + 1` + 迁移 + 双实现测试（C-08、C-27） |
 | 库文件格式 | **v1（`vault.bin`）** | 布局变更 = `version + 1` + `spec/vault-format.md` + 双实现测试（C-27） |
@@ -1941,7 +1942,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 | G-5 设计门 | UI 变更 | `python tools/check_design_tokens.py --root android/app/src/main/kotlin` + 契约检查 + 本地 Roborazzi 基线复核（`make screenshots`；CI 不比对） | C-19~C-22 |
 | G-6 安全门 | 涉及权限/存储/依赖 | `make verify`；`python tools/check_no_internet.py --manifest <merged-manifest>`；合并 manifest 无 `INTERNET`/`ACCESS_NETWORK_STATE`；无敏感日志；依赖白名单 | C-02、C-12~C-18、C-26 |
 | G-7 演练门 | 发布前 | §13.5 SOP（**真机**）+ 13.4 真机检查表 + 附录 E DoD + 18.5 全门禁 | C-24 |
-| G-8 发布门 | 发布前 | `./gradlew :app:assembleRelease` + 签名 + 产物 SHA-256 归档 + 变更/安全说明 + release APK <15MB | C-25 |
+| G-8 发布门 | 发布前 | 三端通过各自质量及签名检查；Android APK <15MB；同一 Release 归档全部产物、SHA-256 和变更/安全说明 | C-25 |
 
 ### 18.6 违规处理与"临时方案"规则
 
@@ -2219,3 +2220,5 @@ ADR-023 技术依据：[Android 官方 unlockedDeviceRequired 兼容性说明](h
 
 
 2026-11-17 · v0.10：用户确认继续 M4，追加 ADR-025~027，标准互通、每次进入系统认证及性能/资源验证纳入本轮。
+
+2026-11-19 · v0.11 追加 ADR-032，将 Android、macOS 和 iOS 改为共用版本、源码标签和发布资产。

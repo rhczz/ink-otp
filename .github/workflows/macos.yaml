@@ -3,9 +3,9 @@ name: macOS
 on:
   push:
     branches: ['**']
-    tags: ['macos-v*']
     paths:
       - 'macos/**'
+      - 'android/app/build.gradle.kts'
       - 'android/core/**'
       - 'android/*.gradle.kts'
       - 'android/gradle.properties'
@@ -15,6 +15,7 @@ on:
       - 'spec/**'
       - 'tools/reference_*.py'
       - 'tools/crosscheck.py'
+      - 'tools/release_artifacts.py'
       - 'tools/requirements.txt'
       - '.github/workflows/macos.yaml'
       - 'website/assets/inkotp-icon.png'
@@ -22,6 +23,7 @@ on:
   pull_request:
     paths:
       - 'macos/**'
+      - 'android/app/build.gradle.kts'
       - 'android/core/**'
       - 'android/*.gradle.kts'
       - 'android/gradle.properties'
@@ -31,11 +33,33 @@ on:
       - 'spec/**'
       - 'tools/reference_*.py'
       - 'tools/crosscheck.py'
+      - 'tools/release_artifacts.py'
       - 'tools/requirements.txt'
       - '.github/workflows/macos.yaml'
       - 'website/assets/inkotp-icon.png'
       - 'LICENSE'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release-version:
+        description: Shared version verified by the release workflow
+        type: string
+        default: ''
+    secrets:
+      INKOTP_MACOS_DEVELOPER_ID:
+        required: false
+      INKOTP_MACOS_P12_BASE64:
+        required: false
+      INKOTP_MACOS_P12_PASSWORD:
+        required: false
+      INKOTP_MACOS_NOTARY_APPLE_ID:
+        required: false
+      INKOTP_MACOS_TEAM_ID:
+        required: false
+      INKOTP_MACOS_PROFILE_BASE64:
+        required: false
+      INKOTP_MACOS_NOTARY_PASSWORD:
+        required: false
 
 permissions:
   contents: read
@@ -185,33 +209,32 @@ jobs:
     timeout-minutes: 35
     outputs:
       version: ${{ steps.version.outputs.number }}
-      beta: ${{ steps.version.outputs.beta }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - name: Verify release tag or select CI version
+      - name: Read the shared source version
         id: version
+        env:
+          INKOTP_RELEASE_VERSION: ${{ inputs.release-version }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            if [[ ! "$GITHUB_REF_NAME" =~ ^macos-v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-beta[.][1-9][0-9]*)?$ ]]; then
-              echo "Invalid macOS release tag" >&2
-              exit 1
-            fi
-            git merge-base --is-ancestor HEAD origin/master
-            echo "number=${GITHUB_REF_NAME#macos-v}" >> "$GITHUB_OUTPUT"
-            if [[ "$GITHUB_REF_NAME" == *-beta.* ]]; then
-              echo "beta=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "beta=false" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "number=0.1.0-beta.2" >> "$GITHUB_OUTPUT"
-            echo "beta=true" >> "$GITHUB_OUTPUT"
+          read -r version build_number < <(python3 - <<'PY'
+          from tools.release_artifacts import ROOT, VERSION_SOURCE, parse_gradle_version
+
+          version = parse_gradle_version((ROOT / VERSION_SOURCE).read_text())
+          # The last standalone macOS release used build 39.
+          print(version["version_name"], 100 + version["version_code"])
+          PY
+          )
+          if [[ -n "${INKOTP_RELEASE_VERSION:-}" ]] &&
+             [[ "$INKOTP_RELEASE_VERSION" != "$version" || "$GITHUB_REF" != "refs/tags/v$version" ]]; then
+            echo "::error::The macOS release version must match the shared source version and tag."
+            exit 1
           fi
+          echo "number=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$build_number" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: app-*
@@ -221,18 +244,18 @@ jobs:
         run: |
           ditto -x -k slices/inkotp-arm64.zip "$RUNNER_TEMP/arm"
           ditto -x -k slices/inkotp-x86_64.zip "$RUNNER_TEMP/intel"
-      - name: Package pull-request and branch build
-        if: github.ref_type != 'tag'
+      - name: Package CI build
+        if: inputs.release-version == ''
         env:
-          INKOTP_BUILD_NUMBER: ${{ github.run_number }}
+          INKOTP_BUILD_NUMBER: ${{ steps.version.outputs.build }}
           INKOTP_VERSION: ${{ steps.version.outputs.number }}
         run: macos/Scripts/package-universal.sh "$RUNNER_TEMP/arm/InkOTP.app" "$RUNNER_TEMP/intel/InkOTP.app" release-bundle "$INKOTP_VERSION"
       - name: Package tagged release
-        if: github.ref_type == 'tag'
+        if: inputs.release-version != ''
         env:
-          INKOTP_BUILD_NUMBER: ${{ github.run_number }}
+          INKOTP_BUILD_NUMBER: ${{ steps.version.outputs.build }}
           INKOTP_VERSION: ${{ steps.version.outputs.number }}
-          INKOTP_REQUIRE_NOTARIZATION: ${{ steps.version.outputs.beta == 'false' && '1' || '0' }}
+          INKOTP_REQUIRE_NOTARIZATION: ${{ contains(steps.version.outputs.number, '-') && '0' || '1' }}
           INKOTP_MACOS_DEVELOPER_ID: ${{ secrets.INKOTP_MACOS_DEVELOPER_ID }}
           INKOTP_MACOS_P12_BASE64: ${{ secrets.INKOTP_MACOS_P12_BASE64 }}
           INKOTP_MACOS_P12_PASSWORD: ${{ secrets.INKOTP_MACOS_P12_PASSWORD }}
@@ -296,68 +319,3 @@ jobs:
           path: ${{ runner.temp }}/inkotp-ui-evidence/
           if-no-files-found: warn
           retention-days: 14
-
-  publish:
-    name: Publish macOS GitHub Release
-    if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: [package, android-consume, desktop-ui]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: inkotp-macos-universal
-          path: release-bundle
-      - name: Publish verified disk image and release evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          INKOTP_VERSION: ${{ needs.package.outputs.version }}
-          INKOTP_BETA: ${{ needs.package.outputs.beta }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd release-bundle
-          sha256sum --strict --check SHA256SUMS.txt
-          dmg="InkOTP-$INKOTP_VERSION-macOS-universal.dmg"
-          test -f "$dmg"
-          signature="$(cat signature.txt)"
-          gatekeeper=""
-          case "$signature" in
-            developer-id-notarized) description='使用 Developer ID 签名，已通过 Apple 公证。' ;;
-            adhoc)
-              test "$INKOTP_BETA" = true
-              description='本测试版采用临时签名，尚未通过 Apple 公证。受保护的 Keychain 每次进入验证模式在此版本不可用。请设置恢复口令并保留一份加密便携备份，便于将来迁移到新的签名身份。'
-              gatekeeper='若 Gatekeeper 拦截首次打开，校验安装包后参考 [Apple 的首次打开说明](https://support.apple.com/zh-cn/102445)。'
-              ;;
-            *) echo "Invalid signature evidence" >&2; exit 1 ;;
-          esac
-          cat > notes.md <<NOTES
-          InkOTP macOS $INKOTP_VERSION 是离线双因素验证码应用，适用于 macOS 14 及以上的 Apple Silicon 和 Intel Mac。
-
-          $description
-
-          $gatekeeper
-
-          下载 DMG 并将 InkOTP 拖入 Applications。校验可用 \`SHA256SUMS.txt\`，源码和 CI 证据见下方。
-
-          - [桌面安装及从 Beta 1 升级的说明](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/macos/README.md)
-          - [公共测试集与备份格式](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/spec/conformance.md)
-          - [桌面行为与验收范围](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/spec/macos-parity.md)
-          - [源码提交](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA)
-          - [本次流程](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
-          NOTES
-          if [[ "$INKOTP_VERSION" == '0.1.0-beta.2' ]]; then
-            cat >> notes.md <<NOTES
-
-          此版本修复普通自动锁定返回、失焦时的窗口遮挡和临时签名升级后的设备绑定。手动添加现在可预览完整的设置链接。隐藏验证码和 HOTP 的行为与 Android 0.5.3 对齐。GitHub Actions 使用真实安装包覆盖升级，并检查 Android 与 Mac 的六种备份互读。
-
-          [本次修复与验证结果](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/docs/changes/2026-11-19-macos-desktop-lifecycle.md)
-          NOTES
-          fi
-          flags=()
-          if [[ "$INKOTP_BETA" == true ]]; then flags+=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" "$dmg" SHA256SUMS.txt --verify-tag --latest=false \
-            --title "InkOTP macOS $INKOTP_VERSION" --notes-file notes.md "${flags[@]}"

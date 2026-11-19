@@ -10,11 +10,11 @@ InkOTP 使用 SwiftUI 和 Apple 系统框架，最低支持 iOS / iPadOS 17。�
 
 [CI](../.github/workflows/ci.yaml) 运行 Android 既有检查、iOS XCTest、双向互读和独立 Python 核对。iOS 项目由 Actions 从 `project.yml` 生成。每次运行保留 XCTest 结果、覆盖率及构建产物。
 
-[Release](../.github/workflows/ios-release.yaml) 从已合入 `master` 的 `ios-vX.Y.Z-preview.N` 或 `ios-vX.Y.Z` 标签发布。GitHub Actions 生成 `InkOTP-iOS-Simulator.zip` 和 `SHA256SUMS-iOS`。在带 Xcode 的测试环境中解压 ZIP，并使用模拟器安装其中的 `InkOTP.app`。
+[统一发布工作流](../.github/workflows/release.yaml) 从已合入 `master` 的 `v{版本}` 标签发布。在 [GitHub Releases](https://github.com/rhczz/ink-otp/releases) 的版本页 **Assets** 下载 `InkOTP-iOS-Simulator.zip`，用同页的 `SHA256SUMS` 核对后解压，并在 Xcode 模拟器安装其中的 `InkOTP.app`。
 
 真机 IPA 使用 Apple Ad Hoc 分发签名，安装资格由 provisioning profile 的设备名单决定。启用签名时将 GitHub Actions 变量 `INKOTP_IOS_RELEASE_SIGNED` 设为 `true`，并在仓库 Secrets 配置 `INKOTP_IOS_CERTIFICATE_BASE64`、`INKOTP_IOS_CERTIFICATE_PASSWORD` 和 `INKOTP_IOS_PROFILE_BASE64`。证书对应 Apple Distribution，profile 对应 `io.github.rhczz.inkotp`。已签名的 IPA 和校验和由 Actions 生成。App Store 和 TestFlight 走 Apple 的分发流程。
 
-从第二个 iOS 预览版起，缺少分发签名时，Actions 另外提供 `InkOTP-iOS-unsigned.ipa`。它使用 iPhoneOS SDK 为 iPhone 和 iPad 构建。安装到设备前需要使用自己的 Apple 签名身份及相应的描述文件签名。具备仓库分发签名时，发布页改为提供已签名的 `InkOTP-iOS.ipa`。
+Beta 发布未启用分发签名时，同页提供 `InkOTP-iOS-unsigned.ipa`。它使用 iPhoneOS SDK 为 iPhone 和 iPad 构建。安装到设备前需要使用自己的 Apple 签名身份及相应的描述文件签名。启用仓库分发签名时，发布页提供已签名的 `InkOTP-iOS.ipa`。历史预览版仍可从 [旧版 iOS 发布页](https://github.com/rhczz/ink-otp/releases/tag/ios-v0.5.3-preview.2) 下载。
 
 ## 真机验收
 

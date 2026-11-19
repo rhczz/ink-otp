@@ -5,6 +5,10 @@ on:
     branches: ['**']
   pull_request:
   workflow_call:
+    inputs:
+      release-version:
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -52,7 +56,6 @@ jobs:
             android/app/build/outputs/apk/release/app-release-unsigned.apk
             android/app/build/outputs/apk/release/output-metadata.json
       - name: Keep Android output for bidirectional contract checks
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: inkotp-android-contract-files
@@ -77,8 +80,9 @@ jobs:
             android/app/build/test-results/
 
   ios:
-    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     uses: ./.github/workflows/ios-ci.yaml
+    with:
+      release-version: ${{ inputs.release-version }}
     permissions:
       contents: read
 
@@ -111,7 +115,6 @@ jobs:
         run: android/gradlew -p android :core:test --tests '*SwiftContractTest'
 
   ios-reads-android:
-    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     needs: verify
     runs-on: macos-15
     timeout-minutes: 15
