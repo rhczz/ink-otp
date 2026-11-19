@@ -4,7 +4,7 @@
 
 | 日期 | 记录 | 状态 |
 |---|---|---|
-| 2026-11-19 | [Mac 从图片添加二维码账号](2026-11-19-macos-qr-image-import.md) | GitHub Actions 验收中 |
+| 2026-11-19 | [Mac 从图片添加二维码账号](2026-11-19-macos-qr-image-import.md) | 已发布 Beta 2 图片导入、取消和重启复验通过 |
 | 2026-11-19 | [Mac 切换应用、解锁与添加账号](2026-11-19-macos-desktop-lifecycle.md) | macOS 15 和 26 桌面验收通过，真机专项待测 |
 | 2026-11-19 | [Android 与 macOS 实际交换备份](2026-11-19-macos-cross-platform.md) | 三端公共合约与双向备份读取通过 |
 | 2026-11-18 | [InkOTP macOS 桌面版与公共测试集](2026-11-18-macos-native-parity.md) | 双架构测试与通用 DMG 验证通过，真机待测 |
