@@ -68,7 +68,8 @@ cp "$private_dir/profile.mobileprovision" "$installed_profile"
 xcodebuild -project ios/InkOTP.xcodeproj -scheme InkOTP -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "$private_dir/InkOTP.xcarchive" \
   "DEVELOPMENT_TEAM=$team" CODE_SIGN_STYLE=Manual 'CODE_SIGN_IDENTITY=Apple Distribution' \
-  "PROVISIONING_PROFILE_SPECIFIER=$profile_id" archive
+  "PROVISIONING_PROFILE_SPECIFIER=$profile_id" \
+  ${INKOTP_RELEASE_VERSION:+"INKOTP_RELEASE_VERSION=$INKOTP_RELEASE_VERSION"} archive
 
 xcodebuild -exportArchive -archivePath "$private_dir/InkOTP.xcarchive" \
   -exportOptionsPlist "$private_dir/export.plist" -exportPath "$private_dir/export"

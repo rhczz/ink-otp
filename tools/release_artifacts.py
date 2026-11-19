@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed, offline APK checks and narrowly scoped GitHub release commands.
+"""Verify signed Android packages and publish one checked three-platform release.
 
 No Gradle invocation, local signing discovery, key generation, or secret upload.
 The only private key accepted is the explicitly injected CI environment value.
@@ -13,10 +13,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
+import shutil
 import struct
 import subprocess
 import sys
+import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_SOURCE = "android/app/build.gradle.kts"
@@ -25,6 +29,12 @@ SECRETS = (
     "INKOTP_SIGNING_KEY_ALIAS", "INKOTP_SIGNING_KEY_PASSWORD",
 )
 VERSION_PATTERN = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?"
+
+
+LEGACY_PLATFORM_TAG = re.compile(
+    r"(?:ios-v[0-9]+[.][0-9]+[.][0-9]+(?:-preview[.][0-9]+)?|macos-v"
+    r"[0-9]+[.][0-9]+[.][0-9]+(?:-beta[.][0-9]+)?)"
+)
 
 
 class ReleaseError(Exception):
@@ -79,12 +89,13 @@ def validate_tag(tag: str, version: dict) -> bool:
     return True
 
 
-def validate_history(version: dict, tag: str, history: dict, releases: list) -> None:
+def validate_history(version: dict, tag: str, history: dict, releases: list,
+                     legacy_tags: set[str] | frozenset[str] = frozenset()) -> None:
     for item in releases:
         prior_tag = item.get("tag_name")
         if prior_tag == tag:
             raise ReleaseError("release already exists, including drafts; overwrite is forbidden")
-        if prior_tag not in history:
+        if prior_tag not in history and prior_tag not in legacy_tags:
             raise ReleaseError("release history cannot be matched to a versioned source tag")
     for prior_tag, prior_version in history.items():
         if prior_tag != tag and prior_version["version_code"] >= version["version_code"]:
@@ -103,6 +114,10 @@ def preflight(tag: str, cfg: dict) -> dict:
     tagged_commit = run(["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"]).strip()
     if commit != tagged_commit:
         raise ReleaseError("checkout HEAD does not match the release tag")
+    run(["git", "merge-base", "--is-ancestor", commit, "refs/remotes/origin/master"])
+    legacy_tags = {old_tag for old_tag in run(
+        ["git", "tag", "--list", "ios-v*", "macos-v*"]).splitlines()
+        if LEGACY_PLATFORM_TAG.fullmatch(old_tag)}
     history = {}
     for old_tag in run(["git", "tag", "--list", "v*"]).splitlines():
         if not re.fullmatch("v" + VERSION_PATTERN, old_tag):
@@ -119,7 +134,7 @@ def preflight(tag: str, cfg: dict) -> dict:
             raise ValueError("invalid release list")
     except (ValueError, TypeError) as error:
         raise ReleaseError("invalid release history response") from error
-    validate_history(version, tag, history, releases)
+    validate_history(version, tag, history, releases, legacy_tags)
     if not (ROOT / f"docs/releases/{version['version_name']}.md").is_file():
         raise ReleaseError("version-specific release notes are missing")
     return version
@@ -186,7 +201,6 @@ def validate_certificate(output: str, expected: str) -> str:
 
 
 def reject_signature_blocks(apk: Path) -> None:
-    import zipfile
     with zipfile.ZipFile(apk) as archive:
         if any(re.fullmatch(r"META-INF/[^/]+\.(?:RSA|DSA|EC|SF)", name, re.I) for name in archive.namelist()):
             raise ReleaseError("CI artifact is already signed (v1)")
@@ -247,12 +261,17 @@ def write_checksums(directory: Path, names: list[str]) -> None:
     (directory / "SHA256SUMS").write_text("".join(f"{sha256(directory / name)}  {name}\n" for name in names))
 
 
-def verify_checksums(directory: Path, names: list[str]) -> None:
+def require_files(directory: Path, names: list[str]) -> None:
     safe_names(names)
     actual = list(directory.iterdir())
-    if any(item.is_symlink() or not item.is_file() for item in actual) or {item.name for item in actual} != set(names + ["SHA256SUMS"]):
-        raise ReleaseError("bundle contains unexpected or missing files")
-    lines = (directory / "SHA256SUMS").read_text().splitlines()
+    if any(item.is_symlink() or not item.is_file() for item in actual) or {item.name for item in actual} != set(names):
+        raise ReleaseError(f"{directory.name} contains unexpected or missing files")
+
+
+def verify_checksums(directory: Path, names: list[str], *, manifest_name: str = "SHA256SUMS",
+                     evidence: tuple[str, ...] = ()) -> None:
+    require_files(directory, [*names, manifest_name, *evidence])
+    lines = (directory / manifest_name).read_text().splitlines()
     manifest = {}
     for line in lines:
         match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9_.-]*)", line)
@@ -328,8 +347,17 @@ def verify_bundle(tag: str, directory: Path, build_tools: Path, cfg: dict) -> di
     info = load_json(directory / "build-info.json")
     apk = directory / payload_names(version)[0]
     actual = inspect(apk, version, cfg, build_tools, signed=True)
-    if (info.get("tag") != tag or any(info.get(key) != value for key, value in version.items()) or
-            any(info.get(key) != value for key, value in build_context().items()) or
+    context = build_context()
+    # A retry may reuse the successful signing job's artifact from the same run.
+    attempt = info.get("run_attempt")
+    current_attempt = context["run_attempt"]
+    same_or_previous_attempt = (
+        isinstance(attempt, str) and attempt.isdecimal() and current_attempt.isdecimal()
+        and 0 < int(attempt) <= int(current_attempt)
+    )
+    if (not same_or_previous_attempt or info.get("tag") != tag or
+            any(info.get(key) != value for key, value in version.items()) or
+            any(info.get(key) != value for key, value in context.items() if key != "run_attempt") or
             info.get("apk", {}).get("sha256") != sha256(apk) or
             any(info.get("apk", {}).get(key) != value for key, value in actual.items())):
         raise ReleaseError("build-info does not match source/run/signed APK")
@@ -338,14 +366,80 @@ def verify_bundle(tag: str, directory: Path, build_tools: Path, cfg: dict) -> di
     return version
 
 
-def publish_command(tag: str, version: dict, directory: Path, repository: str) -> list[str]:
+def verify_ios_version(archive_path: Path, plist_path: str, version: str) -> None:
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            if archive.namelist().count(plist_path) != 1:
+                raise ReleaseError(f"{archive_path.name}: expected one app Info.plist")
+            info = plistlib.loads(archive.read(plist_path))
+    except (zipfile.BadZipFile, plistlib.InvalidFileException) as error:
+        raise ReleaseError(f"{archive_path.name}: unreadable app archive metadata") from error
+    if (info.get("CFBundleIdentifier") != "io.github.rhczz.inkotp" or
+            info.get("CFBundleShortVersionString") != version.split("-", 1)[0] or
+            info.get("InkOTPReleaseVersion") != version):
+        raise ReleaseError(f"{archive_path.name}: app identity or shared version mismatch")
+
+
+def assemble_distribution(directory: Path, android: Path, macos: Path, ios: Path,
+                          version: dict, *, ios_signed: bool) -> list[str]:
+    number = version["version_name"]
+    prerelease = "-" in number
+    dmg = f"InkOTP-{number}-macOS-universal.dmg"
+    simulator = "InkOTP-iOS-Simulator.zip"
+    ipa = "InkOTP-iOS.ipa" if ios_signed else "InkOTP-iOS-unsigned.ipa"
+    verify_checksums(macos, [dmg], manifest_name="SHA256SUMS.txt", evidence=("signature.txt",))
+    signature = (macos / "signature.txt").read_text().strip()
+    if signature != "developer-id-notarized" and not (prerelease and signature == "adhoc"):
+        raise ReleaseError("macOS signature does not meet release policy")
+    if not prerelease and not ios_signed:
+        raise ReleaseError("stable releases require a signed iOS IPA")
+    require_files(ios, [simulator, ipa])
+    verify_ios_version(ios / simulator, "InkOTP.app/Info.plist", number)
+    verify_ios_version(ios / ipa, "Payload/InkOTP.app/Info.plist", number)
+
+    android_files = payload_names(version)
+    for source, names in ((android, android_files), (macos, [dmg]), (ios, [simulator, ipa])):
+        for name in names:
+            shutil.copyfile(source / name, directory / name)
+    names = [android_files[0], dmg, ipa, simulator, *android_files[1:]]
+    notes = directory / "release-notes.md"
+    macos_install = (
+        "Developer ID 签名并经 Apple 公证。"
+        if signature == "developer-id-notarized"
+        else "临时签名，尚未公证。设备绑定迁移及首次打开说明见 macOS 安装指南。"
+    )
+    ios_install = (
+        "Apple Ad Hoc 签名，仅可安装到描述文件登记的设备。"
+        if ios_signed
+        else "未签名，需使用 Apple 签名和覆盖目标设备的描述文件后安装。"
+    )
+    context = build_context()
+    run_url = f"https://github.com/{context['repository']}/actions/runs/{context['run_id']}"
+    macos_guide = f"https://github.com/{context['repository']}/blob/{context['commit']}/macos/README.md"
+    with notes.open("a", encoding="utf-8") as stream:
+        stream.write(
+            f"\n## 下载\n\n"
+            f"- Android · `{android_files[0]}`（Android 8.0 及以上，沿用发布签名）\n"
+            f"- macOS · `{dmg}`（macOS 14 及以上，Apple Silicon / Intel）{macos_install}"
+            f" [macOS 安装指南]({macos_guide})\n"
+            f"- iPhone / iPad · `{ipa}`。{ios_install}\n"
+            f"- iOS 模拟器 · `{simulator}`，适用于 Xcode 模拟器。\n\n"
+            f"`SHA256SUMS` 包含全部下载件的校验值。 [本次构建与测试记录]({run_url})\n"
+        )
+    write_checksums(directory, names)
+    verify_checksums(directory, names)
+    return names
+
+
+def publish_command(tag: str, version: dict, directory: Path, repository: str,
+                    names: list[str]) -> list[str]:
     validate_tag(tag, version)
     args = ["gh", "release", "create", tag, "--repo", repository, "--verify-tag",
             "--title", "InkOTP " + version["version_name"],
             "--notes-file", str(directory / "release-notes.md")]
     if "-" in version["version_name"]:
-        args.append("--prerelease")
-    return args + [str(directory / name) for name in payload_names(version) + ["SHA256SUMS"]]
+        args.extend(["--prerelease", "--latest=false"])
+    return args + [str(directory / name) for name in names + ["SHA256SUMS"]]
 
 
 def main(argv=None) -> int:
@@ -356,6 +450,9 @@ def main(argv=None) -> int:
     parser.add_argument("--output-dir", type=Path, default=Path("release-bundle"))
     parser.add_argument("--build-tools", type=Path)
     parser.add_argument("--keystore-file", type=Path)
+    parser.add_argument("--macos-dir", type=Path)
+    parser.add_argument("--ios-dir", type=Path)
+    parser.add_argument("--ios-signing", choices=["signed", "unsigned"])
     args = parser.parse_args(argv)
     try:
         cfg = config()
@@ -371,8 +468,16 @@ def main(argv=None) -> int:
             else:
                 version = verify_bundle(args.tag, args.output_dir, args.build_tools, cfg)
                 if args.command == "publish":
-                    preflight(args.tag, cfg)  # Recheck history immediately before create.
-                    run(publish_command(args.tag, version, args.output_dir, cfg["repository"]))
+                    if not (args.macos_dir and args.ios_dir and args.ios_signing):
+                        raise ReleaseError("publishing requires the verified macOS and iOS artifacts")
+                    with tempfile.TemporaryDirectory(prefix="inkotp-distribution-") as staged:
+                        directory = Path(staged)
+                        names = assemble_distribution(directory, args.output_dir, args.macos_dir,
+                                                      args.ios_dir, version,
+                                                      ios_signed=args.ios_signing == "signed")
+                        # gh uploads every file to a draft before making it public.
+                        preflight(args.tag, cfg)
+                        run(publish_command(args.tag, version, directory, cfg["repository"], names))
         print(f"release {args.command}: passed")
         return 0
     except (ReleaseError, OSError, ValueError, KeyError, TypeError) as error:

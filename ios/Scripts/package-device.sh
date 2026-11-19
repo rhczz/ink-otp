@@ -11,7 +11,8 @@ ipa="$staging/InkOTP-iOS-unsigned.ipa"
 
 xcodebuild -project ios/InkOTP.xcodeproj -scheme InkOTP -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath ios/build/DeviceDerivedData \
-  -archivePath "$archive" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive
+  -archivePath "$archive" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+  ${INKOTP_RELEASE_VERSION:+"INKOTP_RELEASE_VERSION=$INKOTP_RELEASE_VERSION"} archive
 
 app="$archive/Products/Applications/InkOTP.app"
 test -f "$archive/Info.plist"
