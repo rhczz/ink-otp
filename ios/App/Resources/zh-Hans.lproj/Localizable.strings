@@ -101,7 +101,6 @@
 "InkOTP could not open the vault. Try again or restore a backup." = "无法打开验证码库。请重试或从备份恢复。";
 "InkOTP generates codes offline, encrypts your vault, and lets you move your accounts with an encrypted backup." = "验证码在本机离线生成，账号库整库加密，可通过加密备份迁移账号。";
 "InkOTP generates codes on this device. You can read the privacy notice before deciding whether to continue." = "InkOTP 在本机生成验证码。你可以阅读完整的隐私声明，再选择是否继续。";
-"InkOTP hides vault content while the screen is being recorded or mirrored." = "录屏或屏幕镜像时，InkOTP 会隐藏验证码库内容。";
 "InkOTP privacy notice" = "InkOTP 隐私声明";
 "InkOTP samples these values on your device when you choose Refresh. Memory and storage are measured separately." = "仅在点击刷新时在设备上采样。内存和本机数据文件大小分别统计。";
 "InkOTP will lock and stop processing your codes. The encrypted vault and your exported backups are kept. You can agree again to continue." = "撤回后 InkOTP 会锁定并停止处理验证码数据，保留本机加密库及你自行保存的备份。再次同意后可以继续使用。";
@@ -269,3 +268,4 @@
 "Sample duration" = "本次采样耗时";
 "Recent operation (includes verification)" = "最近操作（含验证等待）";
 "%lld ms" = "%lld 毫秒";
+"Stop recording or mirroring to access InkOTP." = "停止录屏或屏幕镜像后，即可继续使用 InkOTP。";

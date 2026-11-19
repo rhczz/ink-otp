@@ -101,7 +101,6 @@
 "InkOTP could not open the vault. Try again or restore a backup." = "InkOTP could not open the vault. Try again or restore a backup.";
 "InkOTP generates codes offline, encrypts your vault, and lets you move your accounts with an encrypted backup." = "InkOTP generates codes offline, encrypts your vault, and lets you move your accounts with an encrypted backup.";
 "InkOTP generates codes on this device. You can read the privacy notice before deciding whether to continue." = "InkOTP generates codes on this device. You can read the privacy notice before deciding whether to continue.";
-"InkOTP hides vault content while the screen is being recorded or mirrored." = "InkOTP hides vault content while the screen is being recorded or mirrored.";
 "InkOTP privacy notice" = "InkOTP privacy notice";
 "InkOTP samples these values on your device when you choose Refresh. Memory and storage are measured separately." = "InkOTP samples these values on your device when you choose Refresh. Memory and storage are measured separately.";
 "InkOTP will lock and stop processing your codes. The encrypted vault and your exported backups are kept. You can agree again to continue." = "InkOTP will lock and stop processing your codes. The encrypted vault and your exported backups are kept. You can agree again to continue.";
@@ -267,3 +266,4 @@
 "Sample duration" = "Sample duration";
 "Recent operation (includes verification)" = "Recent operation (includes verification)";
 "%lld ms" = "%lld ms";
+"Stop recording or mirroring to access InkOTP." = "Stop recording or mirroring to access InkOTP.";

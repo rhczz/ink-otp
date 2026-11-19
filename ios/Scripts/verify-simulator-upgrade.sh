@@ -72,18 +72,9 @@ products="$derived/Build/Products"
 runner=$(python3 ios/Scripts/prepare-upgrade-xctestrun.py "$products")
 xcrun simctl install "$simulator" "$runner"
 
-# Release simulator archives can be unsigned; use the Xcode simulator test
-# identity for both unpacked copies so the real simulator Keychain can be tested.
-reference_app="$products/Debug-iphonesimulator/InkOTP.app"
-codesign -d --entitlements - "$reference_app" > "$work/simulator-entitlements.plist"
-signing_args=(--force --sign -)
-if [[ -s "$work/simulator-entitlements.plist" ]]; then
-  signing_args+=(--entitlements "$work/simulator-entitlements.plist" --generate-entitlement-der)
-fi
-for app in "$previous_app" "$current_app"; do
-  codesign "${signing_args[@]}" "$app"
-  codesign --verify --strict "$app"
-done
+# The candidate must already have a valid simulator signature from the
+# packaging job. Both releases are installed directly from their ZIPs.
+codesign --verify --strict "$current_app"
 
 verify_installed() {
   local app=$1 build=$2 installed
