@@ -102,8 +102,8 @@ struct VaultTransfers: ViewModifier {
             ) { current, password in
                 let token = operation
                 Task {
-                    await state.setRecovery(password: password, currentPassword: current)
-                    guard operation == token, state.error == nil else { return }
+                    let committed = await state.setRecovery(password: password, currentPassword: current)
+                    guard operation == token, committed else { return }
                     finish()
                     notice = "Recovery password saved. Export a fresh backup to use this password when restoring."
                 }
@@ -186,8 +186,8 @@ struct VaultTransfers: ViewModifier {
                         replace: Bool = false, recovery: String? = nil) {
         let token = operation
         Task {
-            await state.commitImport(preview, policy: policy, replace: replace, restorePassword: recovery)
-            guard operation == token, state.error == nil else { return }
+            let committed = await state.commitImport(preview, policy: policy, replace: replace, restorePassword: recovery)
+            guard operation == token, committed else { return }
             finish()
             notice = "Accounts imported"
         }
@@ -203,12 +203,11 @@ struct VaultTransfers: ViewModifier {
     }
 
     private func save(_ payload: ExportPayload) {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("inkotp-export-" + UUID().uuidString, isDirectory: true)
+        let directory = ExportStaging.root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let file = directory.appendingPathComponent(payload.filename)
         temporaryExport = directory
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try payload.data.write(to: file, options: [.completeFileProtection, .atomic])
             state.beginPicker()
             route = .exportPicker(file)

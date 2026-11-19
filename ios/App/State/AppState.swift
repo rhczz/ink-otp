@@ -126,6 +126,7 @@ final class AppState: ObservableObject {
     func unlock() async {
         guard phase == .locked else { return }
         await perform { token in
+            try await loadStoredPolicy(token: token)
             let context = LAContext()
             if systemAuthenticationEnabled {
                 do { try await authenticate(context, reason: "Verify your identity to open InkOTP.", token: token) }
@@ -145,8 +146,10 @@ final class AppState: ObservableObject {
     }
 
     func unlock(password: String) async {
-        guard phase == .locked, recoveryConfigured else { return }
+        guard phase == .locked else { return }
         await perform { token in
+            try await loadStoredPolicy(token: token)
+            guard recoveryConfigured else { throw VaultFailure.recoveryNotSet }
             if systemAuthenticationEnabled {
                 guard systemRecoveryRequired else { throw VaultFailure.systemAuthenticationRequired }
                 try await authenticate(LAContext(), reason: "Verify your identity to reconnect InkOTP.", token: token)
@@ -168,6 +171,7 @@ final class AppState: ObservableObject {
                 try await authenticate(LAContext(), reason: "Verify your identity to erase the vault.", token: token)
             }
             try await repository.erase()
+            ExportStaging.clear()
             guard current(token) else { return }
             defaults.removeObject(forKey: Preference.lastBackup)
             defaults.removeObject(forKey: Preference.backupRevision)
@@ -179,15 +183,21 @@ final class AppState: ObservableObject {
         }
     }
 
-    func setRecovery(password: String, currentPassword: String? = nil) async {
-        guard let session else { return }
+    func setRecovery(password: String, currentPassword: String? = nil) async -> Bool {
+        guard let session else { return false }
+        var committed = false
         await perform { token in
             if systemAuthenticationEnabled {
                 try await authenticate(LAContext(), reason: "Verify your identity to change the recovery password.", token: token)
             }
             let updated = try await repository.setRecovery(password, current: currentPassword, session: session, authorized: systemAuthenticationEnabled)
-            if current(token) { recoveryConfigured = true; install(updated) }
+            if current(token) {
+                recoveryConfigured = true
+                install(updated)
+                committed = true
+            }
         }
+        return committed
     }
 
     func clearRecovery() async {
@@ -307,12 +317,13 @@ final class AppState: ObservableObject {
     func commitImport(
         _ preview: ImportPreview, policy: MergeConflictPolicy = .keepLocal, replace: Bool = false,
         restorePassword: String? = nil
-    ) async {
-        guard !busy else { return }
+    ) async -> Bool {
+        guard !busy else { return false }
         guard let pending = pendingImport, pending.id == preview.id, pending.revision == sessionRevision else {
             error = VaultFailure.stale.rawValue
-            return
+            return false
         }
+        var committed = false
         if session == nil {
             await perform { token in
                 guard let restorePassword else { throw VaultFailure.recoveryNotSet }
@@ -326,16 +337,31 @@ final class AppState: ObservableObject {
                 pendingImport = nil
                 recoveryConfigured = true
                 systemAuthenticationEnabled = (try await repository.metadata())?.systemAuthenticationEnabled ?? false
-                if current(token) { install(restored) }
+                if current(token) {
+                    install(restored)
+                    committed = true
+                }
             }
-            return
+            return committed
         }
-        await mutate { model in
+        guard var session else { return false }
+        await perform { token in
+            let requiresAuth = systemAuthenticationEnabled
+            if requiresAuth {
+                try await authenticate(LAContext(), reason: "Verify your identity to import accounts.", token: token)
+            }
+            guard current(token) else { return }
             let remote = Self.importItems(pending.vault.items)
-            model.items = replace ? remote : BackupMerge.merge(localItems: model.items, remoteItems: remote, policy: policy).items
-            Self.normalizeOrder(&model)
+            let local = session.model.items
+            session.model.items = replace ? remote : BackupMerge.merge(localItems: local, remoteItems: remote, policy: policy).items
+            Self.normalizeOrder(&session.model)
+            let next = try await repository.commitImport(session, authorized: requiresAuth)
+            guard current(token) else { return }
+            pendingImport = nil
+            install(next)
+            committed = true
         }
-        if error == nil, !busy { pendingImport = nil }
+        return committed
     }
 
     func cancelImport() {
@@ -433,6 +459,17 @@ final class AppState: ObservableObject {
             catch { return }
             if scene == .background { endSession(clearClipboard: false) }
         }
+    }
+
+    private func loadStoredPolicy(token: UUID) async throws {
+        let metadata = try await repository.metadata()
+        guard current(token) else { throw VaultFailure.cancelled }
+        guard let metadata else {
+            phase = .setup
+            throw VaultFailure.cancelled
+        }
+        recoveryConfigured = metadata.recoveryConfigured
+        systemAuthenticationEnabled = metadata.systemAuthenticationEnabled
     }
 
     private func refreshMetadata() async {

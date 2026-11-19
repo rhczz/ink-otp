@@ -215,6 +215,7 @@ struct VaultScreen: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityHint("Copy verification code")
+                        .accessibilityIdentifier("account.copy")
                         .disabled(date == nil)
                     } else {
                         accountCode(item, title: title, hidden: true, date: nil)

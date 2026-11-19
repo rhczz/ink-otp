@@ -22,12 +22,13 @@ jobs:
       - name: Require a versioned release from master
         env:
           IOS_TAG: ${{ github.ref_name }}
+          IOS_RELEASE_SIGNED: ${{ vars.INKOTP_IOS_RELEASE_SIGNED }}
         run: |
           [[ "$IOS_TAG" =~ ^ios-v[0-9]+\.[0-9]+\.[0-9]+(-preview\.[0-9]+)?$ ]]
           git merge-base --is-ancestor HEAD origin/master
           project_version=$(awk '/MARKETING_VERSION:/ {gsub(/"/,"",$2); print $2}' ios/project.yml)
           [[ "$IOS_TAG" == "ios-v$project_version" || "$IOS_TAG" == "ios-v$project_version"-preview.* ]]
-          if [[ "$IOS_TAG" != *-preview.* && "${{ vars.INKOTP_IOS_RELEASE_SIGNED }}" != true ]]; then
+          if [[ "$IOS_TAG" != *-preview.* && "$IOS_RELEASE_SIGNED" != true ]]; then
             echo '::error::A stable release requires the signed IPA job and Apple provisioning.'
             exit 1
           fi
@@ -68,7 +69,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: always() && needs.verify.result == 'success' && (needs.sign.result == 'success' || needs.sign.result == 'skipped')
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.sign.result == 'success' || needs.sign.result == 'skipped') }}
     needs: [verify, sign]
     runs-on: ubuntu-latest
     timeout-minutes: 10

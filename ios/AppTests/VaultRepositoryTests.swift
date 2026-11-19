@@ -104,6 +104,48 @@ final class VaultRepositoryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
 
+    func testImportRotatesKeyAndHonorsSystemAuthenticationPolicy() async throws {
+        let (url, _, repository) = makeRepository()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        var session = try await repository.create(model: VaultModel(), password: "public fixture password")
+        try await repository.setSystemAuthentication(true, session: session, authorized: true)
+        let previousVaultID = session.model.vaultId
+        session.model.items.append(VaultItem(accountName: "Imported", secret: Data("public-test-seed".utf8)))
+        await expect(.systemAuthenticationRequired) {
+            _ = try await repository.commitImport(session, authorized: false)
+        }
+        let imported = try await repository.commitImport(session, authorized: true)
+        XCTAssertNotEqual(imported.key, session.key)
+        XCTAssertNotEqual(imported.model.vaultId, previousVaultID)
+        let opened = try await repository.open(context: LAContext(), authorized: true)
+        XCTAssertEqual(opened.model, imported.model)
+    }
+
+    @MainActor
+    func testCancelledPreviewCannotBeCommitted() async throws {
+        let (url, _, repository) = makeRepository()
+        let suite = "InkOTP.Tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+        }
+        defaults.set(true, forKey: "PrivacyPolicyConsent.1")
+        let state = AppState(repository: repository, defaults: defaults)
+        await state.start()
+        XCTAssertEqual(state.phase, .setup)
+        await state.setup(password: "public fixture password")
+        let uri = "otpauth://totp/Fixture:Public?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Fixture"
+        let result = await state.previewImport(data: Data(uri.utf8), password: nil)
+        let preview = try XCTUnwrap(result)
+        XCTAssertEqual(preview.added, 1)
+        XCTAssertTrue(preview.items.allSatisfy { $0.secret.isEmpty })
+        state.cancelImport()
+        let committed = await state.commitImport(preview)
+        XCTAssertFalse(committed)
+        XCTAssertEqual(state.vault?.items.count, 0)
+    }
+
     private func makeRepository() -> (URL, MemoryKeys, VaultRepository) {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString).appendingPathComponent("vault.json")

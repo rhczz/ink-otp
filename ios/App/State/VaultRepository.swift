@@ -158,6 +158,19 @@ actor VaultRepository {
         try InterchangeCodec.decode(data, password: password)
     }
 
+    func commitImport(_ session: VaultSession, authorized: Bool) throws -> VaultSession {
+        let file = try read()
+        try authenticateMetadata(file, key: session.key)
+        if file.systemAuthentication && !authorized { throw VaultFailure.systemAuthenticationRequired }
+        guard let recovery = session.recovery else { throw VaultFailure.recoveryNotSet }
+        var model = session.model
+        model.vaultId = UUID().uuidString.lowercased()
+        model.updatedAt = VaultJson.isoTimestamp()
+        let next = VaultSession(key: SymmetricKey(size: .bits256), recovery: recovery, model: try VaultJson.validate(model))
+        try replaceKey(for: next, systemAuthentication: file.systemAuthentication, oldKeyID: file.keyID)
+        return next
+    }
+
     func restore(model: VaultModel, password: String, authorized: Bool) throws -> VaultSession {
         let exists = try hasStorageFile()
         if exists && !authorized { throw VaultFailure.systemAuthenticationRequired }

@@ -9,6 +9,7 @@ struct InkOTPApp: App {
 
     @MainActor
     init() {
+        ExportStaging.clear()
         let path = URL.applicationSupportDirectory
             .appending(path: "InkOTP", directoryHint: .isDirectory)
             .appending(path: "vault-v1.json", directoryHint: .notDirectory)

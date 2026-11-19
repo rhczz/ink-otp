@@ -261,3 +261,4 @@
 "Use device authentication" = "使用系统验证";
 "No recovery password is set. Set one before changing devices or reinstalling the app." = "当前为设备绑定模式。换机或重装前请先设置恢复口令。";
 "scrypt license" = "scrypt 许可证";
+"Verify your identity to import accounts." = "验证身份以导入账号。";

@@ -44,8 +44,8 @@ jobs:
             xcrun xcresulttool get test-results summary --path ios/build/results.xcresult > ios/build/reports/simulator-tests.json
             xcrun xccov view --report --json ios/build/results.xcresult > ios/build/reports/simulator-line-coverage.json
           fi
-          core_binary=$(find ios/Core/.build -name InkOTPCorePackageTests -type f | head -1)
-          core_profile=$(find ios/Core/.build -name default.profdata -type f | head -1)
+          core_binary=$(find ios/Core/.build -type f -path '*/InkOTPCorePackageTests.xctest/Contents/MacOS/InkOTPCorePackageTests' -print -quit)
+          core_profile=$(find ios/Core/.build -name default.profdata -type f -print -quit)
           if [[ -n "$core_binary" && -n "$core_profile" ]]; then
             xcrun llvm-cov report "$core_binary" -instr-profile="$core_profile" > ios/build/reports/core-coverage.txt
             cat ios/build/reports/core-coverage.txt
