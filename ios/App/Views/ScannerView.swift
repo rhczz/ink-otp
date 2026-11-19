@@ -1,4 +1,6 @@
 import AVFoundation
+import CoreImage
+import CoreML
 import CoreTransferable
 import ImageIO
 import PhotosUI
@@ -310,34 +312,79 @@ struct QRPhotoButton: View {
     }
 }
 
-private struct QRPhoto: Transferable, Sendable {
+struct QRPhoto: Transferable, Sendable {
+    static let maxEncodedBytes = 16 * 1024 * 1024
+    private static let maxSourceEdge = 32_768
+    private static let maxSourcePixels = 100_000_000
+    private static let maxDecodedEdge = 2048
+    private static let pngSignature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+    // The final, zero-length PNG IEND chunk has a fixed type and CRC.
+    private static let pngEnd: [UInt8] = [0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]
+
     let bytes: Data
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(importedContentType: .image) { file in
-            QRPhoto(bytes: try readBoundedFile(file.file, maximum: 16 * 1024 * 1024))
+            try read(file.file)
         }
     }
 
+    static func read(_ url: URL) throws -> Self {
+        Self(bytes: try readBoundedFile(url, maximum: maxEncodedBytes))
+    }
+
     func decode() throws -> String? {
+        guard bytes.count <= Self.maxEncodedBytes else { throw CocoaError(.fileReadTooLarge) }
+        if bytes.starts(with: Self.pngSignature),
+           !bytes.suffix(Self.pngEnd.count).elementsEqual(Self.pngEnd) {
+            throw CocoaError(.fileReadCorruptFile)
+        }
         let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(bytes as CFData, options),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
               let width = properties[kCGImagePropertyPixelWidth as String] as? Int,
               let height = properties[kCGImagePropertyPixelHeight as String] as? Int,
-              (1...32_768).contains(width), (1...32_768).contains(height),
-              width * height <= 100_000_000,
+              (1...Self.maxSourceEdge).contains(width), (1...Self.maxSourceEdge).contains(height),
+              width * height <= Self.maxSourcePixels,
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceThumbnailMaxPixelSize: 2048,
+                kCGImageSourceThumbnailMaxPixelSize: Self.maxDecodedEdge,
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-              ] as CFDictionary)
+                kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary),
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+              image.width <= Self.maxDecodedEdge, image.height <= Self.maxDecodedEdge
         else {
             throw CocoaError(.fileReadCorruptFile)
         }
         let request = VNDetectBarcodesRequest()
         request.symbologies = [.qr]
-        try VNImageRequestHandler(cgImage: image).perform([request])
-        return request.results?.compactMap(\.payloadStringValue).first(where: { $0.utf16.count <= 16_384 })
+        #if targetEnvironment(simulator)
+        // Vision's frame detector can select an accelerator unavailable in a hosted VM.
+        for (stage, devices) in (try? request.supportedComputeStageDevices) ?? [:] {
+            if let cpu = devices.first(where: { if case .cpu = $0 { return true }; return false }) {
+                request.setComputeDevice(cpu, for: stage)
+            }
+        }
+        #endif
+        if (try? VNImageRequestHandler(cgImage: image).perform([request])) != nil,
+           let code = request.results?.compactMap(\.payloadStringValue).first(where: Self.acceptablePayload) {
+            return code
+        }
+
+        // This system detector also works when Vision's barcode model is unavailable.
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let detector = CIDetector(
+            ofType: CIDetectorTypeQRCode,
+            context: context,
+            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
+        )
+        return detector?.features(in: CIImage(cgImage: image))
+            .compactMap { ($0 as? CIQRCodeFeature)?.messageString }
+            .first(where: Self.acceptablePayload)
+    }
+
+    private static func acceptablePayload(_ value: String) -> Bool {
+        !value.isEmpty && value.utf16.count <= 16_384
     }
 }

@@ -3,8 +3,6 @@ import Foundation
 import InkOTPCore
 import LocalAuthentication
 import SwiftUI
-import UIKit
-import UniformTypeIdentifiers
 
 struct ImportPreview {
     fileprivate let id: UUID
@@ -64,6 +62,7 @@ final class AppState: ObservableObject {
 
     private let repository: VaultRepository
     private let defaults: UserDefaults
+    private let clipboard: CodeClipboard
     private let clock = ContinuousClock()
     private var session: VaultSession?
     private var sessionRevision = UUID()
@@ -80,11 +79,12 @@ final class AppState: ObservableObject {
     private var activeOperation = UUID()
     private var attemptedAutomaticUnlock = false
     private var allowDeviceAutoUnlock = false
-    private var clipboardChangeCount: Int?
+    private var lastOperation: VaultOperationTiming?
 
-    init(repository: VaultRepository, defaults: UserDefaults = .standard) {
+    init(repository: VaultRepository, defaults: UserDefaults = .standard, clipboard: CodeClipboard? = nil) {
         self.repository = repository
         self.defaults = defaults
+        self.clipboard = clipboard ?? CodeClipboard()
         lastBackupAt = defaults.string(forKey: Preference.lastBackup)
     }
 
@@ -107,7 +107,7 @@ final class AppState: ObservableObject {
 
     func setup(password: String?) async {
         guard phase == .setup else { return }
-        await perform { token in
+        await perform(.setup) { token in
             let session = try await repository.create(model: VaultModel(), password: password)
             guard current(token) else { return }
             recoveryConfigured = password != nil
@@ -125,7 +125,7 @@ final class AppState: ObservableObject {
 
     func unlock() async {
         guard phase == .locked else { return }
-        await perform { token in
+        await perform(.unlock) { token in
             try await loadStoredPolicy(token: token)
             let context = LAContext()
             if systemAuthenticationEnabled {
@@ -147,7 +147,7 @@ final class AppState: ObservableObject {
 
     func unlock(password: String) async {
         guard phase == .locked else { return }
-        await perform { token in
+        await perform(.unlock) { token in
             try await loadStoredPolicy(token: token)
             guard recoveryConfigured else { throw VaultFailure.recoveryNotSet }
             if systemAuthenticationEnabled {
@@ -166,7 +166,7 @@ final class AppState: ObservableObject {
 
     func erase() async {
         guard phase == .unlocked else { return }
-        await perform { token in
+        await perform(.erase) { token in
             if systemAuthenticationEnabled {
                 try await authenticate(LAContext(), reason: "Verify your identity to erase the vault.", token: token)
             }
@@ -186,7 +186,7 @@ final class AppState: ObservableObject {
     func setRecovery(password: String, currentPassword: String? = nil) async -> Bool {
         guard let session else { return false }
         var committed = false
-        await perform { token in
+        await perform(.recovery) { token in
             if systemAuthenticationEnabled {
                 try await authenticate(LAContext(), reason: "Verify your identity to change the recovery password.", token: token)
             }
@@ -202,7 +202,7 @@ final class AppState: ObservableObject {
 
     func clearRecovery() async {
         guard let session else { return }
-        await perform { token in
+        await perform(.recovery) { token in
             try await authenticate(LAContext(), reason: "Verify your identity to remove the recovery password.", token: token)
             let updated = try await repository.clearRecovery(session: session, authorized: true)
             if current(token) { recoveryConfigured = false; install(updated) }
@@ -215,7 +215,7 @@ final class AppState: ObservableObject {
             error = VaultFailure.recoveryNotSet.rawValue
             return
         }
-        await perform { token in
+        await perform(.authentication) { token in
             try await authenticate(LAContext(), reason: "Verify your identity to change device authentication.", token: token)
             try await repository.setSystemAuthentication(enabled, session: session, authorized: true)
             if current(token) { systemAuthenticationEnabled = enabled }
@@ -286,19 +286,14 @@ final class AppState: ObservableObject {
     func copy(code: String) {
         guard scene == .active, phase == .unlocked, code.count == 6 || code.count == 8,
               code.utf8.allSatisfy({ (48...57).contains($0) }) else { return }
-        let duration = vault?.settings.clipboardClearSeconds ?? 30
-        var options: [UIPasteboard.OptionsKey: Any] = [.localOnly: true]
-        if duration > 0 { options[.expirationDate] = Date().addingTimeInterval(TimeInterval(duration)) }
-        let clipboard = UIPasteboard.general
-        clipboard.setItems([[UTType.plainText.identifier: code]], options: options)
-        clipboardChangeCount = clipboard.changeCount
+        clipboard.copy(code, clearAfter: vault?.settings.clipboardClearSeconds ?? 30)
     }
 
     func previewImport(data: Data, password: String?) async -> ImportPreview? {
         guard phase != .privacy, !busy else { return nil }
         pendingImport = nil
         var preview: ImportPreview?
-        await perform { token in
+        await perform(.importBackup) { token in
             let imported = try await repository.decodeImport(data, password: password)
             guard current(token) else { return }
             let local = session?.model.items ?? []
@@ -325,7 +320,7 @@ final class AppState: ObservableObject {
         }
         var committed = false
         if session == nil {
-            await perform { token in
+            await perform(.importBackup) { token in
                 guard let restorePassword else { throw VaultFailure.recoveryNotSet }
                 let restoringExisting = phase == .locked || phase == .unavailable
                 if restoringExisting {
@@ -345,7 +340,7 @@ final class AppState: ObservableObject {
             return committed
         }
         guard var session else { return false }
-        await perform { token in
+        await perform(.importBackup) { token in
             let requiresAuth = systemAuthenticationEnabled
             if requiresAuth {
                 try await authenticate(LAContext(), reason: "Verify your identity to import accounts.", token: token)
@@ -375,7 +370,7 @@ final class AppState: ObservableObject {
     func export(format: InterchangeFormat, password: String?) async -> ExportPayload? {
         guard let session else { return nil }
         var payload: ExportPayload?
-        await perform { token in
+        await perform(.exportBackup) { token in
             let output = try await repository.export(session, format: format, password: password)
             guard current(token) else { return }
             pendingExportRevision = session.model.updatedAt
@@ -438,7 +433,19 @@ final class AppState: ObservableObject {
         }
     }
 
-    func privateStorageByteCount() async -> Int? { await repository.byteCount() }
+    func sampleResources() async -> VaultResourceSample? {
+        guard scene == .active, phase == .unlocked else { return nil }
+        let currentSession = sessionID
+        let operation = lastOperation
+        let started = clock.now
+        let bytes = await repository.byteCount()
+        guard scene == .active, sessionID == currentSession, !Task.isCancelled else { return nil }
+        let residentMemory = VaultResourceSample.residentMemory()
+        return VaultResourceSample(
+            residentMemoryBytes: residentMemory, vaultBytes: bytes,
+            duration: started.duration(to: clock.now), lastOperation: operation
+        )
+    }
 
     func updateClockDrift() {
         if driftDetector.sample().drifted { clockDriftDetected = true }
@@ -473,7 +480,7 @@ final class AppState: ObservableObject {
     }
 
     private func refreshMetadata() async {
-        await perform { token in
+        await perform(.load) { token in
             do {
                 let metadata = try await repository.metadata()
                 guard current(token) else { return }
@@ -528,15 +535,12 @@ final class AppState: ObservableObject {
         backgroundDeadline = nil
         backgroundTask?.cancel()
         error = nil
-        if clearClipboard, let clipboardChangeCount, clipboardChangeCount == UIPasteboard.general.changeCount {
-            UIPasteboard.general.items = []
-        }
-        clipboardChangeCount = nil
+        if clearClipboard { clipboard.clearOwnedCode() }
     }
 
     private func mutate(_ change: (inout VaultModel) throws -> Void) async {
         guard var snapshot = session else { return }
-        await perform { token in
+        await perform(.save) { token in
             try change(&snapshot.model)
             snapshot.model.updatedAt = VaultJson.isoTimestamp()
             let saved = try await repository.save(snapshot)
@@ -544,13 +548,19 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func perform(_ body: (UUID) async throws -> Void) async {
+    private func perform(_ operation: VaultOperation, _ body: (UUID) async throws -> Void) async {
         guard !busy else { return }
         busy = true
         error = nil
         let token = UUID()
         activeOperation = token
-        defer { busy = false }
+        let started = clock.now
+        defer {
+            if current(token) {
+                lastOperation = VaultOperationTiming(kind: operation, duration: started.duration(to: clock.now))
+            }
+            busy = false
+        }
         do { try await body(token) }
         catch VaultFailure.cancelled { }
         catch is CancellationError { }

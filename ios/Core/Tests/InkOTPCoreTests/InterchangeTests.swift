@@ -76,7 +76,7 @@ final class InterchangeTests: XCTestCase {
         let encrypted = try InterchangeCodec.decode(fixture("2fas_authenticator_encrypted.2fas"), password: "test")
         XCTAssertEqual(["Mason", "Elijah", "James", "Mason"], plain.model.items.map(\.accountName))
         XCTAssertEqual([30, 50, 30, 30], plain.model.items.map(\.period))
-        XCTAssertEqual(try profiles(plain.model), try profiles(encrypted.model))
+        XCTAssertEqual(profiles(plain.model), profiles(encrypted.model))
     }
 
     func testBoundsAndStrictExternalPassword() throws {
@@ -87,7 +87,7 @@ final class InterchangeTests: XCTestCase {
             let data = try InterchangeCodec.encode(model, format: format, password: supplied).bytes
             assertFailure(.passwordRequired) { _ = try InterchangeCodec.decode(data) }
             assertFailure(.authenticationFailed) { _ = try InterchangeCodec.decode(data, password: nfc) }
-            XCTAssertEqual(try profiles(model), try profiles(InterchangeCodec.decode(data, password: supplied).model))
+            XCTAssertEqual(profiles(model), profiles(try InterchangeCodec.decode(data, password: supplied).model))
         }
 
         let blob = Data(repeating: 0, count: InterchangeCodec.maxFileBytes + 1)
@@ -141,13 +141,7 @@ final class InterchangeTests: XCTestCase {
 
     #if os(macOS)
     func testExportsForAndroidAndPythonAndRoundTrips() throws {
-        var model = try VaultJson.decode(nativeFixture("backup-v1.expected.json"))
-        model.items.append(VaultItem(
-            id: "00000000-0000-4000-8000-000000000003",
-            type: .hotp, issuer: "Public Counter", accountName: "sample",
-            secret: Data("12345678901234567890".utf8), counter: 10_300,
-            sortIndex: 3000, createdAt: model.createdAt, updatedAt: model.updatedAt
-        ))
+        let model = try publicInterchangeModel()
         let directory = repo.appendingPathComponent("ios/Core/.contract-exports")
         let crosscheck = directory.appendingPathComponent("crosscheck")
         let interoperability = directory.appendingPathComponent("interoperability")
@@ -158,12 +152,11 @@ final class InterchangeTests: XCTestCase {
         try expected.write(to: crosscheck.appendingPathComponent("swift-backup.expected.json"), options: .atomic)
         try expected.write(to: interoperability.appendingPathComponent("expected.json"), options: .atomic)
         for format in InterchangeFormat.allCases {
-            let result = try InterchangeCodec.encode(model, format: format, password: fixturePassword)
-            let decoded = try InterchangeCodec.decode(result.bytes, password: fixturePassword).model
-            XCTAssertEqual(try profiles(model), try profiles(decoded), format.rawValue)
+            let password = format.requiresPassword ? fixturePassword : nil
+            let result = try InterchangeCodec.encode(model, format: format, password: password)
+            try assertInterchange(result.bytes, format: format, expected: model)
             try result.bytes.write(to: interoperability.appendingPathComponent(format.filename(prefix: "swift")), options: .atomic)
             if format == .inkotp2fab {
-                XCTAssertEqual(model, decoded)
                 try result.bytes.write(to: crosscheck.appendingPathComponent("swift-backup.2fab"), options: .atomic)
             }
         }
@@ -175,17 +168,57 @@ final class InterchangeTests: XCTestCase {
             ProcessInfo.processInfo.environment["INKOTP_REQUIRE_ANDROID_CONTRACT"] != "1" {
             throw XCTSkip("Android exports are supplied by the cross-platform Actions workflow")
         }
+        // The independent Kotlin backup cross-check uses the original two accounts
+        // with their timestamps set to the library timestamps.
+        var legacy = try VaultJson.decode(nativeFixture("backup-v1.expected.json"))
+        for index in legacy.items.indices {
+            legacy.items[index].createdAt = legacy.createdAt
+            legacy.items[index].updatedAt = legacy.updatedAt
+        }
         let crosscheck = directory.appendingPathComponent("crosscheck")
-        let expected = try VaultJson.decode(Data(contentsOf: crosscheck.appendingPathComponent("kotlin-backup.expected.json")))
+        let nativeSource = try VaultJson.decode(Data(contentsOf: crosscheck.appendingPathComponent("kotlin-backup.expected.json")))
         let backup = try Data(contentsOf: crosscheck.appendingPathComponent("kotlin-backup.2fab"))
-        XCTAssertEqual(expected, try BackupCodec.open(backup, password: fixturePassword))
+        XCTAssertTrue(nativeSource == legacy, "The Android native backup input differs from the independent example")
+        XCTAssertTrue(try BackupCodec.open(backup, password: fixturePassword) == legacy, "Android native backup changed the vault")
 
         let interchange = directory.appendingPathComponent("interoperability")
-        let profilesExpected = try profiles(VaultJson.decode(Data(contentsOf: interchange.appendingPathComponent("expected.json"))))
+        let expected = try publicInterchangeModel()
+        let filenames = InterchangeFormat.allCases.map { $0.filename(prefix: "kotlin") }
+        let files = try FileManager.default.contentsOfDirectory(atPath: interchange.path)
+        XCTAssertEqual(Set(files), Set(filenames + ["expected.json"]), "Android interchange inventory")
+
+        let reported = try VaultJson.decode(Data(contentsOf: interchange.appendingPathComponent("expected.json")))
+        XCTAssertTrue(reported == expected, "The Android interchange input differs from the independent example")
         for format in InterchangeFormat.allCases {
-            let data = try Data(contentsOf: interchange.appendingPathComponent(format.filename(prefix: "kotlin")))
-            XCTAssertEqual(format, try InterchangeCodec.detect(data))
-            XCTAssertEqual(profilesExpected, try profiles(InterchangeCodec.decode(data, password: fixturePassword).model), format.rawValue)
+            let filename = format.filename(prefix: "kotlin")
+            let data = try Data(contentsOf: interchange.appendingPathComponent(filename))
+            try assertInterchange(data, format: format, expected: expected)
+        }
+    }
+
+    private func publicInterchangeModel() throws -> VaultModel {
+        var model = try VaultJson.decode(nativeFixture("backup-v1.expected.json"))
+        let secret = try XCTUnwrap(model.items.first).secret
+        model.settings = VaultSettings(lockTimeoutSeconds: 120, hideCodesByDefault: true, clipboardClearSeconds: 45)
+        model.items.append(VaultItem(
+            id: "00000000-0000-4000-8000-000000000003",
+            type: .hotp, issuer: "Public Counter", accountName: "sample",
+            secret: secret, counter: 10_300, tags: ["public-fixture", "示例"],
+            icon: VaultIcon(kind: "letter", value: "P", colorHex: "#123456"),
+            sortIndex: 3000, origin: "import", createdAt: model.createdAt, updatedAt: model.updatedAt,
+            website: "https://example.com/inkotp-fixture"
+        ))
+        return model
+    }
+
+    private func assertInterchange(_ data: Data, format: InterchangeFormat, expected: VaultModel) throws {
+        XCTAssertEqual(try InterchangeCodec.detect(data), format, format.rawValue)
+        let imported = try InterchangeCodec.decode(data, password: format.requiresPassword ? fixturePassword : nil)
+        XCTAssertEqual(imported.format, format)
+        if format == .inkotp2fab {
+            XCTAssertTrue(imported.model == expected, "\(format.rawValue): complete vault changed")
+        } else {
+            XCTAssertTrue(profiles(imported.model) == profiles(expected), "\(format.rawValue): OTP fields or order changed")
         }
     }
     #endif
@@ -198,8 +231,30 @@ final class InterchangeTests: XCTestCase {
         try nativeFixture("interoperability/" + path)
     }
 
-    private func profiles(_ model: VaultModel) throws -> [String] {
-        model.items.sorted { $0.sortIndex < $1.sortIndex }.map { OtpauthParser.encode($0) }
+    private func profiles(_ model: VaultModel) -> [Profile] {
+        model.items.map(Profile.init)
+    }
+
+    private struct Profile: Equatable {
+        let type: OtpType
+        let issuer: String?
+        let account: String
+        let secret: Data
+        let algorithm: OtpAlgorithm
+        let digits: Int
+        let period: Int?
+        let counter: Int64?
+
+        init(_ item: VaultItem) {
+            type = item.type
+            issuer = item.issuer
+            account = item.accountName
+            secret = item.secret
+            algorithm = item.algorithm
+            digits = item.digits
+            period = item.type == .totp ? item.period : nil
+            counter = item.counter
+        }
     }
 
     private func assertFailure(_ code: InterchangeError, _ action: () throws -> Void) {

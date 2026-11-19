@@ -1,6 +1,5 @@
 import InkOTPCore
 import SwiftUI
-import UIKit
 
 @MainActor
 struct RootView: View {
@@ -8,12 +7,12 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
     @State private var showingPolicy = false
-    @State private var isCaptured = UIScreen.main.isCaptured
+    @State private var curtainMode: CurtainMode = .inactive
     @State private var transfer: TransferRequest?
     @State private var alert: LocalizedStringKey?
     @State private var completingSetup = false
 
-    private var canShowContent: Bool { scenePhase == .active && !isCaptured }
+    private var canShowContent: Bool { scenePhase == .active && !curtainMode.coversContent }
 
     var body: some View {
         protectedNavigation
@@ -22,16 +21,16 @@ struct RootView: View {
             } message: {
                 alertMessage
             }
+            .background {
+                CurtainView(mode: $curtainMode).frame(width: 0, height: 0)
+            }
     }
 
     private var protectedNavigation: some View {
         presentedNavigation
             .onChange(of: state.sessionID) { _, _ in resetPresentation() }
-            .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
-                isCaptured = UIScreen.main.isCaptured
-            }
-            .overlay { screenCover }
-            .accessibilityHidden(!canShowContent && !isCaptured)
+            .accessibilityHidden(!canShowContent)
+            .allowsHitTesting(canShowContent)
     }
 
     private var presentedNavigation: some View {
@@ -98,20 +97,6 @@ struct RootView: View {
                 }
         }
         .tint(Ink.accent)
-    }
-
-    @ViewBuilder
-    private var screenCover: some View {
-        if !canShowContent {
-            Ink.surface.ignoresSafeArea()
-                .overlay {
-                    if isCaptured {
-                        InkHeading(title: "Screen sharing active",
-                                   message: "InkOTP hides vault content while the screen is being recorded or mirrored.",
-                                   symbol: "eye.slash").padding(Ink.xxl)
-                    }
-                }
-        }
     }
 
     private var alertTitle: LocalizedStringKey {
