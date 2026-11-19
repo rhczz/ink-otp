@@ -17,3 +17,5 @@
 在这次运行中，两种架构的 Swift 内核行覆盖率均为 89.8%（1542/1718）。Swift 工具链未生成分支覆盖率。[对应 Android 报告](https://github.com/rhczz/ink-otp/actions/runs/44456484475)显示内核行 1447/1528、分支 892/1258，应用行 3904/4638、分支 1725/2830。
 
 [iOS 实现已合入](https://github.com/rhczz/ink-otp/pull/9)。[三个平台合并后的 CI](https://github.com/rhczz/ink-otp/actions/runs/44458437513)通过 Android 与 iOS 原有门禁、iOS 读取 Android 输出，以及 Android 读取 iOS 输出。[同一提交的 macOS CI](https://github.com/rhczz/ink-otp/actions/runs/44458437466)通过两种 Mac 架构及与 Android 的双向备份检查。
+
+[发布候选的公共测试](https://github.com/rhczz/ink-otp/actions/runs/44465149138)已通过 Android、iOS 和两者之间的双向交换。[同一候选的 macOS 流程](https://github.com/rhczz/ink-otp/actions/runs/44465149032)已通过双架构内核、与 Android 互读、DMG 打包及桌面升级。
