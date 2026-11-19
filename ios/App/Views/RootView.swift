@@ -26,7 +26,6 @@ struct RootView: View {
 
     private var protectedNavigation: some View {
         presentedNavigation
-            .onChange(of: state.phase) { old, new in phaseChanged(from: old, to: new) }
             .onChange(of: state.sessionID) { _, _ in resetPresentation() }
             .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
                 isCaptured = UIScreen.main.isCaptured
@@ -59,7 +58,10 @@ struct RootView: View {
         case .privacy:
             PrivacyGate(state: state, showingPolicy: $showingPolicy)
         case .setup:
-            OnboardingView(state: state, showingPolicy: $showingPolicy, restore: chooseRestore)
+            OnboardingView(
+                state: state, showingPolicy: $showingPolicy,
+                restore: chooseRestore, completeSetup: prepareVault
+            )
         case .locked:
             UnlockView(state: state, restore: chooseRestore)
         case .unlocked:
@@ -137,14 +139,17 @@ struct RootView: View {
         transfer = .importBackup
     }
 
-    private func phaseChanged(from old: AppState.Phase, to new: AppState.Phase) {
-        completingSetup = old == .setup && new == .unlocked && transfer == nil
+    private func prepareVault(password: String?) async {
+        completingSetup = true
+        await state.setup(password: password)
+        if state.phase != .unlocked { completingSetup = false }
     }
 
     private func resetPresentation() {
         showingPolicy = false
         transfer = nil
         alert = nil
+        completingSetup = false
     }
 
     private func clearAlert() {
@@ -210,6 +215,7 @@ private struct OnboardingView: View {
     @ObservedObject var state: AppState
     @Binding var showingPolicy: Bool
     let restore: () -> Void
+    let completeSetup: (String?) async -> Void
 
     @State private var starting = false
     @State private var skipConfirm = false
@@ -255,7 +261,7 @@ private struct OnboardingView: View {
                     .frame(maxWidth: .infinity, minHeight: Ink.touch)
             }
         }
-        .confirmationDialog("Skip recovery password?", isPresented: $skipConfirm, titleVisibility: .visible) {
+        .alert("Skip recovery password?", isPresented: $skipConfirm) {
             Button("Skip for now", role: .destructive) { start(nil) }
                 .accessibilityIdentifier("onboarding.skipConfirm")
             Button("Cancel", role: .cancel) {}
@@ -267,7 +273,7 @@ private struct OnboardingView: View {
     private func start(_ submitted: String?) {
         password = ""
         confirmation = ""
-        Task { await state.setup(password: submitted) }
+        Task { await completeSetup(submitted) }
     }
 }
 

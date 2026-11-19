@@ -10,7 +10,11 @@ protocol VaultKeyStore: Sendable {
 }
 
 struct DeviceKeychain: VaultKeyStore {
-    let service = "io.github.rhczz.inkotp.vault.v1"
+    private let service: String
+
+    init(service: String = "io.github.rhczz.inkotp.vault.v1") {
+        self.service = service
+    }
 
     func insert(_ key: Data, id: UUID, requiresAuthentication: Bool) throws {
         var query = item(id: id)

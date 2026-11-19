@@ -8,6 +8,8 @@ Android v0.5.3 已发布。iOS 目录此前只有 Phase 2 计划。本次以该 
 
 首轮 [GitHub Actions](https://github.com/rhczz/ink-otp/actions/runs/44447570052) 验证了 Swift 公共测试（执行 22 项，通过 21 项，Android 产物互读在独立任务通过）。Android 核心测试报告 108 项，行 94.634%、分支 70.747%。App 报告 183 项，行 84.174%、分支 60.954%。Xcode 首轮在 SwiftUI 根视图表达式超时，已拆分表达式并复跑。第二轮 Xcode 构建和 5 项模拟器仓储测试通过，XCUITest 在原生确认控件匹配时失败，已调整测试选择器。完整验证见 [PR #9 的最新检查](https://github.com/rhczz/ink-otp/pull/9/checks)。签名 IPA 和 iPhone 真机验收另行验证。
 
+第三轮 GitHub Actions 的模拟器仓储测试 7 项全部通过，含取消导入、认证策略和密钥轮换。Swift 核心生产代码覆盖 1770/1927 行（91.85%）。该次 Xcode 26.3 工具链未输出 Swift 分支计数。初次建库的界面测试仍在修正与重跑。 [第三轮 Actions](https://github.com/rhczz/ink-otp/actions/runs/44449617249)
+
 锁定状态下恢复会保存一份原加密库。启用系统验证时，库内导入重新认证并轮换数据密钥。用户取消认证时继续停留在原表单。系统文件面板只在导出期间使用受文件保护的临时目录，冷启动和清除库时清理残留。
 
 ## 技术决策

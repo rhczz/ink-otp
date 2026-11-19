@@ -5,6 +5,17 @@ import XCTest
 @testable import InkOTP
 
 final class VaultRepositoryTests: XCTestCase {
+    func testNativeKeychainReadsAndDeletesADeviceOnlyKey() throws {
+        let keys = DeviceKeychain(service: "io.github.rhczz.inkotp.tests." + UUID().uuidString)
+        defer { try? keys.deleteAll() }
+        let id = UUID()
+        let bytes = Data(repeating: 0x55, count: 32)
+        try keys.insert(bytes, id: id, requiresAuthentication: false)
+        XCTAssertEqual(try keys.read(id: id, context: LAContext()), bytes)
+        try keys.delete(id: id)
+        XCTAssertThrowsError(try keys.read(id: id, context: LAContext()))
+    }
+
     func testEncryptedVaultPersistsAcrossRepositoryInstancesAndRejectsTampering() async throws {
         let (url, store, repository) = makeRepository()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

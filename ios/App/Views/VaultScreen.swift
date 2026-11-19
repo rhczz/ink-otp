@@ -31,6 +31,50 @@ struct VaultScreen: View {
     }
 
     var body: some View {
+        content
+        .sheet(item: $sheet) { route in
+            NavigationStack {
+                switch route {
+                case .options:
+                    AddOptions(onScan: { sheet = .scan }, onManual: { sheet = .editor($0) },
+                               onCancel: { sheet = nil }, state: state)
+                case .scan:
+                    ScannerView(onFound: { sheet = .editor($0) }, onCancel: { sheet = .options },
+                                onManual: { sheet = .editor("") }, state: state)
+                case .editor(let input):
+                    AddAccountView(state: state, input: input) { sheet = nil }
+                }
+            }
+            .tint(Ink.accent)
+        }
+        .task(id: copied?.id) {
+            guard copied != nil else { return }
+            try? await Task.sleep(for: .seconds(2))
+            if !Task.isCancelled { copied = nil }
+        }
+        .onChange(of: canShowCodes) { _, canShow in
+            if !canShow { copied = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            refreshTime = UUID()
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if completingSetup {
+            AfterSetupView(
+                state: state,
+                finish: finishSetup,
+                scan: { finishSetup(); sheet = .scan },
+                manual: { finishSetup(); sheet = .editor("") }
+            )
+        } else {
+            listContent
+        }
+    }
+
+    private var listContent: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Ink.m) {
                 if searching {
@@ -129,41 +173,6 @@ struct VaultScreen: View {
                     .allowsHitTesting(false)
             }
         }
-        .sheet(item: $sheet) { route in
-            NavigationStack {
-                switch route {
-                case .options:
-                    AddOptions(onScan: { sheet = .scan }, onManual: { sheet = .editor($0) },
-                               onCancel: { sheet = nil }, state: state)
-                case .scan:
-                    ScannerView(onFound: { sheet = .editor($0) }, onCancel: { sheet = .options },
-                                onManual: { sheet = .editor("") }, state: state)
-                case .editor(let input):
-                    AddAccountView(state: state, input: input) { sheet = nil }
-                case .setup:
-                    AfterSetupView(state: state, finish: { sheet = nil },
-                                   scan: { sheet = .scan }, manual: { sheet = .editor("") })
-                }
-            }
-            .tint(Ink.accent)
-        }
-        .task(id: completingSetup) {
-            if completingSetup {
-                completingSetup = false
-                sheet = .setup
-            }
-        }
-        .task(id: copied?.id) {
-            guard copied != nil else { return }
-            try? await Task.sleep(for: .seconds(2))
-            if !Task.isCancelled { copied = nil }
-        }
-        .onChange(of: canShowCodes) { _, canShow in
-            if !canShow { copied = nil }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
-            refreshTime = UUID()
-        }
     }
 
     private var settings: some View {
@@ -175,6 +184,10 @@ struct VaultScreen: View {
 
     private var diagnostics: some View {
         DiagnosticsView(state: state, refresh: resetClock)
+    }
+
+    private func finishSetup() {
+        completingSetup = false
     }
 
     private func resetClock() {
@@ -267,11 +280,10 @@ struct VaultScreen: View {
     }
 
     private enum AddSheet: Identifiable {
-        case setup, options, scan, editor(String)
+        case options, scan, editor(String)
 
         var id: Int {
             switch self {
-            case .setup: 0
             case .options: 1
             case .scan: 2
             case .editor: 3

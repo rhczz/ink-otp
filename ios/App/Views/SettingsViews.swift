@@ -174,6 +174,7 @@ struct AfterSetupView: View {
                 .buttonStyle(InkButtonStyle())
                 .disabled(!state.systemAuthenticationAvailable || state.busy)
                 Button("Not now") { adding = true }.frame(maxWidth: .infinity, minHeight: Ink.touch)
+                    .accessibilityIdentifier("onboarding.authLater")
             }
         }
         .navigationTitle("Getting started")
