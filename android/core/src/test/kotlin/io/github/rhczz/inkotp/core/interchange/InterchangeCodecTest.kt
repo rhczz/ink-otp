@@ -47,6 +47,12 @@ class InterchangeCodecTest {
         }
     }
 
+    @Test fun mixedOfficialUriFileRejectsUnsupportedProfilesAtTheirOriginalLines() {
+        val failure = assertThrows<InterchangeException> { InterchangeCodec.decode(fixture("plain.txt")) }
+        assertEquals(InterchangeError.UNSUPPORTED_ENTRIES, failure.code)
+        assertEquals(listOf(2, 5, 7), failure.entryIndexes)
+    }
+
     @Test fun officialTwoFasV3AndV4DecryptButRejectUnsupportedProfilesExplicitly() {
         for ((suffix, indexes) in listOf("v3" to listOf(2, 5), "v4" to listOf(3, 5))) {
             for (kind in listOf("plain", "encrypted")) {

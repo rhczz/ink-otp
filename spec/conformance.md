@@ -16,7 +16,7 @@
 
 - Android 的 Gradle `:core:test` 从仓库根 `spec/` 加载资源，生成 `android/core/build/interoperability/`。Android CI 执行独立读写检查。
 - macOS GitHub Actions 使用 `INKOTP_TEST_SPEC` 指向同一目录，用 `INKOTP_TEST_EXPORTS` 指定适配器输出，分别在 ARM64 和 x86_64 上运行。
-- iOS 可直接复用 Swift 测试的文件布局和公共 API 对照，从其工作流执行；独立开发分支接入和运行结果待该分支记录。
+- iOS 的 Swift XCTest 从仓库根目录读取同一份公共用例。GitHub Actions 上传 iOS 和 Android 各自写出的交换文件，并由对方的生产解码器读取。
 
 适配器输出 `expected.json`（Vault JSON v1）和全套 `<prefix>-<FORMAT>.<extension>` 供 Python 检查。Android、macOS、iOS 的前缀分别为 `kotlin`、`swift`、`ios`；iOS 独立输出目录也可沿用原有的 `swift` 前缀。预期模型使用 `backup-v1.expected.json` 中的两个账号和 RFC 4226 测试密钥的 `Public Counter` / `sample` HOTP 账号，计数器为 10300。独立对拍会先把各端报告的输入模型与这份公共预期比对，再读取写出文件。
 

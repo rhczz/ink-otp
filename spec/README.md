@@ -349,3 +349,7 @@ Android 构建后可以把 Kotlin 生成的备份放到 `--backup-dir`：
 - 文件中所有整数大端序；文本 UTF-8 + NFC。
 - 禁止加入 Android/iOS 特有字段；新增字段必须提升版本并保持旧实现"拒绝未知版本"。
 - Phase 2 iOS 必须能读取 `.2fab` 与 `vault.bin` v1；设备包装（Keychain/Keystore）是平台本地实现，不属于跨平台文件。
+
+## 8. iOS 公共契约
+
+[iOS 互通与验收规格](ios-parity.md) 对照 Android v0.5.3。两端直接使用本目录的公共向量和独立夹具。

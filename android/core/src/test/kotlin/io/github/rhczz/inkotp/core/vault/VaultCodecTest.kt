@@ -2,6 +2,7 @@ package io.github.rhczz.inkotp.core.vault
 
 import io.github.rhczz.inkotp.core.TestVault
 import io.github.rhczz.inkotp.core.crypto.KdfParams
+import io.github.rhczz.inkotp.core.hexToBytes
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -15,6 +16,33 @@ class VaultCodecTest {
     private val password = TestVault.PASSWORD.toCharArray()
     private val dek = ByteArray(32) { (it * 7 + 3).toByte() }
     private val params = KdfParams(mKiB = 8_192, tIter = 1, pLanes = 1)
+
+    @Test
+    fun readsIndependentWireExampleSharedWithSwift() {
+        val spec = checkNotNull(javaClass.getResourceAsStream("/vault-format.md")) {
+            "spec/vault-format.md is missing from the test classpath"
+        }.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val marker = "fileHex =\n"
+        check(spec.contains(marker)) { "Missing vault wire example" }
+        val bytes = spec.substringAfter(marker)
+            .substringBefore("\n```")
+            .filterNot(Char::isWhitespace)
+            .hexToBytes()
+
+        val header = VaultCodec.parseHeader(bytes)
+        assertEquals(115, header.ciphertextOffset)
+        assertEquals(240, header.ctLen)
+        val opened = VaultCodec.openWithPassword(bytes, "correct horse battery staple".toCharArray())
+        assertEquals("6f1c2a6e-6f4d-4c1b-9d4e-2a7f0f3f9b21", opened.model.vaultId)
+        assertTrue(opened.model.items.isEmpty())
+        assertEquals(opened.model, VaultCodec.openWithDek(bytes, opened.dek))
+        assertEquals(
+            VaultError.VLT_E_WRAP_AUTH,
+            assertThrows<VaultException> {
+                VaultCodec.openWithPassword(bytes, "wrong fixture password".toCharArray())
+            }.code,
+        )
+    }
 
     @Test
     fun passwordRoundTrip() {

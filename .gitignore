@@ -32,6 +32,12 @@ __pycache__/
 *.pem
 *.bak
 
-# Swift Package Manager work products
-macos/.build/
-macos/.swiftpm/
+# Apple platform build products and signing
+.build/
+.swiftpm/
+DerivedData/
+ios/InkOTP.xcodeproj/
+*.xcarchive/
+*.xcresult/
+*.ipa
+*.mobileprovision
