@@ -10,19 +10,19 @@ enum VaultAccessError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .corrupt: return String(localized: "InkOTP couldn't open the local vault. Your existing data is still on disk.")
-        case .locked: return String(localized: "Unlock the vault and try again.")
-        case .alreadyCreated: return String(localized: "A local vault already exists.")
-        case .unavailable: return String(localized: "The local vault is in use or inaccessible.")
-        case .authentication: return String(localized: "The password or local authentication could not unlock the vault.")
-        case .signing: return String(localized: "This build cannot use a system-protected Keychain item. Your previous security setting is still active.")
+        case .corrupt: return tr("InkOTP couldn't open the local vault. Your existing data is still on disk.", "InkOTP 无法打开本地验证码库。原数据仍保存在磁盘上。")
+        case .locked: return tr("Unlock the vault and try again.", "请解锁验证码库后重试。")
+        case .alreadyCreated: return tr("A local vault already exists.", "本地验证码库已经存在。")
+        case .unavailable: return tr("The local vault is in use or inaccessible.", "本地验证码库正在使用或无法访问。")
+        case .authentication: return tr("The password or local authentication could not unlock the vault.", "恢复口令或本地身份验证无法解锁验证码库。")
+        case .signing: return tr("This build cannot use a system-protected Keychain item. Your previous security setting is still active.", "当前版本无法使用受系统保护的钥匙串项目。原有安全设置仍然生效。")
         case .cancelled: return nil
-        case .noPassword: return String(localized: "Set a recovery password before using this action.")
-        case .invalidPassword: return String(localized: "Use at least 8 characters for your recovery password.")
-        case .tooLarge: return String(localized: "The selected file exceeds the 12 MiB size limit.")
-        case .needsConfirmation: return String(localized: "Confirm that you want to replace the locked vault.")
-        case .counterExhausted: return String(localized: "This account has reached its maximum HOTP counter.")
-        case .keychain: return String(localized: "The Mac Keychain could not complete the operation.")
+        case .noPassword: return tr("Set a recovery password before using this action.", "请先设置恢复口令。")
+        case .invalidPassword: return tr("Use 8 to 1024 characters and avoid all-numeric or commonly used recovery passwords.", "请使用 8 至 1024 个字符的恢复口令，避免纯数字或常见口令。")
+        case .tooLarge: return tr("The selected file exceeds the 12 MiB size limit.", "所选文件超过 12 MiB。")
+        case .needsConfirmation: return tr("Confirm that you want to replace the locked vault.", "请确认替换已锁定的验证码库。")
+        case .counterExhausted: return tr("This account has reached its maximum HOTP counter.", "此账号的 HOTP 计数器已达到上限。")
+        case .keychain: return tr("The Mac Keychain could not complete the operation.", "Mac 钥匙串无法完成此操作。")
         }
     }
 }
@@ -298,7 +298,7 @@ actor VaultDisk {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         if generation.systemAuthentication {
             query[kSecUseAuthenticationContext as String] = context
-            context.localizedReason = String(localized: "Unlock your InkOTP vault")
+            context.localizedReason = tr("Unlock your InkOTP vault", "解锁 InkOTP 验证码库")
         }
         var result: CFTypeRef?
         try checkKeychain(SecItemCopyMatching(query as CFDictionary, &result))

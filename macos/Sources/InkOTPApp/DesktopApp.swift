@@ -209,18 +209,16 @@ struct DesktopVaultView: View {
         .onChange(of: visible.map(\.id)) { _, ids in
             if let selection, !ids.contains(selection) { self.selection = nil }
         }
-        .onChange(of: store.model == nil) { _, locked in
-            if locked {
-                selection = nil
-                query = ""
-                confirmDelete = nil
-                sheet = nil
-                revealed.removeAll()
-                fileTask?.cancel()
-                codeFeedback = nil
-                unlockPassword = ""
-                showRecovery = false
-            }
+        .onChange(of: store.lockRevision) { _, _ in
+            selection = nil
+            query = ""
+            confirmDelete = nil
+            sheet = nil
+            revealed.removeAll()
+            fileTask?.cancel()
+            codeFeedback = nil
+            unlockPassword = ""
+            showRecovery = false
         }
         .onDisappear {
             fileTask?.cancel()

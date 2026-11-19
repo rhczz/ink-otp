@@ -13,6 +13,7 @@ final class VaultStore: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var ready = false
     @Published private(set) var hasRecoveryPassword = false
+    @Published private(set) var lockRevision = 0
     @Published var errorMessage: String?
     let supportsSystemAuthentication = Bundle.main.object(forInfoDictionaryKey: "InkOTPProtectedKeychainEnabled") as? Bool == true
 
@@ -25,7 +26,6 @@ final class VaultStore: ObservableObject {
     private let consentKey = "privacy-consent-revision"
     private var record: VaultRecord?
     private var session: VaultSession?
-    private var generation = 0
     private var cache: [String: CachedCode] = [:]
     private var observations = Set<AnyCancellable>()
     private var activeAuthentication: LAContext?
@@ -65,7 +65,9 @@ final class VaultStore: ObservableObject {
             try check(epoch)
             let session = try await makeSession(password)
             try check(epoch)
-            let output = try await disk.replace(.new(), session: session, systemAuthentication: systemAuthentication,
+            var initial = VaultModel.new()
+            initial.settings.lockTimeoutSeconds = 0
+            let output = try await disk.replace(initial, session: session, systemAuthentication: systemAuthentication,
                                                 expected: nil)
             return publish(output, epoch: epoch)
         } ?? false
@@ -86,7 +88,7 @@ final class VaultStore: ObservableObject {
     }
 
     func lock(clearClipboard: Bool = true) {
-        generation &+= 1
+        lockRevision &+= 1
         requiresForegroundAuthentication = false
         activeAuthentication?.invalidate()
         backgroundLock?.cancel()
@@ -285,7 +287,14 @@ final class VaultStore: ObservableObject {
             try check(epoch)
             let replacement = try await makeSession(password)
             try check(epoch)
-            let output = try await disk.replace(preview.model, session: replacement, systemAuthentication: systemAuthentication,
+            var restored = VaultModel.new()
+            restored.settings.lockTimeoutSeconds = 0
+            restored.items = preview.model.items.map { item in
+                var item = item
+                item.id = UUID().uuidString.lowercased()
+                return item
+            }
+            let output = try await disk.replace(restored, session: replacement, systemAuthentication: systemAuthentication,
                                                 expected: record, rescue: initialized)
             return publish(output, epoch: epoch)
         } ?? false
@@ -326,8 +335,13 @@ final class VaultStore: ObservableObject {
         guard ready, consent, !busy else { return nil }
         busy = true
         errorMessage = nil
-        let epoch = generation
-        defer { busy = false }
+        let epoch = lockRevision
+        defer {
+            busy = false
+            if requiresForegroundAuthentication && NSApplication.shared.isActive {
+                Task { await enteredForeground() }
+            }
+        }
         do {
             let result = try await work(epoch)
             try check(epoch)
@@ -337,7 +351,7 @@ final class VaultStore: ObservableObject {
         } catch is CancellationError {
             return nil
         } catch {
-            guard generation == epoch else { return nil }
+            guard lockRevision == epoch else { return nil }
             if let safeError = error as? InterchangeError {
                 errorMessage = safeError.localizedDescription
             } else if let error = error as? VaultAccessError {
@@ -371,7 +385,11 @@ final class VaultStore: ObservableObject {
     private func publish(_ output: VaultOpenResult, epoch: Int) -> Bool {
         initialized = true
         updateRecord(output.record)
-        guard generation == epoch, consent else { return false }
+        guard lockRevision == epoch, consent else { return false }
+        guard NSApplication.shared.isActive else {
+            requiresForegroundAuthentication = output.record.systemAuthentication
+            return false
+        }
         cache.removeAll(keepingCapacity: true)
         session = output.session
         model = output.model
@@ -384,7 +402,7 @@ final class VaultStore: ObservableObject {
     }
 
     private func check(_ epoch: Int) throws {
-        guard generation == epoch, consent, !Task.isCancelled else { throw VaultAccessError.cancelled }
+        guard lockRevision == epoch, consent, !Task.isCancelled else { throw VaultAccessError.cancelled }
     }
 
     private func makeSession(_ password: String?) async throws -> VaultSession {
@@ -393,9 +411,15 @@ final class VaultStore: ObservableObject {
 
     private func acceptedPassword(_ password: String?) throws -> String? {
         guard let password, !password.isEmpty else { return nil }
-        guard password.precomposedStringWithCanonicalMapping.unicodeScalars.count >= 8,
-              password.utf8.count <= 1024 else { throw VaultAccessError.invalidPassword }
-        return password
+        let normalized = password.precomposedStringWithCanonicalMapping
+        let blocked: Set<String> = ["password", "password1", "password123", "qwertyui", "qwerty123",
+                                    "letmein123", "abcdefgh"]
+        guard normalized.unicodeScalars.count >= 8, normalized.utf16.count <= 1024,
+              !normalized.unicodeScalars.allSatisfy({ CharacterSet.decimalDigits.contains($0) }),
+              !blocked.contains(normalized.lowercased()) else {
+            throw VaultAccessError.invalidPassword
+        }
+        return normalized
     }
 
     private func authenticateDevice(reason: String) async throws {

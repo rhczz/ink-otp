@@ -8,9 +8,19 @@ struct DesktopDialog<Content: View, Actions: View>: View {
     @ObservedObject var store: VaultStore
     let title: String
     let close: () -> Void
-    var cancelBusy: (() -> Void)? = nil
-    @ViewBuilder let content: Content
-    @ViewBuilder let actions: Actions
+    let cancelBusy: (() -> Void)?
+    let content: Content
+    let actions: Actions
+
+    init(store: VaultStore, title: String, close: @escaping () -> Void, cancelBusy: (() -> Void)? = nil,
+         @ViewBuilder content: () -> Content, @ViewBuilder actions: () -> Actions) {
+        self.store = store
+        self.title = title
+        self.close = close
+        self.cancelBusy = cancelBusy
+        self.content = content()
+        self.actions = actions()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -278,36 +288,21 @@ struct ImportSheet: View {
     private var replacing: Bool { store.initialized && store.model == nil }
     private var creating: Bool { store.model == nil }
 
+    private var title: String { creating ? tr("Restore from Backup", "从备份恢复") : tr("Import Backup", "导入备份") }
+    private var cancelWhenBusy: (() -> Void)? {
+        guard decodeTask != nil else { return nil }
+        return { cancelDecode() }
+    }
+    private var cannotCommit: Bool {
+        if replacing && !overwriteConfirmed { return true }
+        return creating && (recoveryPassword.isEmpty || recoveryPassword != confirmation)
+    }
+
     var body: some View {
-        DesktopDialog(store: store, title: creating ? tr("Restore from Backup", "从备份恢复") : tr("Import Backup", "导入备份"),
-                      close: close, cancelBusy: decodeTask == nil ? nil : cancelDecode) {
-            VStack(alignment: .leading, spacing: 12) {
-                LabeledContent(tr("File", "文件"), value: url.lastPathComponent)
-                LabeledContent(tr("Format", "格式"), value: format.title)
-                if let preview {
-                    importPreview(preview)
-                } else if format.requiresPassword {
-                    SecureField(tr("Backup password", "备份口令"), text: $backupPassword)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(decode)
-                }
-                if format.plaintext {
-                    Label(tr("This file contains readable setup keys. Keep it in a location you control.", "这个文件含可直接读取的设置密钥。请保存在由你管理的位置。"),
-                          systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.secondary)
-                }
-            }
+        DesktopDialog(store: store, title: title, close: close, cancelBusy: cancelWhenBusy) {
+            content
         } actions: {
-            if preview != nil {
-                Button(creating ? tr("Restore Vault", "恢复验证码库") : tr("Import Accounts", "导入账号"), action: commit)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled((replacing && !overwriteConfirmed)
-                              || (creating && (recoveryPassword.isEmpty || recoveryPassword != confirmation)))
-            } else {
-                Button(tr("Preview Backup", "预览备份"), action: decode)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(format.requiresPassword && backupPassword.isEmpty)
-            }
+            importActions
         }
         .onDisappear {
             backupPassword = ""
@@ -315,6 +310,39 @@ struct ImportSheet: View {
             confirmation = ""
             preview = nil
             decodeTask?.cancel()
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            LabeledContent(tr("File", "文件"), value: url.lastPathComponent)
+            LabeledContent(tr("Format", "格式"), value: format.title)
+            if let preview {
+                importPreview(preview)
+            } else if format.requiresPassword {
+                SecureField(tr("Backup password", "备份口令"), text: $backupPassword)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(decode)
+            }
+            if format.plaintext {
+                Label(tr("This file contains readable setup keys. Keep it in a location you control.",
+                         "这个文件含可直接读取的设置密钥。请保存在由你管理的位置。"),
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var importActions: some View {
+        if preview != nil {
+            Button(creating ? tr("Restore Vault", "恢复验证码库") : tr("Import Accounts", "导入账号"), action: commit)
+                .keyboardShortcut(.defaultAction)
+                .disabled(cannotCommit)
+        } else {
+            Button(tr("Preview Backup", "预览备份"), action: decode)
+                .keyboardShortcut(.defaultAction)
+                .disabled(format.requiresPassword && backupPassword.isEmpty)
         }
     }
 
