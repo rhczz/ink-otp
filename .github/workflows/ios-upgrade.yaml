@@ -9,12 +9,13 @@ permissions:
 jobs:
   verify:
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Select Xcode
         run: bash ios/Scripts/select-xcode.sh

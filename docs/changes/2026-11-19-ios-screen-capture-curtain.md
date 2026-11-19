@@ -8,4 +8,4 @@ iOS 首次预览版的场景遮挡层会让触摸穿过。录屏提示位于被�
 
 ## 实际结果
 
-GitHub Actions 待运行。
+GitHub Actions 在 iOS 26.2 的 iPhone 17 Pro 模拟器上通过 3 项幕布测试，覆盖前台捕获状态切换、后台空白遮挡，以及只有本地化提示对无障碍可见的配置。包含这三项在内的 iPhone XCTest 共 19 项通过。物理录屏、镜像、VoiceOver 手势及系统认证组合仍待真机核对。[测试日志](https://github.com/rhczz/ink-otp/actions/runs/44464194447/job/135357893937)

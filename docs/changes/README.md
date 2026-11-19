@@ -4,7 +4,7 @@
 
 | 日期 | 记录 | 状态 |
 |---|---|---|
-| 2026-11-19 | [iOS 录屏与后台遮挡](2026-11-19-ios-screen-capture-curtain.md) | 云端验证中，录屏与镜像真机待测 |
+| 2026-11-19 | [iOS 录屏与后台遮挡](2026-11-19-ios-screen-capture-curtain.md) | 3 项模拟器测试通过，录屏与镜像真机待测 |
 | 2026-11-19 | [iOS 真机目标构建与升级验收](2026-11-19-ios-device-verification.md) | 云端验证中 |
 | 2026-11-18 | [iOS 原生版与跨平台测试](2026-11-18-ios-native-parity.md) | 模拟器预览已发布，真机待测 |
 | 2026-11-18 | [InkOTP macOS 桌面版与公共测试集](2026-11-18-macos-native-parity.md) | 双架构测试与通用 DMG 验证通过，真机待测 |
