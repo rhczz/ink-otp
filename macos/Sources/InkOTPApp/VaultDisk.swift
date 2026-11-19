@@ -187,7 +187,7 @@ actor VaultDisk {
 
         let fd = Darwin.open(root.appending(path: "vault.lock").path, O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_RDWR, 0o600)
         guard fd >= 0 else { throw VaultAccessError.unavailable }
-        guard Darwin.flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+        guard Darwin.lockf(fd, F_TLOCK, 0) == 0 else {
             Darwin.close(fd)
             throw VaultAccessError.unavailable
         }

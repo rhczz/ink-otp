@@ -60,7 +60,7 @@ jobs:
           echo "INKOTP_TEST_SPEC=$GITHUB_WORKSPACE/spec" >> "$GITHUB_ENV"
           echo "INKOTP_TEST_EXPORTS=$RUNNER_TEMP/inkotp-exports" >> "$GITHUB_ENV"
       - id: crypto-cache
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ runner.temp }}/inkotp-crypto
           key: inkotp-macos-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('macos/Scripts/build-crypto.sh') }}
@@ -69,6 +69,12 @@ jobs:
         env:
           INKOTP_ARCH: ${{ matrix.arch }}
         run: macos/Scripts/build-crypto.sh "$INKOTP_ARCH" "$INKOTP_CRYPTO_PREFIX"
+      - name: Preserve verified crypto build for later runs
+        if: steps.crypto-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/inkotp-crypto
+          key: ${{ steps.crypto-cache.outputs.cache-primary-key }}
       - name: Run shared strict vectors, fixtures and mutation cases
         run: swift test --package-path macos --enable-code-coverage
       - name: Summarize coverage

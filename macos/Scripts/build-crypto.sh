@@ -45,8 +45,9 @@ jobs="$(sysctl -n hw.ncpu)"
 )
 (
     cd openssl
-    # Build the crypto archive using the platform compiler. No providers or TLS dylibs ship with InkOTP.
-    perl Configure "darwin64-$architecture-cc" no-shared no-module no-tests no-dso
+    # Only the static crypto archive ships. Remove sockets, HTTP, and external configuration loading.
+    perl Configure "darwin64-$architecture-cc" no-shared no-module no-tests no-dso \
+        no-sock no-http no-autoload-config
     make -j "$jobs" build_libs > "$scratch/openssl-build.log" 2>&1 || {
         tail -100 "$scratch/openssl-build.log" >&2
         exit 1
