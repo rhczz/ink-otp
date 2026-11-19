@@ -11,3 +11,5 @@
 首次 [GitHub Actions 归档](https://github.com/rhczz/ink-otp/actions/runs/44461628645) 已通过 iPhoneOS 归档及独立解包，支持 iPhone 与 iPad，最低部署版本为 17.0。升级任务改为按公开 ZIP 的原样安装，两份模拟器应用均保持下载时的内容。候选包由 Xcode 使用模拟器签名构建。设备分发签名及真机实测仍待验证。
 
 首轮 iPhone XCTest 发现正常二维码返回空结果，PNG 截断后也被 ImageIO 容错读取。iOS 在识别时为虚拟机选择支持的 CPU，Vision 识别失败时再使用 Core Image，并检查 PNG 结束块。另一个断言发现原子替换文件后读取的大小过时，诊断和读取上限现通过文件系统即时查询每个路径的大小。测试继续与两份文件的实际字节数比对。[失败用例与原始日志](https://github.com/rhczz/ink-otp/actions/runs/44461768307/job/135350000561)
+
+首次 iPad 作业完成了候选双架构包构建及验签，并安装了旧版包。Xcode 随后拒绝在模拟器使用只适用于物理设备的测试配置。升级作业改为使用标准模拟器配置，每一阶段都指向对应 ZIP 中解出的应用，并比较安装前后的可执行文件，避免开发用的 Debug 产品混入。[首次 iPad 运行](https://github.com/rhczz/ink-otp/actions/runs/44464194447/job/135357894126)

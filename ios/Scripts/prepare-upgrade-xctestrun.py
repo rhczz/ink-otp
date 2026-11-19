@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Run the upgrade tests against preinstalled simulator apps."""
+"""Point a standard simulator test run at the release app for this phase."""
 import plistlib
 import sys
 from pathlib import Path
 
 TARGET = "InkOTPUpgradeUITests"
-APP_IDENTIFIER = "io.github.rhczz.inkotp"
+APP = "InkOTP.app"
 
 
-def prepare(product_dir: Path) -> Path:
+def prepare(product_dir: Path, app: Path) -> Path:
     files = list(product_dir.glob("InkOTPUpgrade_*.xctestrun"))
     if len(files) != 1:
         raise SystemExit("Expected one xctestrun for the InkOTPUpgrade scheme")
+    if app.name != APP or not app.is_dir():
+        raise SystemExit("Expected a simulator release app for the upgrade phase")
 
-    source = files[0]
-    plan = plistlib.loads(source.read_bytes())
+    plan = plistlib.loads(files[0].read_bytes())
     if "TestConfigurations" in plan:
         targets = [target for config in plan["TestConfigurations"] for target in config["TestTargets"]]
         if len(targets) != 1 or targets[0].get("BlueprintName") != TARGET:
@@ -25,28 +26,23 @@ def prepare(product_dir: Path) -> Path:
             raise SystemExit("Expected one upgrade UI test target in the test run")
         target = plan[TARGET]
 
-    host = Path(target.pop("TestHostPath").replace("__TESTROOT__", str(product_dir)))
-    bundle = Path(target.pop("TestBundlePath").replace("__TESTHOST__", str(host)).replace("__TESTROOT__", str(product_dir)))
-    if host.name != f"{TARGET}-Runner.app" or not bundle.is_dir():
-        raise SystemExit("Expected the standalone upgrade UI test runner product")
+    debug_app = Path(target["UITargetAppPath"].replace("__TESTROOT__", str(product_dir)))
+    if debug_app != product_dir / "Debug-iphonesimulator" / APP:
+        raise SystemExit("Unexpected app product path in the generated upgrade test run")
 
-    metadata = plistlib.loads((host / "Info.plist").read_bytes())
-    host_identifier = metadata["CFBundleIdentifier"]
-    if host_identifier == APP_IDENTIFIER:
-        raise SystemExit("Upgrade test runner must have a separate bundle identifier")
+    def phase_product(path: str) -> str:
+        absolute = Path(path.replace("__TESTROOT__", str(product_dir)))
+        if absolute.is_relative_to(debug_app):
+            return str(app / absolute.relative_to(debug_app))
+        return path
 
-    for key in ("UITargetAppPath", "DependentProductPaths"):
-        target.pop(key, None)
-    target.update({
-        "UseDestinationArtifacts": True,
-        "TestHostBundleIdentifier": host_identifier,
-        "TestBundleDestinationRelativePath": "__TESTHOST__/" + bundle.relative_to(host).as_posix(),
-        "UITargetAppBundleIdentifier": APP_IDENTIFIER,
-        "ParallelizationEnabled": False,
-    })
-    (product_dir / "upgrade-preinstalled.xctestrun").write_bytes(plistlib.dumps(plan))
-    return host
+    target["UITargetAppPath"] = str(app)
+    target["DependentProductPaths"] = [phase_product(path) for path in target.get("DependentProductPaths", [])]
+    target["ParallelizationEnabled"] = False
+    output = product_dir / "upgrade-release-app.xctestrun"
+    output.write_bytes(plistlib.dumps(plan))
+    return output
 
 
 if __name__ == "__main__":
-    print(prepare(Path(sys.argv[1]).resolve()))
+    print(prepare(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()))

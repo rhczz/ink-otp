@@ -69,8 +69,6 @@ derived="$work/DerivedData"
 xcodebuild -project ios/InkOTP.xcodeproj -scheme InkOTPUpgrade -configuration Debug \
   -destination "$destination" -derivedDataPath "$derived" CODE_SIGN_IDENTITY=- build-for-testing
 products="$derived/Build/Products"
-runner=$(python3 ios/Scripts/prepare-upgrade-xctestrun.py "$products")
-xcrun simctl install "$simulator" "$runner"
 
 # The candidate must already have a valid simulator signature from the
 # packaging job. Both releases are installed directly from their ZIPs.
@@ -86,9 +84,11 @@ data_container() {
   xcrun simctl get_app_container "$simulator" "$bundle_id" data
 }
 test_phase() {
-  local phase=$1 identifier=$2
+  local phase=$1 identifier=$2 app=$3 plan
   local result="$reports/$phase.xcresult" summary="$reports/$phase.json"
-  xcodebuild test-without-building -xctestrun "$products/upgrade-preinstalled.xctestrun" \
+  # Simulator XCTest may install its target. Give it the exact package already installed for this phase.
+  plan=$(python3 ios/Scripts/prepare-upgrade-xctestrun.py "$products" "$app")
+  xcodebuild test-without-building -xctestrun "$plan" \
     -destination "$destination" -parallel-testing-enabled NO -disable-concurrent-destination-testing \
     "-only-testing:InkOTPUpgradeUITests/$identifier" -resultBundlePath "$result"
   xcrun xcresulttool get test-results summary --path "$result" > "$summary"
@@ -106,7 +106,7 @@ PY
 xcrun simctl install "$simulator" "$previous_app"
 verify_installed "$previous_app" "$previous_build"
 original_container=$(data_container)
-test_phase baseline InkOTPFlowTests/testConsentSetupAddSearchAndReopenVault
+test_phase baseline InkOTPFlowTests/testConsentSetupAddSearchAndReopenVault "$previous_app"
 verify_installed "$previous_app" "$previous_build"
 test "$(data_container)" = "$original_container"
 vault="$original_container/Library/Application Support/InkOTP/vault-v1.json"
@@ -119,7 +119,7 @@ xcrun simctl install "$simulator" "$current_app"
 verify_installed "$current_app" "$current_build"
 test "$(data_container)" = "$original_container"
 cmp "$work/baseline-vault.json" "$vault"
-test_phase upgraded InkOTPUpgradeTests/testReadsExistingAccountWithDeviceKeyAfterUpgrade
+test_phase upgraded InkOTPUpgradeTests/testReadsExistingAccountWithDeviceKeyAfterUpgrade "$current_app"
 verify_installed "$current_app" "$current_build"
 test "$(data_container)" = "$original_container"
 
