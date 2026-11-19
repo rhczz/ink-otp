@@ -42,11 +42,9 @@ struct DesktopSettings: View {
                     get: { store.systemAuthentication },
                     set: { newValue in Task { await store.setSystemAuthentication(newValue) } }
                 ))
-                .disabled(store.model == nil || store.busy || !store.hasRecoveryPassword)
-                Text(store.hasRecoveryPassword
-                     ? tr("Uses Touch ID or your Mac login password in the system dialogue.", "通过系统界面使用 Touch ID 或 Mac 登录密码。")
-                     : tr("Set a recovery password to enable entry authentication.", "设置恢复口令后，可开启每次进入验证。"))
-                    .font(.caption).foregroundStyle(.secondary)
+                .disabled(store.model == nil || store.busy || !store.hasRecoveryPassword
+                          || (!store.supportsSystemAuthentication && !store.systemAuthentication))
+                Text(authenticationHelp).font(.caption).foregroundStyle(.secondary)
                 Picker(tr("Lock when leaving the app", "离开应用后的锁定时间"), selection: setting(\.lockTimeoutSeconds, fallback: 30)) {
                     if let value = store.model?.settings.lockTimeoutSeconds, ![0, 30, 60].contains(value) {
                         Text(tr("\(value) seconds", "\(value) 秒")).tag(value)
@@ -79,6 +77,17 @@ struct DesktopSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var authenticationHelp: String {
+        if !store.supportsSystemAuthentication {
+            return tr("Protected Keychain access requires a Developer ID build with the matching Apple provisioning profile.",
+                      "系统保护的钥匙串访问需要带有对应 Apple 描述文件的 Developer ID 版本。")
+        }
+        if !store.hasRecoveryPassword {
+            return tr("Set a recovery password to enable entry authentication.", "设置恢复口令后，可开启每次进入验证。")
+        }
+        return tr("Uses Touch ID or your Mac login password in the system dialogue.", "通过系统界面使用 Touch ID 或 Mac 登录密码。")
     }
 
     private var backups: some View {
@@ -258,7 +267,8 @@ struct DiagnosticsSheet: View {
 struct AboutSheet: View {
     let close: () -> Void
     @State private var selectedLicense = 0
-    private let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+    private let version = (Bundle.main.object(forInfoDictionaryKey: "InkOTPReleaseVersion") as? String)
+        ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "—"
 
     var body: some View {
         InformationDialog(title: tr("About and Licenses", "关于与开源许可"), close: close, width: 628) {

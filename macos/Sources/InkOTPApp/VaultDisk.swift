@@ -27,10 +27,18 @@ enum VaultAccessError: LocalizedError {
     }
 }
 
-struct VaultRecord: Codable, Equatable, Sendable {
+struct VaultGeneration: Codable, Equatable, Sendable {
     let id: UUID
     let systemAuthentication: Bool
     let hasPassword: Bool
+}
+
+struct VaultRecord: Codable, Equatable, Sendable {
+    let active: VaultGeneration
+    let rescue: VaultGeneration?
+
+    var systemAuthentication: Bool { active.systemAuthentication }
+    var hasPassword: Bool { active.hasPassword }
 }
 
 struct VaultOpenResult: Sendable {
@@ -71,7 +79,7 @@ actor VaultDisk {
     func unlock(password: String?) throws -> VaultOpenResult {
         try prepare()
         let record = try readRecord()
-        let bytes = try Self.read(file(for: record))
+        let bytes = try Self.read(file(for: record.active))
         do {
             guard try VaultFile.hasPassword(bytes) == record.hasPassword else { throw VaultAccessError.corrupt }
             let result: (VaultModel, VaultSession)
@@ -79,11 +87,11 @@ actor VaultDisk {
                 result = try VaultFile.open(bytes, password: password)
                 // The state owner authenticates the Mac before calling this recovery path.
                 // A recovery-password unlock can repair a lost device credential.
-                try? repairCredential(result.1, record: record)
+                try? repairCredential(result.1, generation: record.active)
             } else {
                 let context = LAContext()
                 defer { context.invalidate() }
-                result = try VaultFile.open(bytes, deviceCredential: readCredential(record, context: context))
+                result = try VaultFile.open(bytes, deviceCredential: readCredential(record.active, context: context))
             }
             return VaultOpenResult(model: result.0, session: result.1, record: record)
         } catch let error as VaultAccessError {
@@ -97,7 +105,7 @@ actor VaultDisk {
 
     func checkPassword(_ password: String, record: VaultRecord) throws {
         do {
-            let bytes = try Self.read(file(for: record))
+            let bytes = try Self.read(file(for: record.active))
             _ = try VaultFile.open(bytes, password: password)
         } catch {
             throw VaultAccessError.authentication
@@ -107,7 +115,7 @@ actor VaultDisk {
     func write(_ model: VaultModel, session: VaultSession, record: VaultRecord) throws -> VaultModel {
         guard try readRecord() == record else { throw VaultAccessError.unavailable }
         let normalized = try VaultJSON.validate(model)
-        try atomicWrite(VaultFile.seal(normalized, session: session), to: file(for: record))
+        try atomicWrite(VaultFile.seal(normalized, session: session), to: file(for: record.active))
         return normalized
     }
 
@@ -125,43 +133,46 @@ actor VaultDisk {
         guard previous == expected else { throw VaultAccessError.alreadyCreated }
         if systemAuthentication, session.passwordKey == nil { throw VaultAccessError.noPassword }
         let normalized = try VaultJSON.validate(model)
-        let record = VaultRecord(id: UUID(), systemAuthentication: systemAuthentication,
-                                 hasPassword: session.passwordKey != nil)
+        let generation = VaultGeneration(id: UUID(), systemAuthentication: systemAuthentication,
+                                         hasPassword: session.passwordKey != nil)
+        let record = VaultRecord(active: generation, rescue: rescue ? previous?.active : previous?.rescue)
+        if rescue, let previous {
+            _ = try Self.read(file(for: previous.active))
+        }
         let bytes = try VaultFile.seal(normalized, session: session)
-        let directory = directory(for: record)
+        let directory = directory(for: generation)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
                                                  attributes: [.posixPermissions: 0o700])
 
         var insertedCredential = false
         do {
-            try atomicWrite(bytes, to: file(for: record))
-            try addCredential(session.deviceCredential, record: record)
+            try atomicWrite(bytes, to: file(for: record.active))
+            try addCredential(session.deviceCredential, generation: generation)
             insertedCredential = true
-            if rescue, let previous {
-                let saved = try Self.read(file(for: previous))
-                try atomicWrite(saved, to: root.appending(path: "vault.pre-restore.bin"))
-            }
             try atomicWrite(JSONEncoder().encode(record), to: recordURL)
         } catch {
-            if insertedCredential { deleteCredential(record) }
+            if insertedCredential { deleteCredential(generation) }
             try? FileManager.default.removeItem(at: directory)
             throw error
         }
+        // The pointer commits both the active vault and the single retained rescue generation.
         if let previous {
-            // A rescue snapshot with no password still requires its old Keychain credential.
-            if !rescue || previous.hasPassword { deleteCredential(previous) }
-            try? FileManager.default.removeItem(at: self.directory(for: previous))
+            for retired in [previous.active, previous.rescue].compactMap({ $0 }) where retired != record.rescue {
+                deleteCredential(retired)
+                try? FileManager.default.removeItem(at: self.directory(for: retired))
+            }
         }
         return VaultOpenResult(model: normalized, session: session, record: record)
     }
 
     func diskBytes(record: VaultRecord) -> Int? {
-        try? file(for: record).resourceValues(forKeys: [.fileSizeKey]).fileSize
+        try? file(for: record.active).resourceValues(forKeys: [.fileSizeKey]).fileSize
     }
 
     func clearSmokeCredential(record: VaultRecord) {
         precondition(keychainService.hasPrefix("io.github.rhczz.inkotp.macos.ci-smoke."))
-        deleteCredential(record)
+        deleteCredential(record.active)
+        if let rescue = record.rescue { deleteCredential(rescue) }
     }
 
     func readImport(_ url: URL) throws -> Data {
@@ -185,12 +196,9 @@ actor VaultDisk {
         values.isExcludedFromBackup = true
         try directory.setResourceValues(values)
 
-        let fd = Darwin.open(root.appending(path: "vault.lock").path, O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_RDWR, 0o600)
+        let path = root.appending(path: "vault.lock").path
+        let fd = Darwin.open(path, O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_RDWR | O_EXLOCK | O_NONBLOCK, 0o600)
         guard fd >= 0 else { throw VaultAccessError.unavailable }
-        guard Darwin.lockf(fd, F_TLOCK, 0) == 0 else {
-            Darwin.close(fd)
-            throw VaultAccessError.unavailable
-        }
         lockDescriptor = fd
     }
 
@@ -202,12 +210,12 @@ actor VaultDisk {
         }
     }
 
-    private func directory(for record: VaultRecord) -> URL {
-        root.appending(path: record.id.uuidString.lowercased(), directoryHint: .isDirectory)
+    private func directory(for generation: VaultGeneration) -> URL {
+        root.appending(path: generation.id.uuidString.lowercased(), directoryHint: .isDirectory)
     }
 
-    private func file(for record: VaultRecord) -> URL {
-        directory(for: record).appending(path: "vault.bin", directoryHint: .notDirectory)
+    private func file(for generation: VaultGeneration) -> URL {
+        directory(for: generation).appending(path: "vault.bin", directoryHint: .notDirectory)
     }
 
     private static func read(_ url: URL, limit: Int = VaultFile.maximumFileSize) throws -> Data {
@@ -252,23 +260,23 @@ actor VaultDisk {
         }
     }
 
-    private func credentialQuery(_ record: VaultRecord) -> [String: Any] {
+    private func credentialQuery(_ generation: VaultGeneration) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: record.id.uuidString
+            kSecAttrAccount as String: generation.id.uuidString
         ]
-        if record.systemAuthentication {
+        if generation.systemAuthentication {
             query[kSecUseDataProtectionKeychain as String] = true
             query[kSecAttrSynchronizable as String] = false
         }
         return query
     }
 
-    private func addCredential(_ data: Data, record: VaultRecord) throws {
-        var query = credentialQuery(record)
+    private func addCredential(_ data: Data, generation: VaultGeneration) throws {
+        var query = credentialQuery(generation)
         query[kSecValueData as String] = data
-        if record.systemAuthentication {
+        if generation.systemAuthentication {
             guard let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
                                                               .userPresence, nil) else {
                 throw VaultAccessError.signing
@@ -278,17 +286,17 @@ actor VaultDisk {
         try checkKeychain(SecItemAdd(query as CFDictionary, nil))
     }
 
-    private func repairCredential(_ session: VaultSession, record: VaultRecord) throws {
+    private func repairCredential(_ session: VaultSession, generation: VaultGeneration) throws {
         // Recreate a missing item. Never destroy a working credential as part of a recovery attempt.
-        let status = SecItemCopyMatching(credentialQuery(record) as CFDictionary, nil)
-        if status == errSecItemNotFound { try addCredential(session.deviceCredential, record: record) }
+        let status = SecItemCopyMatching(credentialQuery(generation) as CFDictionary, nil)
+        if status == errSecItemNotFound { try addCredential(session.deviceCredential, generation: generation) }
     }
 
-    private func readCredential(_ record: VaultRecord, context: LAContext) throws -> Data {
-        var query = credentialQuery(record)
+    private func readCredential(_ generation: VaultGeneration, context: LAContext) throws -> Data {
+        var query = credentialQuery(generation)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        if record.systemAuthentication {
+        if generation.systemAuthentication {
             query[kSecUseAuthenticationContext as String] = context
             context.localizedReason = String(localized: "Unlock your InkOTP vault")
         }
@@ -298,8 +306,8 @@ actor VaultDisk {
         return data
     }
 
-    private func deleteCredential(_ record: VaultRecord) {
-        _ = SecItemDelete(credentialQuery(record) as CFDictionary)
+    private func deleteCredential(_ generation: VaultGeneration) {
+        _ = SecItemDelete(credentialQuery(generation) as CFDictionary)
     }
 
     private func checkKeychain(_ status: OSStatus) throws {

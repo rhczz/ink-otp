@@ -31,10 +31,12 @@ app="$stage/InkOTP.app"
 ditto "$arm_app" "$app"
 lipo -create "$arm_app/Contents/MacOS/InkOTP" "$intel_app/Contents/MacOS/InkOTP" -output "$scratch/InkOTP"
 install -m 755 "$scratch/InkOTP" "$app/Contents/MacOS/InkOTP"
-lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/InkOTP"
+lipo "$app/Contents/MacOS/InkOTP" -verify_arch arm64 x86_64
 marketing_version="${version%%-beta.*}"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $marketing_version" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${INKOTP_BUILD_NUMBER:-1}" "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :InkOTPReleaseVersion $version" "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :InkOTPProtectedKeychainEnabled false' "$app/Contents/Info.plist"
 ln -s /Applications "$stage/Applications"
 
 base_entitlements="$root/macos/Resources/InkOTP.entitlements"
@@ -93,6 +95,7 @@ base.update({
 })
 Path(output_path).write_bytes(plistlib.dumps(base))
 PYPROFILE
+    /usr/libexec/PlistBuddy -c 'Set :InkOTPProtectedKeychainEnabled true' "$app/Contents/Info.plist"
     codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$developer_id" --entitlements "$entitlements" "$app"
     signature="developer-id-notarized"
 else
@@ -104,7 +107,7 @@ else
 fi
 
 codesign --verify --deep --strict "$app"
-codesign -d --entitlements - "$app" > "$scratch/actual.plist"
+codesign -d --entitlements - --xml "$app" > "$scratch/actual.plist"
 python3 - "$entitlements" "$scratch/actual.plist" <<'PY'
 import plistlib
 import sys
@@ -142,7 +145,7 @@ mkdir "$scratch/mounted"
 hdiutil attach -nobrowse -readonly -mountpoint "$scratch/mounted" "$dmg"
 mounted="$scratch/mounted"
 codesign --verify --deep --strict "$mounted/InkOTP.app"
-lipo -verify_arch arm64 x86_64 "$mounted/InkOTP.app/Contents/MacOS/InkOTP"
+lipo "$mounted/InkOTP.app/Contents/MacOS/InkOTP" -verify_arch arm64 x86_64
 [[ "$(readlink "$mounted/Applications")" == /Applications ]]
 hdiutil detach "$mounted"
 mounted=""

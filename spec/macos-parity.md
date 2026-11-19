@@ -18,5 +18,5 @@
 ## 验收
 
 - GitHub Actions 运行公共 OTP、URI、备份与协议失败用例，验证 macOS 输出由独立 Python 参考实现读取。Android 继续通过同一份向量与样本；iOS 的独立分支接入后运行同一合约。
-- GitHub Actions 构建和测试两种架构、检查沙箱与离线权限、验证分发包，并通过单独的 macOS 版本标签发布。发布记录注明签名状态。Developer ID 与公证依赖已有的 Apple 签名配置。
+- GitHub Actions 构建和测试两种架构、检查沙箱与离线权限、验证分发包，并通过单独的 macOS 版本标签发布。发布记录注明签名状态。临时签名公测版的每次进入验证受 [EX-008](../docs/exceptions.md) 限制，正式版要求 Developer ID、授权 Keychain 的描述文件与 Apple 公证。
 - 真实 Mac 验收需覆盖首次安装、覆盖升级、Touch ID 与系统密码、拒绝和取消认证、系统休眠、相机与文件权限、VoiceOver 与剪贴板；CI 的执行结果和实际设备结果分别记录。

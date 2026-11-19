@@ -98,6 +98,7 @@ struct DesktopVaultView: View {
     @ObservedObject var commands: DesktopCommands
     @Environment(\.colorScheme) private var scheme
     @Environment(\.openSettings) private var openSettings
+    @AppStorage("export.last-revision") private var lastBackupRevision = ""
     @State private var selection: String?
     @State private var query = ""
     @State private var sheet: DesktopSheet?
@@ -173,8 +174,7 @@ struct DesktopVaultView: View {
         }
         .overlay(alignment: .topTrailing) {
             if isBusy && sheet == nil {
-                ProgressView().controlSize(.small).padding(16)
-                    .accessibilityLabel(tr("Working", "正在处理"))
+                DesktopBusyIndicator().padding(16)
             }
         }
         .sheet(item: $sheet) { current in
@@ -321,30 +321,35 @@ struct DesktopVaultView: View {
             .navigationSplitViewColumnWidth(min: 250, ideal: 310, max: 390)
             .navigationTitle(tr("Accounts", "账号"))
         } detail: {
-            Group {
-                if let selected {
-                    if appActive {
-                        accountDetail(selected)
-                    } else {
-                        ContentUnavailableView(tr("Vault Paused", "验证码已暂停"), systemImage: "lock.shield")
-                    }
-                } else if items.isEmpty {
-                    ContentUnavailableView {
-                        Label(tr("No Accounts", "没有账号"), systemImage: "key.horizontal")
-                    } description: {
-                        Text(tr("Add a service to start generating codes.", "添加服务后即可生成验证码。"))
-                    } actions: {
-                        Button(tr("Add Account…", "添加账号…")) { present(.account(nil, nil)) }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(isBusy)
-                    }
-                } else if visible.isEmpty {
-                    ContentUnavailableView.search(text: query)
-                } else {
-                    ContentUnavailableView(tr("Select an Account", "选择一个账号"), systemImage: "key.horizontal")
+            VStack(spacing: 0) {
+                if appActive {
+                    reminders
                 }
+                Group {
+                    if let selected {
+                        if appActive {
+                            accountDetail(selected)
+                        } else {
+                            ContentUnavailableView(tr("Vault Paused", "验证码已暂停"), systemImage: "lock.shield")
+                        }
+                    } else if items.isEmpty {
+                        ContentUnavailableView {
+                            Label(tr("No Accounts", "没有账号"), systemImage: "key.horizontal")
+                        } description: {
+                            Text(tr("Add a service to start generating codes.", "添加服务后即可生成验证码。"))
+                        } actions: {
+                            Button(tr("Add Account…", "添加账号…")) { present(.account(nil, nil)) }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(isBusy)
+                        }
+                    } else if visible.isEmpty {
+                        ContentUnavailableView.search(text: query)
+                    } else {
+                        ContentUnavailableView(tr("Select an Account", "选择一个账号"), systemImage: "key.horizontal")
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(ink.background)
         }
         .navigationSplitViewStyle(.balanced)
@@ -380,6 +385,44 @@ struct DesktopVaultView: View {
         }
     }
 
+    private var secondBoundary: Date {
+        Date(timeIntervalSince1970: Date.now.timeIntervalSince1970.rounded(.down))
+    }
+
+    @ViewBuilder
+    private var reminders: some View {
+        if let model = store.model {
+            VStack(alignment: .leading, spacing: 6) {
+                if !store.hasRecoveryPassword {
+                    reminder(tr("No recovery password is set.", "尚未设置恢复口令。"),
+                             actionTitle: tr("Set Password…", "设置口令…")) { present(.changePassword) }
+                } else if !model.items.isEmpty && model.updatedAt != lastBackupRevision {
+                    reminder(tr("The current vault has no recent backup.", "当前验证码库尚未备份。"),
+                             actionTitle: tr("Export Backup…", "导出备份…")) { present(.exportBackup) }
+                }
+                if clockChanged {
+                    reminder(tr("The Mac clock changed. Check it if a code is rejected.", "Mac 时钟已变化。验证码不匹配时请检查时间。"),
+                             actionTitle: tr("Diagnostics…", "诊断…")) { present(.diagnostics) }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+        }
+    }
+
+    private func reminder(_ message: String, actionTitle: String, action: @escaping () -> Void) -> some View {
+        HStack {
+            Label(message, systemImage: "info.circle")
+                .font(.callout)
+                .foregroundStyle(ink.secondary)
+            Spacer(minLength: 8)
+            Button(actionTitle, action: action).buttonStyle(.link)
+                .disabled(isBusy)
+        }
+        .padding(9)
+        .background(ink.surface, in: RoundedRectangle(cornerRadius: 10))
+    }
+
     private func accountRow(_ item: VaultItem) -> some View {
         HStack(spacing: 10) {
             Avatar(title: item.issuer ?? item.accountName, ink: ink, size: 30)
@@ -392,7 +435,7 @@ struct DesktopVaultView: View {
             Spacer(minLength: 6)
             if appActive {
                 let hidden = defaultHidden != revealed.contains(item.id)
-                TimelineView(.periodic(from: .now, by: 1)) { context in
+                TimelineView(.periodic(from: secondBoundary, by: 1)) { context in
                     let warning = item.type == .totp && secondsRemaining(item, at: context.date) <= 5
                     let code = hidden ? String(repeating: "•", count: item.digits)
                         : store.code(item, at: context.date) ?? "—"
@@ -464,7 +507,7 @@ struct DesktopVaultView: View {
     private func codeCard(_ item: VaultItem) -> some View {
         let hidden = defaultHidden != revealed.contains(item.id)
         return VStack(alignment: .leading, spacing: 18) {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(.periodic(from: secondBoundary, by: 1)) { context in
                 let remaining = secondsRemaining(item, at: context.date)
                 let expiring = item.type == .totp && remaining <= 5
                 let rawCode = hidden ? nil : store.code(item, at: context.date)
@@ -655,6 +698,10 @@ struct DesktopVaultView: View {
     }
 
     private func chooseBackup() {
+        if store.model != nil && !store.hasRecoveryPassword {
+            present(.changePassword)
+            return
+        }
         openFile(prompt: tr("Choose Backup", "选取备份"), types: [.data]) { url in inspectBackup(url) }
     }
 
@@ -683,6 +730,10 @@ struct DesktopVaultView: View {
 
     private func inspectBackup(_ url: URL) {
         guard store.consent, !isBusy, sheet == nil else { return }
+        if store.model != nil && !store.hasRecoveryPassword {
+            present(.changePassword)
+            return
+        }
         let requiredUnlocked = store.model != nil
         fileBusy = true
         fileTask = Task {
@@ -781,5 +832,26 @@ private struct PrivateWindowConfiguration: NSViewRepresentable {
             super.viewDidMoveToWindow()
             window?.sharingType = .none
         }
+    }
+}
+
+
+struct DesktopBusyIndicator: View {
+    @State private var visible = false
+
+    var body: some View {
+        Color.clear
+            .frame(width: 20, height: 20)
+            .overlay {
+                if visible {
+                    ProgressView().controlSize(.small).accessibilityLabel(tr("Working", "正在处理"))
+                }
+            }
+            .task {
+                do {
+                    try await Task.sleep(for: .milliseconds(300))
+                    if NSApplication.shared.isActive { visible = true }
+                } catch {}
+            }
     }
 }

@@ -8,6 +8,7 @@ struct DesktopDialog<Content: View, Actions: View>: View {
     @ObservedObject var store: VaultStore
     let title: String
     let close: () -> Void
+    var cancelBusy: (() -> Void)? = nil
     @ViewBuilder let content: Content
     @ViewBuilder let actions: Actions
 
@@ -20,12 +21,12 @@ struct DesktopDialog<Content: View, Actions: View>: View {
             }
             HStack {
                 if store.busy {
-                    ProgressView().controlSize(.small).accessibilityLabel(tr("Working", "正在处理"))
+                    DesktopBusyIndicator()
                 }
                 Spacer()
-                Button(tr("Cancel", "取消"), action: close)
+                Button(tr("Cancel", "取消"), action: store.busy ? (cancelBusy ?? close) : close)
                     .keyboardShortcut(.cancelAction)
-                    .disabled(store.busy)
+                    .disabled(store.busy && cancelBusy == nil)
                 actions.disabled(store.busy)
             }
         }
@@ -51,8 +52,10 @@ struct SetupSheet: View {
                 Form {
                     SecureField(tr("Recovery password (optional)", "恢复口令（可选）"), text: $password)
                     SecureField(tr("Confirm password", "确认口令"), text: $confirmation)
-                    Toggle(tr("Verify my identity each time", "每次进入时验证身份"), isOn: $systemAuthentication)
-                        .disabled(password.isEmpty)
+                    if store.supportsSystemAuthentication {
+                        Toggle(tr("Verify my identity each time", "每次进入时验证身份"), isOn: $systemAuthentication)
+                            .disabled(password.isEmpty)
+                    }
                 }
                 .textFieldStyle(.roundedBorder)
                 if !password.isEmpty && !confirmation.isEmpty && password != confirmation {
@@ -264,7 +267,11 @@ struct ImportSheet: View {
     @State private var recoveryPassword = ""
     @State private var confirmation = ""
     @State private var preview: ImportedVault?
+    @AppStorage("export.last-success") private var lastBackup = 0.0
+    @AppStorage("export.last-revision") private var lastBackupRevision = ""
+    @State private var decodeTask: Task<Void, Never>?
     @State private var overwriteConfirmed = false
+    @State private var duplicateCount = 0
     @State private var conflictChoice = 0
     @State private var authenticate = false
 
@@ -272,7 +279,8 @@ struct ImportSheet: View {
     private var creating: Bool { store.model == nil }
 
     var body: some View {
-        DesktopDialog(store: store, title: creating ? tr("Restore from Backup", "从备份恢复") : tr("Import Backup", "导入备份"), close: close) {
+        DesktopDialog(store: store, title: creating ? tr("Restore from Backup", "从备份恢复") : tr("Import Backup", "导入备份"),
+                      close: close, cancelBusy: decodeTask == nil ? nil : cancelDecode) {
             VStack(alignment: .leading, spacing: 12) {
                 LabeledContent(tr("File", "文件"), value: url.lastPathComponent)
                 LabeledContent(tr("Format", "格式"), value: format.title)
@@ -293,8 +301,8 @@ struct ImportSheet: View {
             if preview != nil {
                 Button(creating ? tr("Restore Vault", "恢复验证码库") : tr("Import Accounts", "导入账号"), action: commit)
                     .keyboardShortcut(.defaultAction)
-                    .disabled((replacing && (!overwriteConfirmed || recoveryPassword.isEmpty))
-                              || (creating && recoveryPassword != confirmation))
+                    .disabled((replacing && !overwriteConfirmed)
+                              || (creating && (recoveryPassword.isEmpty || recoveryPassword != confirmation)))
             } else {
                 Button(tr("Preview Backup", "预览备份"), action: decode)
                     .keyboardShortcut(.defaultAction)
@@ -306,6 +314,7 @@ struct ImportSheet: View {
             recoveryPassword = ""
             confirmation = ""
             preview = nil
+            decodeTask?.cancel()
         }
     }
 
@@ -334,12 +343,16 @@ struct ImportSheet: View {
                     Text(tr("The previous encrypted vault is retained as a rescue copy.", "此前的加密库会保留为救援副本。"))
                         .font(.callout).foregroundStyle(.secondary)
                 }
-                SecureField(replacing ? tr("New recovery password", "新恢复口令")
-                            : tr("Recovery password (optional)", "恢复口令（可选）"), text: $recoveryPassword)
+                SecureField(tr("New recovery password", "新恢复口令"), text: $recoveryPassword)
                 SecureField(tr("Confirm recovery password", "确认恢复口令"), text: $confirmation)
-                Toggle(tr("Verify my identity each time", "每次进入时验证身份"), isOn: $authenticate)
-                    .disabled(recoveryPassword.isEmpty)
+                if store.supportsSystemAuthentication && !(replacing && store.systemAuthentication) {
+                    Toggle(tr("Verify my identity each time", "每次进入时验证身份"), isOn: $authenticate)
+                        .disabled(recoveryPassword.isEmpty)
+                }
             } else {
+                Text(tr("\(duplicateCount) matching accounts. Your local settings and password will be kept.",
+                        "\(duplicateCount) 个账号重复。合并保留本机设置和恢复口令。"))
+                    .font(.callout).foregroundStyle(.secondary)
                 Picker(tr("When an account already exists", "已有相同账号时"), selection: $conflictChoice) {
                     Text(tr("Keep Existing", "保留本机")).tag(0)
                     Text(tr("Use Backup Entry", "采用备份")).tag(1)
@@ -351,12 +364,14 @@ struct ImportSheet: View {
     }
 
     private func decode() {
-        guard !store.busy, preview == nil else { return }
+        guard !store.busy, decodeTask == nil, preview == nil else { return }
         let password = format.requiresPassword ? backupPassword : nil
-        Task {
-            if let result = await store.previewImport(url, password: password) {
+        decodeTask = Task {
+            defer { decodeTask = nil }
+            if let result = await store.previewImport(url, password: password), !Task.isCancelled {
                 backupPassword = ""
                 if result.format == format {
+                    duplicateCount = VaultMerge.conflictCount(local: store.model?.items ?? [], incoming: result.model.items)
                     preview = result
                 } else {
                     store.errorMessage = tr("The selected file changed. Close this preview and choose it again.",
@@ -364,6 +379,11 @@ struct ImportSheet: View {
                 }
             }
         }
+    }
+
+    private func cancelDecode() {
+        decodeTask?.cancel()
+        close()
     }
 
     private func commit() {
@@ -376,10 +396,14 @@ struct ImportSheet: View {
         }
         let replace = replacing
         let password = recoveryPassword.isEmpty ? nil : recoveryPassword
-        let authentication = authenticate && password != nil
+        let authentication = (authenticate || (replace && store.systemAuthentication)) && password != nil
+        let restoresVault = creating
         Task {
             if await store.commitImport(preview, replace: replace, initialPassword: password,
-                                        systemAuthentication: authentication, policy: choice) { close() }
+                                        systemAuthentication: authentication, policy: choice) {
+                if restoresVault { lastBackup = 0; lastBackupRevision = "" }
+                close()
+            }
         }
     }
 }
@@ -389,6 +413,7 @@ struct ExportSheet: View {
     @ObservedObject var store: VaultStore
     let close: () -> Void
     @AppStorage("export.last-success") private var lastBackup = 0.0
+    @AppStorage("export.last-revision") private var lastBackupRevision = ""
     @State private var format: InterchangeFormat = .aegisEncrypted
     @State private var password = ""
     @State private var plaintextAcknowledged = false
@@ -449,6 +474,7 @@ struct ExportSheet: View {
             Task {
                 if await store.export(to: url, format: selectedFormat, password: chosenPassword) {
                     lastBackup = Date.now.timeIntervalSince1970
+                    lastBackupRevision = store.model?.updatedAt ?? ""
                     close()
                 }
             }

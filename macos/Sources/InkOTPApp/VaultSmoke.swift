@@ -27,6 +27,11 @@ enum VaultSmoke {
         let disk = VaultDisk(root: root, keychainService: "io.github.rhczz.inkotp.macos.ci-smoke." + id)
         defer { try? FileManager.default.removeItem(at: root) }
         guard try await disk.status().initialized == false else { throw CoreError("SMOKE_UNEXPECTED_VAULT") }
+        let secondProcess = VaultDisk(root: root)
+        do {
+            _ = try await secondProcess.status()
+            throw CoreError("SMOKE_CONCURRENT_OPEN")
+        } catch VaultAccessError.unavailable {}
 
         var model = VaultModel.new()
         model.items = [VaultItem.make(accountName: "Public CI vector", secret: Data("12345678901234567890".utf8))]
@@ -52,6 +57,18 @@ enum VaultSmoke {
                 _ = try await disk.unlock(password: "incorrect public CI passphrase")
                 throw CoreError("SMOKE_WRONG_PASSWORD_ACCEPTED")
             } catch VaultAccessError.authentication {}
+
+            var rescued = VaultModel.new()
+            rescued.items = model.items
+            let restored = try await disk.replace(rescued, session: VaultSession.new(password: recovery),
+                                                 systemAuthentication: false, expected: active, rescue: true)
+            active = restored.record
+            guard active.rescue == replacement.record.active else { throw CoreError("SMOKE_RESCUE_POINTER") }
+            let rescuePath = root.appending(path: replacement.record.active.id.uuidString.lowercased()).appending(path: "vault.bin")
+            let snapshot = try VaultFile.open(Data(contentsOf: rescuePath), password: recovery).0
+            guard snapshot == model, try await disk.unlock(password: nil).model == rescued else {
+                throw CoreError("SMOKE_RESCUE_GENERATIONS")
+            }
             await disk.clearSmokeCredential(record: active)
         } catch {
             await disk.clearSmokeCredential(record: active)

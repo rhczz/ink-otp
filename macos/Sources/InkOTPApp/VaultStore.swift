@@ -14,6 +14,7 @@ final class VaultStore: ObservableObject {
     @Published private(set) var ready = false
     @Published private(set) var hasRecoveryPassword = false
     @Published var errorMessage: String?
+    let supportsSystemAuthentication = Bundle.main.object(forInfoDictionaryKey: "InkOTPProtectedKeychainEnabled") as? Bool == true
 
     private struct CachedCode {
         let step: Int64
@@ -31,6 +32,7 @@ final class VaultStore: ObservableObject {
     private var backgroundLock: Task<Void, Never>?
     private var clipboardClear: Task<Void, Never>?
     private var clipboardChangeCount: Int?
+    private var requiresForegroundAuthentication = false
 
     init() {
         consent = DesktopPrivacy.available && UserDefaults.standard.string(forKey: consentKey) == DesktopPrivacy.revision
@@ -56,6 +58,7 @@ final class VaultStore: ObservableObject {
             guard !initialized else { throw VaultAccessError.alreadyCreated }
             let password = try acceptedPassword(password)
             if systemAuthentication {
+                guard supportsSystemAuthentication else { throw VaultAccessError.signing }
                 guard password != nil else { throw VaultAccessError.noPassword }
                 try await authenticateDevice(reason: tr("Protect your InkOTP vault", "保护 InkOTP 验证库"))
             }
@@ -84,6 +87,7 @@ final class VaultStore: ObservableObject {
 
     func lock(clearClipboard: Bool = true) {
         generation &+= 1
+        requiresForegroundAuthentication = false
         activeAuthentication?.invalidate()
         backgroundLock?.cancel()
         backgroundLock = nil
@@ -98,6 +102,7 @@ final class VaultStore: ObservableObject {
         await operation { [self] epoch in
             let (model, session, record) = try requireOpen()
             guard record.systemAuthentication != enabled else { return true }
+            if enabled, !supportsSystemAuthentication { throw VaultAccessError.signing }
             guard session.passwordKey != nil else { throw VaultAccessError.noPassword }
             try await authenticateDevice(reason: tr("Change the InkOTP security setting", "更改 InkOTP 安全设置"))
             try check(epoch)
@@ -117,6 +122,10 @@ final class VaultStore: ObservableObject {
             if record.hasPassword {
                 guard let current else { throw VaultAccessError.authentication }
                 try await disk.checkPassword(current, record: record)
+                try check(epoch)
+                if record.systemAuthentication {
+                    try await authenticateDevice(reason: tr("Change the InkOTP recovery password", "修改 InkOTP 恢复口令"))
+                }
             } else {
                 try await authenticateDevice(reason: tr("Set the InkOTP recovery password", "设置 InkOTP 恢复口令"))
             }
@@ -249,6 +258,11 @@ final class VaultStore: ObservableObject {
                       systemAuthentication: Bool = false, policy: MergePolicy = .keepLocal) async -> Bool {
         await operation { [self] epoch in
             if var current = model, let record, let session {
+                guard record.hasPassword else { throw VaultAccessError.noPassword }
+                if record.systemAuthentication {
+                    try await authenticateDevice(reason: tr("Import an InkOTP backup", "导入 InkOTP 备份"))
+                    try check(epoch)
+                }
                 let existing = current.items.sorted { $0.sortIndex < $1.sortIndex }
                 let incoming = preview.model.items.sorted { $0.sortIndex < $1.sortIndex }
                 current.items = VaultMerge.merge(local: existing, incoming: incoming, policy: policy)
@@ -263,9 +277,9 @@ final class VaultStore: ObservableObject {
                 guard replace else { throw VaultAccessError.needsConfirmation }
                 guard record != nil else { throw VaultAccessError.corrupt }
             }
-            let password = try acceptedPassword(initialPassword)
+            guard let password = try acceptedPassword(initialPassword) else { throw VaultAccessError.noPassword }
+            if systemAuthentication, !supportsSystemAuthentication { throw VaultAccessError.signing }
             if initialized || systemAuthentication {
-                guard password != nil else { throw VaultAccessError.noPassword }
                 try await authenticateDevice(reason: tr("Restore an InkOTP backup", "恢复 InkOTP 备份"))
             }
             try check(epoch)
@@ -409,14 +423,21 @@ final class VaultStore: ObservableObject {
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             workspace.publisher(for: name)
-                .sink { [weak self] _ in Task { @MainActor in self?.lock() } }
+                .sink { [weak self] _ in Task { @MainActor in
+                    self?.lockForSessionPause()
+                } }
+                .store(in: &observations)
+        }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            workspace.publisher(for: name)
+                .sink { [weak self] _ in Task { @MainActor in await self?.enteredForeground() } }
                 .store(in: &observations)
         }
         NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
             .sink { [weak self] _ in Task { @MainActor in self?.enteredBackground() } }
             .store(in: &observations)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
-            .sink { [weak self] _ in Task { @MainActor in self?.backgroundLock?.cancel() } }
+            .sink { [weak self] _ in Task { @MainActor in await self?.enteredForeground() } }
             .store(in: &observations)
         NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.lock() } }
@@ -428,6 +449,7 @@ final class VaultStore: ObservableObject {
         if activeAuthentication != nil { return }
         if systemAuthentication {
             lock(clearClipboard: false)
+            requiresForegroundAuthentication = true
             return
         }
         backgroundLock?.cancel()
@@ -437,6 +459,20 @@ final class VaultStore: ObservableObject {
             guard !Task.isCancelled, !NSApplication.shared.isActive else { return }
             self?.lock(clearClipboard: false)
         }
+    }
+
+    private func lockForSessionPause() {
+        let shouldAuthenticate = requiresForegroundAuthentication || (systemAuthentication && model != nil)
+        lock()
+        requiresForegroundAuthentication = shouldAuthenticate
+    }
+
+    private func enteredForeground() async {
+        guard NSApplication.shared.isActive else { return }
+        backgroundLock?.cancel()
+        guard requiresForegroundAuthentication, ready, consent, !busy else { return }
+        requiresForegroundAuthentication = false
+        await unlock()
     }
 
     private func clearOwnedClipboard() {
