@@ -45,6 +45,7 @@ final class VaultStore: ObservableObject {
         guard DesktopPrivacy.available else { return }
         UserDefaults.standard.set(DesktopPrivacy.revision, forKey: consentKey)
         consent = true
+        scheduleInitialUnlock()
     }
 
     func withdrawPrivacy() {
@@ -83,7 +84,13 @@ final class VaultStore: ObservableObject {
                 try await authenticateDevice(reason: tr("Recover access to your InkOTP vault", "恢复 InkOTP 验证库访问"))
             }
             try check(epoch)
-            let output = try await disk.unlock(password: password)
+            let context = LAContext()
+            activeAuthentication = context
+            defer {
+                context.invalidate()
+                activeAuthentication = nil
+            }
+            let output = try await disk.unlock(password: password, context: context)
             return publish(output, epoch: epoch)
         } ?? false
     }
@@ -376,6 +383,13 @@ final class VaultStore: ObservableObject {
             errorMessage = tr("The local vault is inaccessible. Your data will not be replaced.", "无法访问本地验证库。现有数据不会被覆盖。")
         }
         ready = true
+        scheduleInitialUnlock()
+    }
+
+    private func scheduleInitialUnlock() {
+        guard ready, consent, record != nil, model == nil else { return }
+        shouldUnlockOnReturn = true
+        Task { await enteredForeground() }
     }
 
     private func updateRecord(_ record: VaultRecord?) {
@@ -395,6 +409,10 @@ final class VaultStore: ObservableObject {
         cache.removeAll(keepingCapacity: true)
         session = output.session
         model = output.model
+        if output.deviceCredentialRepairFailed {
+            errorMessage = tr("Vault opened with your recovery password. Device access could not be restored. Keep your recovery password and export an encrypted backup.",
+                              "已使用恢复口令打开验证库。设备解锁暂时无法恢复。请保留恢复口令并导出加密备份。")
+        }
         return true
     }
 
@@ -460,7 +478,7 @@ final class VaultStore: ObservableObject {
                 .store(in: &observations)
         }
         NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
-            .sink { [weak self] _ in Task { @MainActor in self?.enteredBackground() } }
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.enteredBackground() } }
             .store(in: &observations)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in Task { @MainActor in await self?.enteredForeground() } }
@@ -471,7 +489,7 @@ final class VaultStore: ObservableObject {
     }
 
     private func enteredBackground() {
-        guard let model, !NSApplication.shared.isActive else { return }
+        guard let model else { return }
         if activeAuthentication != nil { return }
         let timeout = model.settings.lockTimeoutSeconds
         if systemAuthentication || timeout == 0 {

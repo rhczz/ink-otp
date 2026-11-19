@@ -48,8 +48,12 @@ final class DesktopUpgradeTests: XCTestCase {
         XCTAssertTrue(previousAccount.waitForExistence(timeout: timeout), "The Beta 1 account survived replacement")
 
         try addURIAccount(in: app)
-        setImmediateLock(in: app)
         let fixture = account(app, named: uriAccount)
+        verifyPrivacyCurtainPreservesDraft(in: app, savedAccount: fixture)
+        setLockTimeout("Immediately", in: app)
+        app.typeKey("n", modifierFlags: .command)
+        let openEditor = element("account-setup-input", in: app)
+        XCTAssertTrue(openEditor.waitForExistence(timeout: timeout))
 
         moveToFinder(from: app)
         XCTAssertTrue(element("desktop-privacy-curtain", in: app).waitForExistence(timeout: timeout))
@@ -57,6 +61,7 @@ final class DesktopUpgradeTests: XCTestCase {
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: timeout))
         XCTAssertTrue(fixture.waitForExistence(timeout: timeout), "Returning from an automatic lock reopens the vault")
+        XCTAssertFalse(openEditor.exists, "The automatic lock closed the editor that was open before leaving")
         XCTAssertTrue(previousAccount.exists)
 
         click(element("vault-lock", in: app))
@@ -110,14 +115,37 @@ final class DesktopUpgradeTests: XCTestCase {
     }
 
     @MainActor
-    private func setImmediateLock(in app: XCUIApplication) {
+    private func verifyPrivacyCurtainPreservesDraft(in app: XCUIApplication, savedAccount: XCUIElement) {
+        setLockTimeout("After 30 Seconds", in: app)
+        app.typeKey("n", modifierFlags: .command)
+        let draftName = element("account-name", in: app)
+        let draftIssuer = element("account-issuer", in: app)
+        type("unsaved-display-name", into: draftName)
+        type("Draft CI", into: draftIssuer)
+        moveToFinder(from: app)
+        XCTAssertTrue(element("desktop-privacy-curtain", in: app).waitForExistence(timeout: timeout))
+        XCTAssertFalse(draftName.exists, "The editor is absent from the inactive accessibility tree")
+        XCTAssertFalse(draftIssuer.exists, "The unsaved issuer is hidden while the app is inactive")
+        XCTAssertFalse(savedAccount.exists, "Saved account names are hidden while the app is inactive")
+
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: timeout))
+        XCTAssertTrue(draftName.waitForExistence(timeout: timeout))
+        XCTAssertEqual(draftName.value as? String, "unsaved-display-name")
+        XCTAssertEqual(draftIssuer.value as? String, "Draft CI")
+        click(app.buttons["Cancel"].firstMatch)
+        XCTAssertTrue(savedAccount.waitForExistence(timeout: timeout))
+    }
+
+    @MainActor
+    private func setLockTimeout(_ label: String, in app: XCUIApplication) {
         app.typeKey(",", modifierFlags: .command)
         let picker = element("settings-lock-timeout", in: app)
         XCTAssertTrue(picker.waitForExistence(timeout: timeout))
-        if picker.value as? String != "Immediately" {
+        if picker.value as? String != label {
             click(picker)
-            click(app.menuItems["Immediately"].firstMatch)
-            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Immediately"), object: picker)
+            click(app.menuItems[label].firstMatch)
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", label), object: picker)
             wait(for: [selected], timeout: timeout)
         }
         app.typeKey("w", modifierFlags: .command)
@@ -134,7 +162,8 @@ final class DesktopUpgradeTests: XCTestCase {
 
     @MainActor
     private func account(_ app: XCUIApplication, named name: String) -> XCUIElement {
-        app.windows["InkOTP"].staticTexts[name].firstMatch
+        app.windows["InkOTP"].descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
     }
 
     @MainActor

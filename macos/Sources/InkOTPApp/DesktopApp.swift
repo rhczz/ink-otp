@@ -165,7 +165,6 @@ struct DesktopVaultView: View {
     @State private var fileTask: Task<Void, Never>?
     @State private var openPanel: NSOpenPanel?
     @State private var fileBusy = false
-    @State private var didStart = false
     @State private var clockChanged = false
 
     private var appActive: Bool { activity.isActive }
@@ -284,14 +283,7 @@ struct DesktopVaultView: View {
             openPanel?.cancel(nil)
             feedbackTask?.cancel()
             commands.hasSelection = false
-            if store.model != nil { store.lock() }
-        }
-        .task(id: store.ready) {
-            guard store.ready, !didStart else { return }
-            didStart = true
-            if store.consent && store.initialized && store.model == nil {
-                await store.unlock()
-            }
+            store.lock()
         }
     }
 

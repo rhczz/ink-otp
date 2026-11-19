@@ -1,6 +1,6 @@
 ---
 
-> Android 0.5.3 的后续桌面实现见 [macOS 桌面版规格](../../spec/macos-parity.md)。桌面返回窗口、手动锁定和输入链接遵循 Android 交互合同，并适配多窗口失焦。历史 Android v1.0 设计仍适用于 Android，对应协议由 `spec/` 约束。
+> Android 0.5.3 的后续桌面实现见 [macOS 桌面版规格](../../spec/macos-parity.md)。桌面返回窗口、手动锁定和输入链接遵循 Android 交互合同，并适配多窗口失焦。历史 Android v1.0 设计仍适用于 Android，对应协议由 `spec/` 约束。 临时签名覆盖升级时，已验证恢复口令可在保留本机库与安全策略的前提下重新绑定普通设备凭据。
 title: InkOTP · 2FA 验证器技术设计文档（Android 首发）
 aliases:
   - Authenticator Design Doc

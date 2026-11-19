@@ -43,6 +43,7 @@ printf '%s  %s\n' "$baseline_digest" "$baseline" | shasum -a 256 -c -
 stage_bundle() {
     local image="$1" version
     hdiutil verify "$image"
+    mkdir -p "$mount"
     hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$image"
     mounted=true
     codesign --verify --strict --deep "$mount/InkOTP.app"
