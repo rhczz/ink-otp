@@ -4,8 +4,9 @@
 
 | 日期 | 记录 | 状态 |
 |---|---|---|
-| 2026-11-19 | [Mac 切换应用、解锁与添加账号](2026-11-19-macos-desktop-lifecycle.md) | GitHub Actions 验收中 |
-| 2026-11-19 | [Android 与 macOS 实际交换备份](2026-11-19-macos-cross-platform.md) | GitHub Actions 验收中 |
+| 2026-11-19 | [Mac 从图片添加二维码账号](2026-11-19-macos-qr-image-import.md) | GitHub Actions 验收中 |
+| 2026-11-19 | [Mac 切换应用、解锁与添加账号](2026-11-19-macos-desktop-lifecycle.md) | macOS 15 和 26 桌面验收通过，真机专项待测 |
+| 2026-11-19 | [Android 与 macOS 实际交换备份](2026-11-19-macos-cross-platform.md) | 三端公共合约与双向备份读取通过 |
 | 2026-11-18 | [InkOTP macOS 桌面版与公共测试集](2026-11-18-macos-native-parity.md) | 双架构测试与通用 DMG 验证通过，真机待测 |
 | 2026-11-18 | [InkOTP 0.5.3 原生离线隐私声明](2026-11-18-native-offline-privacy-0.5.3.md) | 本机验证通过，真机待复测 |
 | 2026-11-18 | [InkOTP 0.5.2 同步内置隐私声明](2026-11-18-privacy-sync-0.5.2.md) | 本机验证通过，真机待复测 |
