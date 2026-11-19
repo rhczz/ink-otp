@@ -29,6 +29,7 @@ final class VaultStore: ObservableObject {
     private var cache: [String: CachedCode] = [:]
     private var observations = Set<AnyCancellable>()
     private var activeAuthentication: LAContext?
+    private var authenticationDeadline: ContinuousClock.Instant?
     private var backgroundLock: Task<Void, Never>?
     private var backgroundDeadline: ContinuousClock.Instant?
     private var clipboardClear: Task<Void, Never>?
@@ -85,11 +86,9 @@ final class VaultStore: ObservableObject {
             }
             try check(epoch)
             let context = LAContext()
-            activeAuthentication = context
-            defer {
-                context.invalidate()
-                activeAuthentication = nil
-            }
+            let interactive = password == nil && systemAuthentication
+            if interactive { activeAuthentication = context }
+            defer { finishAuthentication(context) }
             let output = try await disk.unlock(password: password, context: context)
             return publish(output, epoch: epoch)
         } ?? false
@@ -99,6 +98,8 @@ final class VaultStore: ObservableObject {
         lockRevision &+= 1
         shouldUnlockOnReturn = false
         activeAuthentication?.invalidate()
+        activeAuthentication = nil
+        authenticationDeadline = nil
         backgroundLock?.cancel()
         backgroundLock = nil
         backgroundDeadline = nil
@@ -151,16 +152,22 @@ final class VaultStore: ObservableObject {
 
     @discardableResult
     func save(_ item: VaultItem) async -> Bool {
-        await mutate { model in
-            var item = item
-            item.updatedAt = VaultJSON.timestamp()
+        guard let model, !busy else { return false }
+        if item.type != .totp, !model.items.contains(where: { $0.id == item.id }) {
+            errorMessage = AccountSetupInput.manualHOTP.errorDescription
+            return false
+        }
+        return await mutate { model in
+            let updatedAt = VaultJSON.timestamp()
             if let position = model.items.firstIndex(where: { $0.id == item.id }) {
-                item.sortIndex = model.items[position].sortIndex
-                model.items[position] = item
+                model.items[position].issuer = item.issuer
+                model.items[position].accountName = item.accountName
+                model.items[position].updatedAt = updatedAt
             } else {
+                var added = item
+                added.updatedAt = updatedAt
                 model.items.sort { $0.sortIndex < $1.sortIndex }
-                item.sortIndex = (model.items.count + 1) * 1000
-                model.items.append(item)
+                model.items.append(added)
                 for index in model.items.indices { model.items[index].sortIndex = (index + 1) * 1000 }
             }
         }
@@ -184,26 +191,14 @@ final class VaultStore: ObservableObject {
     }
 
     @discardableResult
-    func advance(_ id: String) async -> Bool {
-        await mutate { model in
-            guard let index = model.items.firstIndex(where: { $0.id == id }),
-                  model.items[index].type == .hotp, let counter = model.items[index].counter else { return }
-            guard counter < Int64.max else { throw VaultAccessError.counterExhausted }
-            model.items[index].counter = counter + 1
-            model.items[index].updatedAt = VaultJSON.timestamp()
-        }
-    }
-
-    @discardableResult
     func updateSettings(_ settings: VaultSettings) async -> Bool {
         await mutate { $0.settings = settings }
     }
 
     func code(_ item: VaultItem, at date: Date = .now) -> String? {
-        guard model != nil, item.period > 0, let time = Int64(exactly: date.timeIntervalSince1970.rounded(.down)),
-              time >= 0 else { return nil }
-        let step = item.type == .totp ? time / Int64(item.period) : (item.counter ?? -1)
-        guard step >= 0 else { return nil }
+        guard model != nil, item.type == .totp, item.period > 0,
+              let time = Int64(exactly: date.timeIntervalSince1970.rounded(.down)), time >= 0 else { return nil }
+        let step = time / Int64(item.period)
         if let cached = cache[item.id], cached.step == step { return cached.text }
 
         let value = try? OTP.hotp(secret: item.secret, algorithm: item.algorithm, digits: item.digits,
@@ -218,7 +213,7 @@ final class VaultStore: ObservableObject {
     @discardableResult
     func copy(_ item: VaultItem, at date: Date = .now) -> Bool {
         guard let model, let item = model.items.first(where: { $0.id == item.id }),
-              let code = code(item, at: date) else { return false }
+              item.type == .totp, let code = code(item, at: date) else { return false }
         clearOwnedClipboard()
         let clipboard = NSPasteboard.general
         let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
@@ -445,10 +440,7 @@ final class VaultStore: ObservableObject {
     private func authenticateDevice(reason: String) async throws {
         let context = LAContext()
         activeAuthentication = context
-        defer {
-            context.invalidate()
-            activeAuthentication = nil
-        }
+        defer { finishAuthentication(context) }
 
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else {
             throw VaultAccessError.authentication
@@ -461,6 +453,22 @@ final class VaultStore: ObservableObject {
         } catch {
             throw VaultAccessError.authentication
         }
+    }
+
+    private func finishAuthentication(_ context: LAContext) {
+        context.invalidate()
+        guard activeAuthentication === context else { return }
+        activeAuthentication = nil
+        if let deadline = authenticationDeadline {
+            authenticationDeadline = nil
+            backgroundLock?.cancel()
+            backgroundLock = nil
+            if ContinuousClock.now >= deadline {
+                lock(clearClipboard: false)
+                return
+            }
+        }
+        if !NSApplication.shared.isActive { enteredBackground() }
     }
 
     private func listenForLifecycle() {
@@ -489,8 +497,19 @@ final class VaultStore: ObservableObject {
     }
 
     private func enteredBackground() {
+        if activeAuthentication != nil {
+            guard authenticationDeadline == nil else { return }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+            authenticationDeadline = deadline
+            backgroundLock?.cancel()
+            backgroundLock = Task { [weak self] in
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                guard !Task.isCancelled, self?.authenticationDeadline == deadline else { return }
+                self?.lock(clearClipboard: false)
+            }
+            return
+        }
         guard let model else { return }
-        if activeAuthentication != nil { return }
         let timeout = model.settings.lockTimeoutSeconds
         if systemAuthentication || timeout == 0 {
             lockForReturn(clearClipboard: false)
@@ -521,6 +540,10 @@ final class VaultStore: ObservableObject {
 
     private func enteredForeground() async {
         guard NSApplication.shared.isActive else { return }
+        if let deadline = authenticationDeadline {
+            if ContinuousClock.now >= deadline { lock(clearClipboard: false) }
+            return
+        }
         if let deadline = backgroundDeadline, ContinuousClock.now >= deadline {
             lockForReturn(clearClipboard: false)
         } else {

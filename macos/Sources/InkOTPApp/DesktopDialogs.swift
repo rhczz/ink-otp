@@ -92,7 +92,7 @@ struct SetupSheet: View {
 }
 
 enum AccountSetupInput: LocalizedError {
-    case invalid, migration, counter
+    case invalid, migration, manualHOTP
 
     var errorDescription: String? {
         switch self {
@@ -101,8 +101,9 @@ enum AccountSetupInput: LocalizedError {
         case .migration:
             tr("Use a setup link for one account. Google Authenticator migration links are unsupported.",
                "请使用单个账号的设置链接。暂不支持 Google Authenticator 迁移链接。")
-        case .counter:
-            tr("This link has a counter outside InkOTP’s supported range.", "这个链接的计数器超出 InkOTP 支持的范围。")
+        case .manualHOTP:
+            tr("Use a TOTP setup link to add an account. Existing HOTP accounts can be imported from a backup.",
+               "添加账号时请使用 TOTP 设置链接。现有 HOTP 账号可以从备份导入。")
         }
     }
 
@@ -111,7 +112,7 @@ enum AccountSetupInput: LocalizedError {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let result = try? Otpauth.parse(trimmed) else { throw Self.invalid }
         guard result.kind != .migration else { throw Self.migration }
-        if let value = result.counter, Int64(exactly: value) == nil { throw Self.counter }
+        guard result.type == .totp else { throw Self.manualHOTP }
         return result
     }
 }
@@ -126,11 +127,9 @@ struct AccountEditor: View {
     @State private var account: String
     @State private var setupInput = ""
     @State private var setupDraft: OTPDraft?
-    @State private var type: OTPType
     @State private var algorithm: OTPAlgorithm
     @State private var digits: Int
     @State private var period: String
-    @State private var counter: String
     @State private var showAdvanced = false
     @FocusState private var focused: EditorField?
 
@@ -145,11 +144,9 @@ struct AccountEditor: View {
         _issuer = State(initialValue: existing?.issuer ?? draft?.issuer ?? "")
         _account = State(initialValue: existing?.accountName ?? draft?.accountName ?? "")
         _setupDraft = State(initialValue: draft)
-        _type = State(initialValue: existing?.type ?? .totp)
         _algorithm = State(initialValue: existing?.algorithm ?? .sha1)
         _digits = State(initialValue: existing?.digits ?? 6)
         _period = State(initialValue: String(existing?.period ?? 30))
-        _counter = State(initialValue: (existing?.counter).map(String.init) ?? "0")
     }
 
     private var shouldPreviewLink: Bool {
@@ -196,6 +193,8 @@ struct AccountEditor: View {
                     .foregroundStyle(.secondary)
             }
             Button(tr("Change Setup Key or Link", "更换设置密钥或链接")) {
+                if issuer == parsed.issuer { issuer = "" }
+                if account == parsed.accountName { account = "" }
                 setupDraft = nil
                 setupInput = ""
                 store.errorMessage = nil
@@ -214,10 +213,6 @@ struct AccountEditor: View {
 
     private var advancedParameters: some View {
         DisclosureGroup(tr("Verification Parameters", "验证码参数"), isExpanded: $showAdvanced) {
-            Picker(tr("Type", "类型"), selection: $type) {
-                Text("TOTP").tag(OTPType.totp)
-                Text("HOTP").tag(OTPType.hotp)
-            }
             Picker(tr("Algorithm", "算法"), selection: $algorithm) {
                 ForEach(OTPAlgorithm.allCases, id: \.self) { algorithm in
                     Text(algorithm.rawValue).tag(algorithm)
@@ -227,11 +222,7 @@ struct AccountEditor: View {
                 Text("6").tag(6)
                 Text("8").tag(8)
             }
-            if type == .totp {
-                TextField(tr("Period in seconds", "周期（秒）"), text: $period)
-            } else {
-                TextField(tr("Counter", "计数器"), text: $counter)
-            }
+            TextField(tr("Period in seconds", "周期（秒）"), text: $period)
         }
     }
 
@@ -289,8 +280,7 @@ struct AccountEditor: View {
                 if await store.save(item) { saved(id) }
             }
         } catch EditorError.invalidParameters {
-            store.errorMessage = tr("Use a period between 1 and 300 seconds or a supported nonnegative counter.",
-                                    "周期必须在 1 到 300 秒之间，计数器必须是受支持的非负整数。")
+            store.errorMessage = tr("Use a period between 1 and 300 seconds.", "周期必须在 1 到 300 秒之间。")
         } catch let error as AccountSetupInput {
             store.errorMessage = error.errorDescription
         } catch {
@@ -300,27 +290,25 @@ struct AccountEditor: View {
 
     private func newItem(issuer: String?, account: String) throws -> VaultItem {
         let parsed = try setupDraft ?? AccountSetupInput.parse(setupInput)
+        guard parsed.type == .totp else { throw AccountSetupInput.manualHOTP }
         if parsed.kind == .entry {
             guard setupDraft != nil else { throw AccountSetupInput.invalid }
-            return VaultItem.make(type: parsed.type, issuer: issuer, accountName: account, secret: parsed.secret,
+            return VaultItem.make(issuer: issuer, accountName: account, secret: parsed.secret,
                                   algorithm: parsed.algorithm, digits: parsed.digits, period: parsed.period,
-                                  counter: parsed.counter.flatMap { Int64(exactly: $0) }, origin: "manual")
+                                  origin: "manual")
         }
 
         guard (1...255).contains(parsed.secret.count) else { throw AccountSetupInput.invalid }
-        let enteredPeriod = type == .totp ? Int(period) : 30
-        let enteredCounter = type == .hotp ? Int64(counter) : nil
-        guard let enteredPeriod, (1...300).contains(enteredPeriod),
-              type == .totp || (enteredCounter ?? -1) >= 0 else { throw EditorError.invalidParameters }
-        return VaultItem.make(type: type, issuer: issuer, accountName: account, secret: parsed.secret,
-                              algorithm: algorithm, digits: digits, period: enteredPeriod, counter: enteredCounter, origin: "manual")
+        guard let enteredPeriod = Int(period), (1...300).contains(enteredPeriod) else {
+            throw EditorError.invalidParameters
+        }
+        return VaultItem.make(issuer: issuer, accountName: account, secret: parsed.secret,
+                              algorithm: algorithm, digits: digits, period: enteredPeriod, origin: "manual")
     }
 
     private func parameterSummary(_ parsed: OTPDraft) -> String {
         let length = tr("\(parsed.digits) digits", "\(parsed.digits) 位")
-        let interval = parsed.type == .totp
-            ? tr("\(parsed.period) seconds", "\(parsed.period) 秒")
-            : tr("Counter \(parsed.counter ?? 0)", "计数器 \(parsed.counter ?? 0)")
+        let interval = tr("\(parsed.period) seconds", "\(parsed.period) 秒")
         return [parsed.type.rawValue, parsed.algorithm.rawValue, length, interval].joined(separator: " · ")
     }
 

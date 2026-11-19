@@ -6,7 +6,7 @@ import Security
 
 enum VaultAccessError: LocalizedError {
     case corrupt, locked, alreadyCreated, unavailable, authentication, signing, cancelled, noPassword
-    case invalidPassword, tooLarge, needsConfirmation, counterExhausted, keychain(OSStatus)
+    case invalidPassword, tooLarge, needsConfirmation, keychain(OSStatus)
 
     var errorDescription: String? {
         switch self {
@@ -21,7 +21,6 @@ enum VaultAccessError: LocalizedError {
         case .invalidPassword: return tr("Use 8 to 1024 characters and avoid all-numeric or commonly used recovery passwords.", "请使用 8 至 1024 个字符的恢复口令，避免纯数字或常见口令。")
         case .tooLarge: return tr("The selected file exceeds the 12 MiB size limit.", "所选文件超过 12 MiB。")
         case .needsConfirmation: return tr("Confirm that you want to replace the locked vault.", "请确认替换已锁定的验证码库。")
-        case .counterExhausted: return tr("This account has reached its maximum HOTP counter.", "此账号的 HOTP 计数器已达到上限。")
         case .keychain: return tr("The Mac Keychain could not complete the operation.", "Mac 钥匙串无法完成此操作。")
         }
     }

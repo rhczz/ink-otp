@@ -61,13 +61,22 @@ stage_bundle() {
 }
 
 run_ui_test() {
-    local method="$1" bundle="$2"
+    local method="$1" bundle="$2" status=0
+    local summary="${bundle%.xcresult}.summary.json"
     xcodebuild test -project "$scratch/UITests/InkOTPDesktopUI.xcodeproj" -scheme InkOTPDesktopUI \
         -destination 'platform=macOS' -derivedDataPath "$scratch/build" -parallel-testing-enabled NO \
-        -only-testing:"InkOTPDesktopUITests/DesktopUpgradeTests/$method" -resultBundlePath "$bundle"
+        -only-testing:"InkOTPDesktopUITests/DesktopUpgradeTests/$method" -resultBundlePath "$bundle" || status=$?
+    if [[ "$status" != 0 ]]; then
+        if [[ -d "$bundle" ]]; then
+            xcrun xcresulttool get test-results summary --path "$bundle" > "$summary" || true
+            xcrun xcresulttool export attachments --path "$bundle" \
+                --output-path "${bundle%.xcresult}-attachments" --only-failures || true
+        fi
+        return "$status"
+    fi
     # Require evidence that the selected test ran and passed. An empty selection cannot pass.
-    xcrun xcresulttool get test-results summary --path "$bundle" > "${bundle%.xcresult}.summary.json"
-    python3 - "${bundle%.xcresult}.summary.json" <<'PY'
+    xcrun xcresulttool get test-results summary --path "$bundle" > "$summary"
+    python3 - "$summary" <<'PY'
 import json
 import sys
 from pathlib import Path

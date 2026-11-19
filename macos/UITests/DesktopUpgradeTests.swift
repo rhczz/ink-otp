@@ -19,15 +19,18 @@ final class DesktopUpgradeTests: XCTestCase {
         click(app.buttons["Read Privacy Statement"].firstMatch)
         click(app.buttons["Continue"].firstMatch)
         click(app.buttons["Create Vault…"].firstMatch)
-        type(recoveryPassword, into: app.secureTextFields["Recovery password (optional)"].firstMatch)
-        type(recoveryPassword, into: app.secureTextFields["Confirm password"].firstMatch)
+        let setup = legacyFields(in: app, secure: true, count: 2)
+        type(recoveryPassword, into: setup.element(boundBy: 0))
+        type(recoveryPassword, into: setup.element(boundBy: 1))
         click(app.buttons["Create Vault"].firstMatch)
         XCTAssertTrue(app.staticTexts["No Accounts"].firstMatch.waitForExistence(timeout: timeout))
 
         app.typeKey("n", modifierFlags: .command)
-        type(legacyIssuer, into: app.textFields["Service (optional)"].firstMatch)
-        type(legacyAccount, into: app.textFields["Account"].firstMatch)
-        type(publicKey, into: app.secureTextFields["Base32 setup key"].firstMatch)
+        let accountFields = legacyFields(in: app, secure: false, count: 2)
+        type(legacyIssuer, into: accountFields.element(boundBy: 0))
+        type(legacyAccount, into: accountFields.element(boundBy: 1))
+        let keyField = legacyFields(in: app, secure: true, count: 1)
+        type(publicKey, into: keyField.firstMatch)
         click(app.buttons["Save Account"].firstMatch)
         XCTAssertTrue(account(app, named: legacyAccount).waitForExistence(timeout: timeout))
     }
@@ -164,6 +167,20 @@ final class DesktopUpgradeTests: XCTestCase {
     private func account(_ app: XCUIApplication, named name: String) -> XCUIElement {
         app.windows["InkOTP"].descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+    }
+
+    @MainActor
+    private func legacyFields(in app: XCUIApplication, secure: Bool, count: Int,
+                              file: StaticString = #filePath, line: UInt = #line) -> XCUIElementQuery {
+        // Beta 1 uses SwiftUI form placeholders, with no stable accessibility identifier.
+        let sheet = app.sheets.firstMatch
+        let scope: XCUIElement = sheet.exists ? sheet : app
+        let fields = secure ? scope.secureTextFields : scope.textFields
+        guard fields.firstMatch.waitForExistence(timeout: timeout), fields.count == count else {
+            XCTFail("Expected \(count) Beta 1 form fields. Accessibility tree:\n\(app.debugDescription)", file: file, line: line)
+            return fields
+        }
+        return fields
     }
 
     @MainActor

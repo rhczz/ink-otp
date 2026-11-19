@@ -16,6 +16,11 @@ struct InkOTPDesktop: App {
         if CommandLine.arguments.contains("--ci-vault-smoke") { VaultSmoke.runAndExit() }
     }
 
+    private var canCopySelection: Bool {
+        guard activity.isActive, let id = commands.selectedAccountID else { return false }
+        return store.model?.items.contains { $0.id == id && $0.type == .totp } == true
+    }
+
     var body: some Scene {
         Window("InkOTP", id: "vault") {
             DesktopVaultView(store: store, commands: commands)
@@ -40,10 +45,10 @@ struct InkOTPDesktop: App {
             CommandGroup(after: .pasteboard) {
                 Button(tr("Copy Verification Code", "复制验证码")) { commands.send(.copy) }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .disabled(store.model == nil || !commands.hasSelection)
+                    .disabled(!canCopySelection)
                 Button(tr("Edit Account…", "编辑账号…")) { commands.send(.edit) }
                     .keyboardShortcut("e", modifiers: .command)
-                    .disabled(store.model == nil || !commands.hasSelection || store.busy)
+                    .disabled(store.model == nil || commands.selectedAccountID == nil || store.busy)
             }
             CommandMenu(tr("Vault", "验证码库")) {
                 Button(tr("Lock Now", "立即锁定")) { store.lock() }
@@ -71,7 +76,7 @@ enum DesktopRequest {
 @MainActor
 final class DesktopCommands: ObservableObject {
     let requests = CurrentValueSubject<DesktopRequest?, Never>(nil)
-    @Published var hasSelection = false
+    @Published var selectedAccountID: String?
 
     func send(_ request: DesktopRequest) {
         requests.send(request)
@@ -159,7 +164,6 @@ struct DesktopVaultView: View {
     @State private var confirmDelete: String?
     @State private var showRecovery = false
     @State private var unlockPassword = ""
-    @State private var revealed: Set<String> = []
     @State private var codeFeedback: String?
     @State private var feedbackTask: Task<Void, Never>?
     @State private var fileTask: Task<Void, Never>?
@@ -258,11 +262,7 @@ struct DesktopVaultView: View {
             handle(request)
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSSystemClockDidChange)) { _ in clockChanged = true }
-        .onChange(of: appActive) { _, isActive in
-            if !isActive { revealed.removeAll() }
-        }
-        .onChange(of: selection) { _, newValue in commands.hasSelection = newValue != nil }
-        .onChange(of: defaultHidden) { _, _ in revealed.removeAll() }
+        .onChange(of: selection) { _, newValue in commands.selectedAccountID = newValue }
         .onChange(of: visible.map(\.id)) { _, ids in
             if let selection, !ids.contains(selection) { self.selection = nil }
         }
@@ -271,7 +271,6 @@ struct DesktopVaultView: View {
             query = ""
             confirmDelete = nil
             sheet = nil
-            revealed.removeAll()
             fileTask?.cancel()
             openPanel?.cancel(nil)
             codeFeedback = nil
@@ -282,7 +281,7 @@ struct DesktopVaultView: View {
             fileTask?.cancel()
             openPanel?.cancel(nil)
             feedbackTask?.cancel()
-            commands.hasSelection = false
+            commands.selectedAccountID = nil
             store.lock()
         }
     }
@@ -489,17 +488,18 @@ struct DesktopVaultView: View {
                 }
             }
             Spacer(minLength: 6)
-            if appActive {
-                let hidden = defaultHidden != revealed.contains(item.id)
+            if appActive && item.type == .totp {
                 TimelineView(.periodic(from: secondBoundary, by: 1)) { context in
-                    let warning = item.type == .totp && secondsRemaining(item, at: context.date) <= 5
-                    let code = hidden ? String(repeating: "•", count: item.digits)
+                    let warning = secondsRemaining(item, at: context.date) <= 5
+                    let code = defaultHidden ? String(repeating: "•", count: item.digits)
                         : store.code(item, at: context.date) ?? "—"
                     Text(grouped(code))
                         .font(.system(.caption, design: .monospaced).weight(.medium))
                         .foregroundStyle(warning ? ink.warningText : Color.primary)
-                        .accessibilityLabel(Text(hidden ? tr("Code hidden", "验证码已隐藏") : code))
+                        .accessibilityLabel(Text(defaultHidden ? tr("Code hidden", "验证码已隐藏") : code))
                 }
+            } else if appActive {
+                Text("HOTP").font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
@@ -534,7 +534,14 @@ struct DesktopVaultView: View {
                     .fixedSize()
                 }
 
-                codeCard(item)
+                if item.type == .totp {
+                    codeCard(item)
+                } else {
+                    Label(tr("This version preserves HOTP accounts without generating verification codes.",
+                             "此版本暂不生成 HOTP 验证码，账号信息会保留。"),
+                          systemImage: "info.circle")
+                        .foregroundStyle(ink.secondary)
+                }
 
                 VStack(alignment: .leading, spacing: 12) {
                     Text(tr("Account Details", "账号详情")).font(.headline)
@@ -563,12 +570,11 @@ struct DesktopVaultView: View {
     }
 
     private func codeCard(_ item: VaultItem) -> some View {
-        let hidden = defaultHidden != revealed.contains(item.id)
-        return VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 18) {
             TimelineView(.periodic(from: secondBoundary, by: 1)) { context in
                 let remaining = secondsRemaining(item, at: context.date)
-                let expiring = item.type == .totp && remaining <= 5
-                let rawCode = hidden ? nil : store.code(item, at: context.date)
+                let expiring = remaining <= 5
+                let rawCode = defaultHidden ? nil : store.code(item, at: context.date)
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(tr("VERIFICATION CODE", "验证码"))
@@ -576,48 +582,31 @@ struct DesktopVaultView: View {
                             .tracking(1.8)
                             .foregroundStyle(ink.secondary)
                         Spacer()
-                        if item.type == .totp {
-                            Text(tr("\(remaining)s remaining", "剩余 \(remaining) 秒"))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(expiring ? ink.warningText : ink.secondary)
-                        }
+                        Text(tr("\(remaining)s remaining", "剩余 \(remaining) 秒"))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(expiring ? ink.warningText : ink.secondary)
                     }
-                    Text(hidden
+                    Text(defaultHidden
                          ? grouped(String(repeating: "•", count: item.digits))
                          : grouped(rawCode ?? "—"))
                         .font(.system(size: 42, weight: .semibold, design: .monospaced))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .foregroundStyle(expiring ? ink.warningText : ink.foreground)
-                        .accessibilityLabel(Text(hidden ? tr("Verification code hidden", "验证码已隐藏") : tr("Verification code", "验证码")))
+                        .accessibilityLabel(Text(defaultHidden ? tr("Verification code hidden", "验证码已隐藏") : tr("Verification code", "验证码")))
                         .accessibilityValue(Text(rawCode ?? ""))
                         .accessibilityIdentifier("account-code")
-                    if item.type == .totp {
-                        ProgressView(value: Double(remaining), total: Double(max(1, item.period)))
-                            .tint(expiring ? ink.warning : ink.accent)
-                            .accessibilityHidden(true)
-                    }
+                    ProgressView(value: Double(remaining), total: Double(max(1, item.period)))
+                        .tint(expiring ? ink.warning : ink.accent)
+                        .accessibilityHidden(true)
                 }
             }
 
-            HStack(spacing: 10) {
-                Button { copy(item) } label: {
-                    Label(tr("Copy Code", "复制验证码"), systemImage: "document.on.document")
-                }
-                .accessibilityIdentifier("account-copy")
-                .buttonStyle(.borderedProminent)
-                Button {
-                    if revealed.contains(item.id) { revealed.remove(item.id) } else { revealed.insert(item.id) }
-                } label: {
-                    Label(hidden ? tr("Show", "显示") : tr("Hide", "隐藏"), systemImage: hidden ? "eye" : "eye.slash")
-                }
-                if item.type == .hotp {
-                    Button { Task { await store.advance(item.id) } } label: {
-                        Label(tr("Next Code", "下一个验证码"), systemImage: "arrow.clockwise")
-                    }
-                    .disabled(isBusy || item.counter == Int64.max)
-                }
+            Button { copy(item) } label: {
+                Label(tr("Copy Code", "复制验证码"), systemImage: "document.on.document")
             }
+            .accessibilityIdentifier("account-copy")
+            .buttonStyle(.borderedProminent)
             .controlSize(.large)
         }
         .padding(22)
@@ -632,7 +621,8 @@ struct DesktopVaultView: View {
 
     @ViewBuilder
     private func accountActions(_ item: VaultItem) -> some View {
-        Button(tr("Copy Verification Code", "复制验证码")) { copy(item) }.disabled(!appActive)
+        Button(tr("Copy Verification Code", "复制验证码")) { copy(item) }
+            .disabled(!appActive || item.type != .totp)
         Button(tr("Edit Account…", "编辑账号…")) { present(.account(item.id, nil)) }.disabled(isBusy || !appActive)
         Divider()
         Button(tr("Move Up", "上移")) { Task { await store.move(item.id, direction: -1) } }
@@ -655,7 +645,7 @@ struct DesktopVaultView: View {
     }
 
     private func copy(_ item: VaultItem) {
-        guard appActive, store.copy(item) else { return }
+        guard appActive, item.type == .totp, store.copy(item) else { return }
         codeFeedback = tr("Code copied", "验证码已复制")
         AccessibilityNotification.Announcement(tr("Verification code copied", "验证码已复制")).post()
         feedbackTask?.cancel()
