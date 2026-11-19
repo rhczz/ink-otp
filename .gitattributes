@@ -1,0 +1,3 @@
+# Keep upstream licensed crypto files byte-identical to the recorded checksums.
+ios/Core/Sources/CInkKDF/argon2/LICENSE whitespace=-blank-at-eol
+ios/Core/Sources/CInkKDF/argon2/encoding.c whitespace=-blank-at-eof

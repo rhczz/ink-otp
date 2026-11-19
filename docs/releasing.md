@@ -69,3 +69,7 @@ SHA256SUMS 与签名提供不同证据：哈希可检查下载完整性；固定
 - [gh release create 的 tag 验证和 prerelease 参数](https://cli.github.com/manual/gh_release_create)
 - [Android zipalign 的 16 KiB 对齐与签名前顺序](https://developer.android.com/tools/zipalign)
 - [Android apksigner 的签名、验签、口令环境变量参数](https://developer.android.com/tools/apksigner)
+
+## iOS
+
+iOS 的标签、模拟器、真机签名与证据见 [iOS 交付说明](../ios/README.md)。`ios-v*` 触发独立 iOS Release 工作流。

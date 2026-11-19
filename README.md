@@ -1,7 +1,7 @@
 # InkOTP
 
-> 完全离线的两步验证器，设计语言 **Quiet Ink**。Android 已发布；[macOS 桌面版](macos/README.md)通过独立的 GitHub Actions 流程构建与发布。
-> Android v1.0 的历史设计沿用；Android、macOS 与 iOS 共用 [协议与测试合约](spec/conformance.md)。
+> 完全离线的两步验证器，设计语言 **Quiet Ink**。
+> Android、[iOS](ios/README.md) 和 [macOS](macos/README.md) 使用原生技术栈，并共用 [协议与测试合约](spec/conformance.md)。
 
 ## Android 0.5 公测
 

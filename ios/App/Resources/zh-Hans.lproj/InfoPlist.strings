@@ -1,0 +1,2 @@
+"NSCameraUsageDescription" = "在这台设备上扫描用于添加账号的二维码。";
+"NSFaceIDUsageDescription" = "使用面容 ID 或设备密码解锁 InkOTP。";

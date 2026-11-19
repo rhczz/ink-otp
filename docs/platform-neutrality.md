@@ -1,6 +1,6 @@
-# 平台中立性与 Phase 2（iOS）预备
+# Android 与 iOS 的平台中立性
 
-> 设计文档 §4.4、§5.4、§13.3。v1.0 只实现 Android，但库/备份格式是跨端契约。
+> 设计文档 §4.4、§5.4、§13.3。Android 先行发布。现有库和备份格式作为 Android 与 iOS 的跨端契约。
 
 ## 1. 硬性规则
 
@@ -26,24 +26,8 @@ make crosscheck
 
 CI 应断言第 2 条为零命中；`tools/check_no_internet.py` 额外检查合并 manifest。
 
-## 3. iOS Phase 2 启动检查清单
+## 3. 跨端验收
 
-- [ ] 用同一份 `spec/vectors.json` 复跑 RFC 6238/4226 + 边界用例。
-- [ ] iOS 读取 Android 导出的 `.2fab`；Android 读取 iOS 导出的 `.2fab`。
-- [ ] 10 个账号同一时刻验证码逐位一致。
-- [ ] 库 JSON 字段兼容性断言（未知字段忽略、schemaVersion 拒绝规则一致）。
-- [ ] 备份错误语义一致（口令错/损坏/版本高/参数超限）。
-- [ ] iOS 用 App Group 共享容器 + Keychain（`.biometryCurrentSet`）；AutoFill 独立解锁。
-- [ ] 仍不共享代码；共享 spec + 测试向量 + Python 参考实现。
+Android 和 iOS 消费同一份 RFC 4226/6238 向量、解析用例、`2FAV` 规范示例及公开备份夹具。CI 传递两端实际生成的导出文件，使用对方的生产解码器读取，并且用独立 Python 参考实现核对交换账号和验证码参数。文件或参数不兼容时验证整份拒绝、具体错误码及序号。
 
-## 4. `ios/` 目录约定
-
-v1.0 只保留占位 README，不创建 Xcode 工程。Phase 2 计划结构：
-
-```
-ios/
-├── App/                 # SwiftUI 主 App：Features/ Platform/
-├── Core/                # Swift Package：OTP/URI/Model/Backup/Crypto
-├── CoreTests/
-└── AutoFillExtension/   # P1
-```
+iOS 用 App Support 和本机 Keychain 管理私有库。`2FAV` 二进制及 `.2fab` 导出沿用公共契约，只有本机的 Keychain 绑定和系统验证策略独立存放。当前 iOS 范围与真机待测见 [iOS 说明](../ios/README.md)。
