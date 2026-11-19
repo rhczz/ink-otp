@@ -94,10 +94,12 @@ final class DesktopDiagnosticsTests: XCTestCase {
     private func assertBundledPolicy(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let policy = element("privacy-document", in: app)
         XCTAssertTrue(policy.waitForExistence(timeout: timeout), file: file, line: line)
-        let chapter = app.staticTexts.matching(NSPredicate(
-            format: "label CONTAINS %@ OR value CONTAINS %@", "What InkOTP processes", "What InkOTP processes"
-        )).firstMatch
-        XCTAssertTrue(chapter.waitForExistence(timeout: timeout), "The bundled policy contains its first section", file: file, line: line)
+        let chapter = element("privacy-first-section", in: app)
+        XCTAssertTrue(chapter.waitForExistence(timeout: timeout),
+                      "The bundled policy exposes its first section", file: file, line: line)
+        let heading = "What InkOTP processes"
+        XCTAssertTrue(chapter.label == heading || chapter.value as? String == heading,
+                      "The first heading matches the actual policy text", file: file, line: line)
         XCTAssertFalse(element("privacy-accept", in: app).exists, "Reading does not change consent", file: file, line: line)
     }
 

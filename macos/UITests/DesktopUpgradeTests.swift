@@ -219,7 +219,10 @@ final class DesktopUpgradeTests: XCTestCase {
         app.typeText(file.resolvingSymlinksInPath().path)
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         let preview = app.buttons["Preview Backup"].firstMatch
-        if choose.exists { click(choose) }
+        if !preview.waitForExistence(timeout: 2) {
+            // The Go to Folder panel selects the file. Return invokes Open in the real chooser.
+            app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        }
         guard preview.waitForExistence(timeout: timeout) else {
             XCTFail("Choosing the public HOTP file did not reach preview. Accessibility tree:\n\(app.debugDescription)")
             return

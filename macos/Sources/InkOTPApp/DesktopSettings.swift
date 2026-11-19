@@ -167,15 +167,21 @@ struct PrivacySheet: View {
     var allowConsent = true
 
     var body: some View {
-        InformationDialog(title: tr("Privacy Statement", "隐私声明"), close: close, width: 658) {
+        InformationDialog(title: tr("Privacy Statement", "隐私声明"), close: close, width: 658,
+                          titleIdentifier: "privacy-document") {
             if DesktopPrivacy.available {
+                let paragraphs = DesktopPrivacy.statement.components(separatedBy: "\n\n")
+                let firstHeading = paragraphs.firstIndex { $0.hasPrefix("## ") }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 13) {
-                        ForEach(Array(DesktopPrivacy.statement.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
+                        ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
                             if paragraph.hasPrefix("## ") {
-                                Text(String(paragraph.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines))
+                                let heading = String(paragraph.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+                                Text(heading)
                                     .font(.headline)
+                                    .accessibilityLabel(Text(heading))
                                     .accessibilityAddTraits(.isHeader)
+                                    .accessibilityIdentifier(index == firstHeading ? "privacy-first-section" : "privacy-section-\(index)")
                             } else {
                                 Text(paragraph.trimmingCharacters(in: .whitespacesAndNewlines))
                                     .textSelection(.enabled)
@@ -186,7 +192,6 @@ struct PrivacySheet: View {
                     .padding(.trailing, 12)
                 }
                 .frame(height: 430)
-                .accessibilityIdentifier("privacy-document")
             } else {
                 Label(tr("The privacy statement is missing from this application package.", "当前应用包缺少隐私声明。"),
                       systemImage: "exclamationmark.triangle")
@@ -394,11 +399,15 @@ struct InformationDialog<Content: View>: View {
     let title: String
     let close: () -> Void
     var width: CGFloat = 530
+    var titleIdentifier = "info-title"
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 17) {
-            Text(title).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+            Text(title)
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier(titleIdentifier)
             content
             HStack {
                 Spacer()
