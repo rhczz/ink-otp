@@ -6,4 +6,4 @@
 
 验收覆盖隐私声明、建库、解锁与取消、自动锁定、清除确认、搜索排序、手输与二维码、计时和复制、条目编辑删除、主题设置、诊断与关于、备份预览及合并。对口令错误、文件损坏、取消、重复条目、并发请求和版本升级分别验证。专用硬件能力另列真机实测。
 
-两个平台消费仓库内同一套 `spec/vectors.json`、`spec/otpauth-cases.json`、`spec/fixtures/`。平台适配器逐个断言向量结果，并由独立 Python 参考实现验证跨端导出的内容。新增夹具由参考工具生成。GitHub Actions 执行 Android 检查、iOS XCTest、模拟器构建和打包与 GitHub Release。真机安装包需要 Apple 签名证书和相匹配的 provisioning profile。模拟器产物以明确的模拟器标签交付。
+iOS、Android 和 macOS 消费仓库内同一套 [公共协议测试集](conformance.md)，包括 `vectors.json`、`otpauth-cases.json`、`conformance-cases.json` 和 `fixtures/`。平台适配器逐个断言向量结果，并由独立 Python 参考实现验证跨端导出的内容。新增夹具由参考工具生成。GitHub Actions 执行 Android 检查、iOS XCTest、模拟器构建和打包与 GitHub Release。真机安装包需要 Apple 签名证书和相匹配的 provisioning profile。模拟器产物以明确的模拟器标签交付。

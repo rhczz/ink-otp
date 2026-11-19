@@ -1,7 +1,7 @@
 # InkOTP
 
-> 完全离线的 Android 两步验证器（TOTP），设计语言 **Quiet Ink**。
-> Android 先行发布。[iOS 原生版](ios/README.md) 与 Android 共用格式和测试契约。
+> 完全离线的两步验证器，设计语言 **Quiet Ink**。
+> Android、[iOS](ios/README.md) 和 [macOS](macos/README.md) 使用原生技术栈，并共用 [协议与测试合约](spec/conformance.md)。
 
 ## Android 0.5 公测
 
@@ -62,6 +62,7 @@ docs/     设计与工程文档（唯一事实来源）
 spec/     平台中立的数据格式、测试向量与用例
 tools/    Python 参考实现与检查脚本（不随 App 发布）
 android/  Gradle 工程（:core 纯 JVM，:app Compose）
+macos/    SwiftPM 原生桌面应用、协议实现与 CI 打包脚本
 ios/      Phase 2 占位，仅 README
 ```
 

@@ -1,0 +1,252 @@
+name: macOS
+
+on:
+  push:
+    branches: ['**']
+    tags: ['macos-v*']
+    paths:
+      - 'macos/**'
+      - 'spec/**'
+      - 'tools/reference_*.py'
+      - 'tools/crosscheck.py'
+      - 'tools/requirements.txt'
+      - '.github/workflows/macos.yaml'
+      - 'website/assets/inkotp-icon.png'
+      - 'LICENSE'
+  pull_request:
+    paths:
+      - 'macos/**'
+      - 'spec/**'
+      - 'tools/reference_*.py'
+      - 'tools/crosscheck.py'
+      - 'tools/requirements.txt'
+      - '.github/workflows/macos.yaml'
+      - 'website/assets/inkotp-icon.png'
+      - 'LICENSE'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inkotp-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  verify:
+    name: macOS test and build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Configure native crypto archive paths
+        run: |
+          echo "INKOTP_CRYPTO_PREFIX=$RUNNER_TEMP/inkotp-crypto" >> "$GITHUB_ENV"
+          echo "INKOTP_ARGON2_PREFIX=$RUNNER_TEMP/inkotp-crypto/argon2" >> "$GITHUB_ENV"
+          echo "INKOTP_OPENSSL_PREFIX=$RUNNER_TEMP/inkotp-crypto/openssl" >> "$GITHUB_ENV"
+          echo "INKOTP_TEST_SPEC=$GITHUB_WORKSPACE/spec" >> "$GITHUB_ENV"
+          echo "INKOTP_TEST_EXPORTS=$RUNNER_TEMP/inkotp-exports" >> "$GITHUB_ENV"
+      - id: crypto-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/inkotp-crypto
+          key: inkotp-macos-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('macos/Scripts/build-crypto.sh') }}
+      - name: Build SHA-256 pinned crypto sources
+        if: steps.crypto-cache.outputs.cache-hit != 'true'
+        env:
+          INKOTP_ARCH: ${{ matrix.arch }}
+        run: macos/Scripts/build-crypto.sh "$INKOTP_ARCH" "$INKOTP_CRYPTO_PREFIX"
+      - name: Preserve verified crypto build for later runs
+        if: steps.crypto-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/inkotp-crypto
+          key: ${{ steps.crypto-cache.outputs.cache-primary-key }}
+      - name: Run shared strict vectors, fixtures and mutation cases
+        run: swift test --package-path macos --enable-code-coverage
+      - name: Summarize coverage
+        run: |
+          set -euo pipefail
+          mkdir -p verification
+          cp "$(swift test --package-path macos --show-codecov-path)" verification/coverage.json
+          python3 - <<'PY' | tee verification/coverage.md >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          report = json.loads(Path("verification/coverage.json").read_text())
+          files = [f for obj in report["data"] for f in obj["files"]
+                   if "/Sources/InkOTPCore/" in f["filename"]]
+          if not files:
+              raise SystemExit("No core coverage found")
+          print("### InkOTP Core coverage")
+          for metric in ("lines", "branches"):
+              total = sum(f["summary"].get(metric, {}).get("count", 0) for f in files)
+              covered = sum(f["summary"].get(metric, {}).get("covered", 0) for f in files)
+              print(f"- {metric}: {covered}/{total} ({covered/total:.1%})" if total else
+                    f"- {metric}: no instrumentation reported by the toolchain")
+          PY
+      - name: Independently verify shared data and all six Swift exports
+        run: |
+          python3 -m pip install -r tools/requirements.txt
+          python3 tools/crosscheck.py --spec spec
+          python3 tools/reference_interchange.py --exports "$INKOTP_TEST_EXPORTS" --export-prefix swift
+      - name: Compile Release and stage native app
+        env:
+          INKOTP_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          swift build --package-path macos --configuration release
+          bin_dir="$(swift build --package-path macos --configuration release --show-bin-path)"
+          macos/Scripts/assemble-app.sh "$bin_dir" "$RUNNER_TEMP/inkotp-stage" "$INKOTP_CRYPTO_PREFIX/ThirdPartyNotices.txt"
+          lipo "$RUNNER_TEMP/inkotp-stage/InkOTP.app/Contents/MacOS/InkOTP" -verify_arch "$INKOTP_ARCH"
+          ditto -c -k --keepParent "$RUNNER_TEMP/inkotp-stage/InkOTP.app" "$RUNNER_TEMP/inkotp-$INKOTP_ARCH.zip"
+      - name: Retain verified app slice
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: app-${{ matrix.arch }}
+          path: ${{ runner.temp }}/inkotp-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-coverage-${{ matrix.arch }}
+          path: verification/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  package:
+    name: Package and verify universal disk image
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 35
+    outputs:
+      version: ${{ steps.version.outputs.number }}
+      beta: ${{ steps.version.outputs.beta }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release tag or select CI version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^macos-v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-beta[.][1-9][0-9]*)?$ ]]; then
+              echo "Invalid macOS release tag" >&2
+              exit 1
+            fi
+            git merge-base --is-ancestor HEAD origin/master
+            echo "number=${GITHUB_REF_NAME#macos-v}" >> "$GITHUB_OUTPUT"
+            if [[ "$GITHUB_REF_NAME" == *-beta.* ]]; then
+              echo "beta=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "beta=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "number=0.1.0-beta.1" >> "$GITHUB_OUTPUT"
+            echo "beta=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: app-*
+          path: slices
+          merge-multiple: true
+      - name: Expand verified slices
+        run: |
+          ditto -x -k slices/inkotp-arm64.zip "$RUNNER_TEMP/arm"
+          ditto -x -k slices/inkotp-x86_64.zip "$RUNNER_TEMP/intel"
+      - name: Package pull-request and branch build
+        if: github.ref_type != 'tag'
+        env:
+          INKOTP_VERSION: ${{ steps.version.outputs.number }}
+        run: macos/Scripts/package-universal.sh "$RUNNER_TEMP/arm/InkOTP.app" "$RUNNER_TEMP/intel/InkOTP.app" release-bundle "$INKOTP_VERSION"
+      - name: Package tagged release
+        if: github.ref_type == 'tag'
+        env:
+          INKOTP_BUILD_NUMBER: ${{ github.run_number }}
+          INKOTP_VERSION: ${{ steps.version.outputs.number }}
+          INKOTP_REQUIRE_NOTARIZATION: ${{ steps.version.outputs.beta == 'false' && '1' || '0' }}
+          INKOTP_MACOS_DEVELOPER_ID: ${{ secrets.INKOTP_MACOS_DEVELOPER_ID }}
+          INKOTP_MACOS_P12_BASE64: ${{ secrets.INKOTP_MACOS_P12_BASE64 }}
+          INKOTP_MACOS_P12_PASSWORD: ${{ secrets.INKOTP_MACOS_P12_PASSWORD }}
+          INKOTP_MACOS_NOTARY_APPLE_ID: ${{ secrets.INKOTP_MACOS_NOTARY_APPLE_ID }}
+          INKOTP_MACOS_TEAM_ID: ${{ secrets.INKOTP_MACOS_TEAM_ID }}
+          INKOTP_MACOS_PROFILE_BASE64: ${{ secrets.INKOTP_MACOS_PROFILE_BASE64 }}
+          INKOTP_MACOS_NOTARY_PASSWORD: ${{ secrets.INKOTP_MACOS_NOTARY_PASSWORD }}
+        run: macos/Scripts/package-universal.sh "$RUNNER_TEMP/arm/InkOTP.app" "$RUNNER_TEMP/intel/InkOTP.app" release-bundle "$INKOTP_VERSION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: inkotp-macos-universal
+          path: release-bundle/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish macOS GitHub Release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: inkotp-macos-universal
+          path: release-bundle
+      - name: Publish verified disk image and release evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          INKOTP_VERSION: ${{ needs.package.outputs.version }}
+          INKOTP_BETA: ${{ needs.package.outputs.beta }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-bundle
+          sha256sum --strict --check SHA256SUMS.txt
+          dmg="InkOTP-$INKOTP_VERSION-macOS-universal.dmg"
+          test -f "$dmg"
+          signature="$(cat signature.txt)"
+          gatekeeper=""
+          case "$signature" in
+            developer-id-notarized) description='使用 Developer ID 签名，已通过 Apple 公证。' ;;
+            adhoc)
+              test "$INKOTP_BETA" = true
+              description='本测试版采用临时签名，尚未通过 Apple 公证。受保护的 Keychain 每次进入验证模式在此版本不可用。请设置恢复口令并保留一份加密便携备份，便于将来迁移到新的签名身份。'
+              gatekeeper='若 Gatekeeper 拦截首次打开，校验安装包后参考 [Apple 的首次打开说明](https://support.apple.com/zh-cn/102445)。'
+              ;;
+            *) echo "Invalid signature evidence" >&2; exit 1 ;;
+          esac
+          cat > notes.md <<NOTES
+          InkOTP macOS $INKOTP_VERSION 是离线双因素验证码应用，适用于 macOS 14 及以上的 Apple Silicon 和 Intel Mac。
+
+          $description
+
+          $gatekeeper
+
+          下载 DMG 并将 InkOTP 拖入 Applications。校验可用 \`SHA256SUMS.txt\`，源码和 CI 证据见下方。
+
+          - [源码提交](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA)
+          - [本次流程](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
+          NOTES
+          flags=()
+          if [[ "$INKOTP_BETA" == true ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "$dmg" SHA256SUMS.txt --verify-tag --latest=false \
+            --title "InkOTP macOS $INKOTP_VERSION" --notes-file notes.md "${flags[@]}"

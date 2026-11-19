@@ -32,8 +32,9 @@ __pycache__/
 *.pem
 *.bak
 
-# iOS CI projects and signing
+# Apple platform build products and signing
 .build/
+.swiftpm/
 DerivedData/
 ios/InkOTP.xcodeproj/
 *.xcarchive/
