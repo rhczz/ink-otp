@@ -4,10 +4,11 @@
 
 | 日期 | 记录 | 状态 |
 |---|---|---|
+| 2026-11-19 | [Mac 从图片添加二维码账号](2026-11-19-macos-qr-image-import.md) | 已发布 Beta 2 图片导入、取消和重启复验通过 |
 | 2026-11-19 | [iOS 录屏与后台遮挡](2026-11-19-ios-screen-capture-curtain.md) | 3 项模拟器测试通过，录屏与镜像真机待测 |
 | 2026-11-19 | [iOS 真机目标构建与升级验收](2026-11-19-ios-device-verification.md) | iPhoneOS 归档、iPhone 模拟器及 iPad 模拟器升级和重装通过，设备签名待验证 |
-| 2026-11-19 | [Mac 切换应用、解锁与添加账号](2026-11-19-macos-desktop-lifecycle.md) | GitHub Actions 验收中 |
-| 2026-11-19 | [Android 与 macOS 实际交换备份](2026-11-19-macos-cross-platform.md) | GitHub Actions 验收中 |
+| 2026-11-19 | [Mac 切换应用、解锁与添加账号](2026-11-19-macos-desktop-lifecycle.md) | macOS 15 和 26 桌面验收通过，真机专项待测 |
+| 2026-11-19 | [Android 与 macOS 实际交换备份](2026-11-19-macos-cross-platform.md) | 三端公共合约与双向备份读取通过 |
 | 2026-11-18 | [iOS 原生版与跨平台测试](2026-11-18-ios-native-parity.md) | 首版已发布，模拟器 Keychain 问题见后续记录 |
 | 2026-11-18 | [InkOTP macOS 桌面版与公共测试集](2026-11-18-macos-native-parity.md) | 双架构测试与通用 DMG 验证通过，真机待测 |
 | 2026-11-18 | [InkOTP 0.5.3 原生离线隐私声明](2026-11-18-native-offline-privacy-0.5.3.md) | 本机验证通过，真机待复测 |

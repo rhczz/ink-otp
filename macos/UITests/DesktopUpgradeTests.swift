@@ -126,6 +126,83 @@ final class DesktopUpgradeTests: XCTestCase {
     }
 
     @MainActor
+    func testPublishedQRImageImportAndPersistence() throws {
+        continueAfterFailure = false
+        let app = try launchInkOTP()
+        defer { app.terminate() }
+        let unlocked = element("vault-lock", in: app)
+        XCTAssertTrue(unlocked.waitForExistence(timeout: timeout))
+        setLockTimeout("After 30 Seconds", in: app)
+
+        let initialCount = try unfilteredAccountCount(in: app)
+        let single = try stagedFixture("qr-single.png")
+        let blank = try stagedFixture("qr-blank.png")
+        let multiple = try stagedFixture("qr-multiple.png")
+        let save = element("account-save", in: app)
+        let qrAccount = account(app, named: "me@example.com")
+
+        @MainActor
+        func assertOriginalVault() {
+            expectAccountCount(initialCount, in: app)
+            XCTAssertTrue(account(app, named: legacyAccount).exists)
+            XCTAssertTrue(account(app, named: uriAccount).exists)
+            XCTAssertFalse(qrAccount.exists)
+            XCTAssertFalse(account(app, named: "alice").exists)
+            XCTAssertFalse(save.exists)
+        }
+
+        let picker = showQRImagePicker(in: app)
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        waitUntilAbsent(picker, "Cancel dismisses the native image picker")
+        assertOriginalVault()
+
+        chooseQRImage(single, expecting: save, in: app)
+        assertQRAccountPreview(in: app)
+        click(app.buttons["Cancel"].firstMatch)
+        waitUntilAbsent(save, "Cancel dismisses the account preview")
+        assertOriginalVault()
+
+        for (image, message) in [
+            (blank, "No verification QR code was found in the image."),
+            (multiple, "The image contains multiple verification QR codes. Choose an image with one account.")
+        ] {
+            let notice = staticText(message, in: app)
+            chooseQRImage(image, expecting: notice, in: app)
+            assertOriginalVault()
+            click(app.buttons["Dismiss"].firstMatch)
+            waitUntilAbsent(notice, "Dismiss closes the image error")
+        }
+
+        chooseQRImage(single, expecting: save, in: app)
+        assertQRAccountPreview(in: app)
+        click(save)
+        waitUntilAbsent(save, "Saving returns to the vault")
+        expectAccountCount(initialCount + 1, in: app)
+        XCTAssertTrue(qrAccount.waitForExistence(timeout: timeout))
+
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: timeout))
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: timeout))
+        XCTAssertTrue(unlocked.waitForExistence(timeout: timeout))
+        expectAccountCount(initialCount + 1, in: app)
+        XCTAssertTrue(account(app, named: legacyAccount).exists)
+        XCTAssertTrue(account(app, named: uriAccount).exists)
+        XCTAssertFalse(account(app, named: "alice").exists)
+        click(qrAccount)
+
+        let issuer = element("account-detail-issuer", in: app)
+        let name = element("account-detail-name", in: app)
+        XCTAssertTrue(name.waitForExistence(timeout: timeout))
+        XCTAssertTrue(issuer.label == "GitHub" || issuer.value as? String == "GitHub")
+        XCTAssertTrue(name.label == "me@example.com" || name.value as? String == "me@example.com")
+        for parameter in ["TOTP", "SHA1", "6", "30 seconds"] {
+            XCTAssertTrue(staticText(parameter, in: app).waitForExistence(timeout: timeout),
+                          "The relaunched app retained the imported \(parameter) parameter")
+        }
+    }
+
+    @MainActor
     private func launchInkOTP() throws -> XCUIApplication {
         let path = try XCTUnwrap(ProcessInfo.processInfo.environment["INKOTP_UI_STAGED_APP"])
         XCTAssertTrue(FileManager.default.fileExists(atPath: path), "The staged app is missing")
@@ -205,19 +282,92 @@ final class DesktopUpgradeTests: XCTestCase {
         XCTAssertTrue((code.value as? String ?? "").isEmpty)
     }
 
-    @MainActor
-    private func importPublicHOTP(in app: XCUIApplication) throws {
+    private func stagedFixture(_ filename: String) throws -> URL {
         let appPath = try XCTUnwrap(ProcessInfo.processInfo.environment["INKOTP_UI_STAGED_APP"])
         let file = URL(fileURLWithPath: appPath, isDirectory: true).deletingLastPathComponent()
-            .appendingPathComponent("public-hotp.txt")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+            .appendingPathComponent(filename)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "Missing fixture \(filename)")
+        return file
+    }
 
-        app.typeKey("o", modifierFlags: .command)
-        let choose = app.buttons["Choose Backup"].firstMatch
-        XCTAssertTrue(choose.waitForExistence(timeout: timeout))
+    @MainActor
+    private func enterNativeFilePath(_ file: URL, in app: XCUIApplication) {
         app.typeKey("g", modifierFlags: [.command, .shift])
         app.typeText(file.resolvingSymlinksInPath().path)
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+    }
+
+    @MainActor
+    private func showQRImagePicker(in app: XCUIApplication) -> XCUIElement {
+        click(element("vault-add-menu", in: app))
+        click(app.menuItems["Read QR Image…"].firstMatch)
+        let picker = app.buttons["Choose QR Image"].firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: timeout))
+        return picker
+    }
+
+    @MainActor
+    private func chooseQRImage(_ file: URL, expecting outcome: XCUIElement, in app: XCUIApplication) {
+        _ = showQRImagePicker(in: app)
+        enterNativeFilePath(file, in: app)
+        if !outcome.waitForExistence(timeout: 2) {
+            app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        }
+        guard outcome.waitForExistence(timeout: timeout) else {
+            XCTFail("Selecting \(file.lastPathComponent) did not reach the expected UI. Accessibility tree:\n\(app.debugDescription)")
+            return
+        }
+    }
+
+    @MainActor
+    private func assertQRAccountPreview(in app: XCUIApplication) {
+        let service = element("account-issuer", in: app)
+        let name = element("account-name", in: app)
+        let parameters = element("account-setup-parameters", in: app)
+        XCTAssertTrue(parameters.waitForExistence(timeout: timeout))
+        XCTAssertEqual(service.value as? String, "GitHub")
+        XCTAssertEqual(name.value as? String, "me@example.com")
+        let summary = "TOTP · SHA1 · 6 digits · 30 seconds"
+        XCTAssertTrue(parameters.label == summary || parameters.value as? String == summary)
+    }
+
+    @MainActor
+    private func unfilteredAccountCount(in app: XCUIApplication) throws -> Int {
+        let pattern = "^[0-9]+ accounts$"
+        let count = app.staticTexts.matching(NSPredicate(
+            format: "label MATCHES %@ OR value MATCHES %@", pattern, pattern
+        )).firstMatch
+        XCTAssertTrue(count.waitForExistence(timeout: timeout))
+        let labels = [count.label, count.value as? String ?? ""]
+        return try XCTUnwrap(labels.lazy.compactMap { value in
+            value.hasSuffix(" accounts") ? Int(value.dropLast(" accounts".count)) : nil
+        }.first)
+    }
+
+    @MainActor
+    private func expectAccountCount(_ count: Int, in app: XCUIApplication) {
+        XCTAssertTrue(staticText("\(count) accounts", in: app).waitForExistence(timeout: timeout),
+                      "The vault should contain \(count) accounts")
+    }
+
+    @MainActor
+    private func staticText(_ value: String, in app: XCUIApplication) -> XCUIElement {
+        app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", value, value)).firstMatch
+    }
+
+    @MainActor
+    private func waitUntilAbsent(_ control: XCUIElement, _ message: String) {
+        let absent = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [absent], timeout: timeout), .completed, message)
+    }
+
+    @MainActor
+    private func importPublicHOTP(in app: XCUIApplication) throws {
+        let file = try stagedFixture("public-hotp.txt")
+        app.typeKey("o", modifierFlags: .command)
+        let choose = app.buttons["Choose Backup"].firstMatch
+        XCTAssertTrue(choose.waitForExistence(timeout: timeout))
+        enterNativeFilePath(file, in: app)
         let preview = app.buttons["Preview Backup"].firstMatch
         if !preview.waitForExistence(timeout: 2) {
             // The Go to Folder panel selects the file. Return invokes Open in the real chooser.
