@@ -28,6 +28,9 @@ if [[ "$(stat -f %Su /dev/console)" != "$(id -un)" ]] || ! launchctl print "gui/
 fi
 command -v xcodegen >/dev/null
 mkdir -p "$mount" "$(dirname "$staged")"
+# Use a normal user-selected file outside the XCTest runner's private container.
+printf '%s\n' 'otpauth://hotp/Public%20Counter:counter-only-account?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Public%20Counter&counter=10300' \
+    > "$(dirname "$staged")/public-hotp.txt"
 ditto "$root/macos/UITests" "$scratch/UITests"
 (
     cd "$scratch/UITests"
@@ -100,8 +103,9 @@ run_ui_tests "${result%.xcresult}-beta1.xcresult" DesktopUpgradeTests/testPublis
 
 stage_bundle "$candidate"
 [[ "$staged_version" != 0.1.0-beta.1 ]]
-run_ui_tests "${result%.xcresult}-seed.xcresult" DesktopUpgradeTests/testCandidateRecoversAndSeedsAdvancedAccount
+run_ui_tests "${result%.xcresult}-seed.xcresult" DesktopUpgradeTests/testCandidateRecoversAndSeedsAccounts
 run_ui_tests "$result" \
-    DesktopUpgradeTests/testCandidateHiddenCopyAndImportedHOTP \
+    DesktopUpgradeTests/testCandidateHiddenCopyUsesClipboardWithoutReveal \
+    DesktopUpgradeTests/testCandidateImportedHOTPDoesNotGenerate \
     DesktopUpgradeTests/testCandidatePrivacyCurtainAndLockLifecycle \
     DesktopDiagnosticsTests/testCandidateDiagnosticsAndOfflinePrivacy

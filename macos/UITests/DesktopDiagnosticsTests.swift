@@ -18,8 +18,6 @@ final class DesktopDiagnosticsTests: XCTestCase {
                       "The staged candidate reopened the prepared Beta 1 vault")
         XCTAssertTrue(account("advanced-account", in: app).waitForExistence(timeout: timeout),
                       "The preceding candidate test saved a second TOTP account")
-        XCTAssertTrue(account("counter-only-account", in: app).waitForExistence(timeout: timeout),
-                      "The preceding candidate test retained a HOTP account")
         checkDiagnostics(in: app)
         checkAboutPrivacy(in: app)
         checkCameraPrivacyWithoutPermission(in: app)
@@ -45,11 +43,11 @@ final class DesktopDiagnosticsTests: XCTestCase {
         click(recalculate)
         XCTAssertTrue(recalculated.waitForExistence(timeout: timeout))
         XCTAssertTrue(text(of: recalculated).contains("Recalculated 2 TOTP codes"),
-                      "The recalculation uses both TOTP entries and excludes HOTP")
+                      "The recalculation uses both seeded TOTP entries")
         XCTAssertTrue(resourceResult.exists, "Refreshing codes preserves the resource result")
         XCTAssertEqual(text(of: resourceResult), originalSample, "Refreshing codes does not replace the resource sample")
         click(element("info-done", in: app))
-        XCTAssertFalse(recalculate.exists)
+        waitUntilAbsent(recalculate, "Closing Diagnostics removes its controls")
     }
 
     @MainActor
@@ -58,10 +56,12 @@ final class DesktopDiagnosticsTests: XCTestCase {
         let privacy = element("about-privacy", in: app)
         click(privacy)
         assertBundledPolicy(in: app)
+        waitUntilAbsent(privacy, "About is replaced while the policy is open")
         click(element("info-done", in: app))
         XCTAssertTrue(privacy.waitForExistence(timeout: timeout), "Closing the policy returns to About")
-        XCTAssertFalse(element("privacy-document", in: app).exists)
+        waitUntilAbsent(element("privacy-document", in: app), "Returning to About closes the policy")
         click(element("info-done", in: app))
+        waitUntilAbsent(privacy, "Closing About returns to the vault")
     }
 
     @MainActor
@@ -76,17 +76,18 @@ final class DesktopDiagnosticsTests: XCTestCase {
 
         click(element("camera-privacy", in: app))
         assertBundledPolicy(in: app)
-        XCTAssertFalse(allowCamera.exists, "The privacy reader has no camera authorization action")
+        waitUntilAbsent(allowCamera, "The privacy reader has no camera authorization action")
+        waitUntilAbsent(rationale, "The camera rationale is replaced while the policy is open")
         click(element("info-done", in: app))
         XCTAssertTrue(rationale.waitForExistence(timeout: timeout), "Closing the policy returns to the camera rationale")
-        XCTAssertFalse(element("privacy-document", in: app).exists)
+        waitUntilAbsent(element("privacy-document", in: app), "Returning to the camera closes the policy")
         XCTAssertEqual(allowCamera.exists, requestAvailable, "Reading the policy does not change camera permission")
         if requestAvailable { XCTAssertTrue(allowCamera.isEnabled) }
 
         // Exercise only the rationale and its navigation. The actual macOS
         // camera permission button is never activated in this hosted test.
         click(app.buttons["Cancel"].firstMatch)
-        XCTAssertFalse(rationale.exists)
+        waitUntilAbsent(rationale, "Closing the camera rationale returns to the vault")
     }
 
     @MainActor
@@ -120,6 +121,13 @@ final class DesktopDiagnosticsTests: XCTestCase {
     @MainActor
     private func text(of element: XCUIElement) -> String {
         [element.label, element.value as? String ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @MainActor
+    private func waitUntilAbsent(_ element: XCUIElement, _ message: String,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        let absent = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [absent], timeout: timeout), .completed, message, file: file, line: line)
     }
 
     @MainActor

@@ -10,6 +10,7 @@ final class DesktopUpgradeTests: XCTestCase {
     private let publicKey = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
     private let uriIssuer = "Desk CI"
     private let uriAccount = "advanced-account"
+    private let hotpAccount = "counter-only-account"
 
     @MainActor
     func testPublishedBetaCreatesVaultAndAccount() throws {
@@ -38,7 +39,7 @@ final class DesktopUpgradeTests: XCTestCase {
     }
 
     @MainActor
-    func testCandidateRecoversAndSeedsAdvancedAccount() throws {
+    func testCandidateRecoversAndSeedsAccounts() throws {
         continueAfterFailure = false
         let app = try launchInkOTP()
         defer { app.terminate() }
@@ -64,14 +65,24 @@ final class DesktopUpgradeTests: XCTestCase {
     }
 
     @MainActor
-    func testCandidateHiddenCopyAndImportedHOTP() throws {
+    func testCandidateHiddenCopyUsesClipboardWithoutReveal() throws {
         continueAfterFailure = false
         let app = try launchInkOTP()
         defer { app.terminate() }
         XCTAssertTrue(element("vault-lock", in: app).waitForExistence(timeout: timeout))
         setLockTimeout("After 30 Seconds", in: app)
         verifyHiddenCopy(in: app)
-        try verifyImportedHOTP(in: app)
+    }
+
+    @MainActor
+    func testCandidateImportedHOTPDoesNotGenerate() throws {
+        continueAfterFailure = false
+        let app = try launchInkOTP()
+        defer { app.terminate() }
+        XCTAssertTrue(element("vault-lock", in: app).waitForExistence(timeout: timeout))
+        setLockTimeout("After 30 Seconds", in: app)
+        try importPublicHOTP(in: app)
+        verifyImportedHOTP(in: app)
     }
 
     @MainActor
@@ -195,34 +206,36 @@ final class DesktopUpgradeTests: XCTestCase {
     }
 
     @MainActor
-    private func verifyImportedHOTP(in app: XCUIApplication) throws {
-        let name = "counter-only-account"
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let file = folder.appendingPathComponent("public-hotp.txt")
-        let uri = "otpauth://hotp/Public%20Counter:\(name)?secret=\(publicKey)&issuer=Public%20Counter&counter=10300\n"
-        try Data(uri.utf8).write(to: file)
+    private func importPublicHOTP(in app: XCUIApplication) throws {
+        let appPath = try XCTUnwrap(ProcessInfo.processInfo.environment["INKOTP_UI_STAGED_APP"])
+        let file = URL(fileURLWithPath: appPath, isDirectory: true).deletingLastPathComponent()
+            .appendingPathComponent("public-hotp.txt")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
 
         app.typeKey("o", modifierFlags: .command)
         let choose = app.buttons["Choose Backup"].firstMatch
         XCTAssertTrue(choose.waitForExistence(timeout: timeout))
         app.typeKey("g", modifierFlags: [.command, .shift])
-        app.typeText(folder.path)
+        app.typeText(file.resolvingSymlinksInPath().path)
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
-        let fileRow = app.staticTexts.matching(NSPredicate(
-            format: "label == %@ OR value == %@",
-            file.lastPathComponent, file.lastPathComponent
-        )).firstMatch
-        click(fileRow)
-        click(choose)
-        click(app.buttons["Preview Backup"].firstMatch)
+        let preview = app.buttons["Preview Backup"].firstMatch
+        if choose.exists { click(choose) }
+        guard preview.waitForExistence(timeout: timeout) else {
+            XCTFail("Choosing the public HOTP file did not reach preview. Accessibility tree:\n\(app.debugDescription)")
+            return
+        }
+        click(preview)
         click(app.buttons["Import Accounts"].firstMatch)
-        click(account(app, named: name))
+        XCTAssertTrue(account(app, named: hotpAccount).waitForExistence(timeout: timeout))
+    }
+
+    @MainActor
+    private func verifyImportedHOTP(in app: XCUIApplication) {
+        click(account(app, named: hotpAccount))
 
         let detail = element("account-detail-name", in: app)
         XCTAssertTrue(detail.waitForExistence(timeout: timeout))
-        XCTAssertTrue(detail.label == name || detail.value as? String == name)
+        XCTAssertTrue(detail.label == hotpAccount || detail.value as? String == hotpAccount)
         let preserved = app.staticTexts.matching(NSPredicate(
             format: "label CONTAINS %@ OR value CONTAINS %@",
             "preserves HOTP accounts", "preserves HOTP accounts"
