@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "interchange": [
+    {"file": "aegis_plain.json", "format": "AEGIS_PLAINTEXT", "error": "UNSUPPORTED_ENTRIES", "indexes": [2, 5, 7]},
+    {"file": "aegis_encrypted.json", "format": "AEGIS_ENCRYPTED", "password": "test", "error": "UNSUPPORTED_ENTRIES", "indexes": [2, 5, 7]},
+    {"file": "2fas_authenticator.json", "format": "TWOFAS_PLAINTEXT", "count": 6, "warnings": ["LEGACY_DEFAULTS"]},
+    {"file": "2fas_authenticator_plain.2fas", "format": "TWOFAS_PLAINTEXT", "count": 4},
+    {"file": "2fas_authenticator_encrypted.2fas", "format": "TWOFAS_ENCRYPTED", "password": "test", "count": 4},
+    {"file": "2fas_authenticator_plain_v3.2fas", "format": "TWOFAS_PLAINTEXT", "error": "UNSUPPORTED_ENTRIES", "indexes": [2, 5]},
+    {"file": "2fas_authenticator_encrypted_v3.2fas", "format": "TWOFAS_ENCRYPTED", "password": "test", "error": "UNSUPPORTED_ENTRIES", "indexes": [2, 5]},
+    {"file": "2fas_authenticator_plain_v4.2fas", "format": "TWOFAS_PLAINTEXT", "error": "UNSUPPORTED_ENTRIES", "indexes": [3, 5]},
+    {"file": "2fas_authenticator_encrypted_v4.2fas", "format": "TWOFAS_ENCRYPTED", "password": "test", "error": "UNSUPPORTED_ENTRIES", "indexes": [3, 5]},
+    {"file": "plain.txt", "format": "OTPAUTH_TEXT", "error": "UNSUPPORTED_ENTRIES", "indexes": [2, 5, 7]}
+  ],
+  "legacyBackupMutations": [
+    {"offset": 0, "xor": 1, "error": "BAK_E_MAGIC"},
+    {"offset": 4, "xor": 1, "error": "BAK_E_VERSION"},
+    {"offset": 5, "xor": 1, "error": "BAK_E_KDF_ALGO"},
+    {"offset": 6, "xor": 128, "error": "BAK_E_KDF_PARAMS"},
+    {"offset": 46, "xor": 128, "error": "BAK_E_CT_LEN"},
+    {"offset": 34, "xor": 1, "error": "BAK_E_AUTH"},
+    {"offset": 55, "xor": 1, "error": "BAK_E_AUTH"},
+    {"offset": -1, "xor": 1, "error": "BAK_E_AUTH"}
+  ]
+}

@@ -1,4 +1,6 @@
 ---
+
+> Android 0.5.3 的后续桌面实现见 [macOS 桌面版规格](../../spec/macos-parity.md)。历史 Android v1.0 设计仍适用于 Android，对应协议由 `spec/` 约束。
 title: InkOTP · 2FA 验证器技术设计文档（Android 首发）
 aliases:
   - Authenticator Design Doc

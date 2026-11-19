@@ -1,5 +1,7 @@
 # `spec/` — 平台中立规格与测试向量
 
+macOS 接入与公共验收范围见 [桌面版规格](macos-parity.md)。
+
 本目录是 InkOTP 跨平台契约的**唯一事实来源**。Android、Phase 2 iOS 与 Python 参考实现都只能消费本目录，不能各自"发明"格式。
 
 | 文件 | 内容 |
