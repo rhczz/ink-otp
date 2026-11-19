@@ -53,10 +53,12 @@ struct DesktopSettings: View {
                     Text(tr("After 30 Seconds", "30 秒后")).tag(30)
                     Text(tr("After 1 Minute", "1 分钟后")).tag(60)
                 }
+                .accessibilityIdentifier("settings-lock-timeout")
                 .disabled(store.systemAuthentication || store.model == nil || store.busy)
             }
             Section {
                 Toggle(tr("Hide verification codes", "隐藏验证码"), isOn: setting(\.hideCodesByDefault, fallback: false))
+                    .accessibilityIdentifier("settings-hide-codes")
                 Picker(tr("Clear copied codes", "清理已复制的验证码"), selection: setting(\.clipboardClearSeconds, fallback: 30)) {
                     if let value = store.model?.settings.clipboardClearSeconds, ![0, 1, 15, 30, 60].contains(value) {
                         Text(tr("\(value) seconds", "\(value) 秒")).tag(value)
@@ -188,6 +190,7 @@ struct PrivacySheet: View {
                     store.acceptPrivacy()
                     close()
                 }
+                .accessibilityIdentifier("privacy-accept")
                 .buttonStyle(.borderedProminent)
             }
         }

@@ -61,7 +61,9 @@ struct SetupSheet: View {
                     .foregroundStyle(.secondary)
                 Form {
                     SecureField(tr("Recovery password (optional)", "恢复口令（可选）"), text: $password)
+                        .accessibilityIdentifier("vault-setup-password")
                     SecureField(tr("Confirm password", "确认口令"), text: $confirmation)
+                        .accessibilityIdentifier("vault-setup-password-confirm")
                     if store.supportsSystemAuthentication {
                         Toggle(tr("Verify my identity each time", "每次进入时验证身份"), isOn: $systemAuthentication)
                             .disabled(password.isEmpty)
@@ -81,6 +83,7 @@ struct SetupSheet: View {
                     if await store.initialize(password: initialPassword, systemAuthentication: authentication) { close() }
                 }
             }
+            .accessibilityIdentifier("vault-setup-submit")
             .keyboardShortcut(.defaultAction)
             .disabled(password != confirmation)
         }
@@ -88,16 +91,41 @@ struct SetupSheet: View {
     }
 }
 
+enum AccountSetupInput: LocalizedError {
+    case invalid, migration, counter
+
+    var errorDescription: String? {
+        switch self {
+        case .invalid:
+            tr("Enter a valid Base32 setup key or otpauth link.", "请输入有效的 Base32 设置密钥或 otpauth 链接。")
+        case .migration:
+            tr("Use a setup link for one account. Google Authenticator migration links are unsupported.",
+               "请使用单个账号的设置链接。暂不支持 Google Authenticator 迁移链接。")
+        case .counter:
+            tr("This link has a counter outside InkOTP’s supported range.", "这个链接的计数器超出 InkOTP 支持的范围。")
+        }
+    }
+
+    static func parse(_ input: String) throws -> OTPDraft {
+        guard input.utf8.count <= 16_384 else { throw Self.invalid }
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let result = try? Otpauth.parse(trimmed) else { throw Self.invalid }
+        guard result.kind != .migration else { throw Self.migration }
+        if let value = result.counter, Int64(exactly: value) == nil { throw Self.counter }
+        return result
+    }
+}
+
 @MainActor
 struct AccountEditor: View {
     @ObservedObject var store: VaultStore
     let existing: VaultItem?
-    let draft: OTPDraft?
     let saved: (String) -> Void
     let close: () -> Void
     @State private var issuer: String
     @State private var account: String
-    @State private var secret = ""
+    @State private var setupInput = ""
+    @State private var setupDraft: OTPDraft?
     @State private var type: OTPType
     @State private var algorithm: OTPAlgorithm
     @State private var digits: Int
@@ -106,76 +134,136 @@ struct AccountEditor: View {
     @State private var showAdvanced = false
     @FocusState private var focused: EditorField?
 
-    private enum EditorField: Hashable { case account, issuer, secret }
+    private enum EditorField: Hashable { case account, issuer, setup }
 
     init(store: VaultStore, existing: VaultItem?, draft: OTPDraft?,
          saved: @escaping (String) -> Void, close: @escaping () -> Void) {
         self.store = store
         self.existing = existing
-        self.draft = draft
         self.saved = saved
         self.close = close
         _issuer = State(initialValue: existing?.issuer ?? draft?.issuer ?? "")
         _account = State(initialValue: existing?.accountName ?? draft?.accountName ?? "")
-        _type = State(initialValue: existing?.type ?? draft?.type ?? .totp)
-        _algorithm = State(initialValue: existing?.algorithm ?? draft?.algorithm ?? .sha1)
-        _digits = State(initialValue: existing?.digits ?? draft?.digits ?? 6)
-        _period = State(initialValue: String(existing?.period ?? draft?.period ?? 30))
-        _counter = State(initialValue: (existing?.counter).map(String.init) ?? (draft?.counter).map(String.init) ?? "0")
+        _setupDraft = State(initialValue: draft)
+        _type = State(initialValue: existing?.type ?? .totp)
+        _algorithm = State(initialValue: existing?.algorithm ?? .sha1)
+        _digits = State(initialValue: existing?.digits ?? 6)
+        _period = State(initialValue: String(existing?.period ?? 30))
+        _counter = State(initialValue: (existing?.counter).map(String.init) ?? "0")
+    }
+
+    private var shouldPreviewLink: Bool {
+        existing == nil && setupDraft == nil && setupInput.contains("://")
     }
 
     var body: some View {
         DesktopDialog(store: store, title: existing == nil ? tr("Add Account", "添加账号") : tr("Edit Account", "编辑账号"), close: close) {
-            Form {
-                TextField(tr("Service (optional)", "服务名称（可选）"), text: $issuer)
-                    .focused($focused, equals: .issuer)
-                TextField(tr("Account", "账号"), text: $account)
-                    .focused($focused, equals: .account)
-                if existing == nil && draft == nil {
-                    SecureField(tr("Base32 setup key", "Base32 设置密钥"), text: $secret)
-                        .focused($focused, equals: .secret)
-                }
-                if existing == nil {
-                    DisclosureGroup(tr("Verification Parameters", "验证码参数"), isExpanded: $showAdvanced) {
-                        Picker(tr("Type", "类型"), selection: $type) {
-                            Text("TOTP").tag(OTPType.totp)
-                            Text("HOTP").tag(OTPType.hotp)
-                        }
-                        Picker(tr("Algorithm", "算法"), selection: $algorithm) {
-                            ForEach(OTPAlgorithm.allCases, id: \.self) { algorithm in
-                                Text(algorithm.rawValue).tag(algorithm)
-                            }
-                        }
-                        Picker(tr("Digits", "位数"), selection: $digits) {
-                            Text("6").tag(6)
-                            Text("8").tag(8)
-                        }
-                        if type == .totp {
-                            TextField(tr("Period in seconds", "周期（秒）"), text: $period)
-                        } else {
-                            TextField(tr("Counter", "计数器"), text: $counter)
-                        }
-                    }
-                }
-            }
-            .textFieldStyle(.roundedBorder)
-            if let draft, !draft.warnings.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(draft.warnings, id: \.self) { warning in
-                        Label(draftWarning(warning), systemImage: "exclamationmark.triangle")
-                            .font(.callout)
-                    }
-                }
-                .foregroundStyle(.secondary)
-            }
+            editorForm
         } actions: {
+            editorActions
+        }
+        .onAppear { focused = existing == nil && setupDraft == nil ? .setup : (account.isEmpty ? .account : .issuer) }
+        .onDisappear { setupInput = ""; setupDraft = nil }
+    }
+
+    private var editorForm: some View {
+        Form {
+            TextField(tr("Service (optional)", "服务名称（可选）"), text: $issuer)
+                .accessibilityIdentifier("account-issuer")
+                .focused($focused, equals: .issuer)
+            TextField(tr("Account", "账号"), text: $account)
+                .accessibilityIdentifier("account-name")
+                .focused($focused, equals: .account)
+            if existing == nil {
+                setupFields
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+    }
+
+    @ViewBuilder
+    private var setupFields: some View {
+        if let parsed = setupDraft {
+            if parsed.kind == .entry {
+                LabeledContent(tr("Setup link parameters", "设置链接参数")) {
+                    Text(parameterSummary(parsed))
+                        .accessibilityIdentifier("account-setup-parameters")
+                }
+            }
+            ForEach(parsed.warnings, id: \.self) { warning in
+                Label(draftWarning(warning), systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Button(tr("Change Setup Key or Link", "更换设置密钥或链接")) {
+                setupDraft = nil
+                setupInput = ""
+                store.errorMessage = nil
+                focused = .setup
+            }
+            .buttonStyle(.link)
+        } else {
+            SecureField(tr("Setup key or otpauth link", "设置密钥或 otpauth 链接"), text: $setupInput)
+                .accessibilityIdentifier("account-setup-input")
+                .focused($focused, equals: .setup)
+        }
+        if !shouldPreviewLink && setupDraft?.kind != .entry {
+            advancedParameters
+        }
+    }
+
+    private var advancedParameters: some View {
+        DisclosureGroup(tr("Verification Parameters", "验证码参数"), isExpanded: $showAdvanced) {
+            Picker(tr("Type", "类型"), selection: $type) {
+                Text("TOTP").tag(OTPType.totp)
+                Text("HOTP").tag(OTPType.hotp)
+            }
+            Picker(tr("Algorithm", "算法"), selection: $algorithm) {
+                ForEach(OTPAlgorithm.allCases, id: \.self) { algorithm in
+                    Text(algorithm.rawValue).tag(algorithm)
+                }
+            }
+            Picker(tr("Digits", "位数"), selection: $digits) {
+                Text("6").tag(6)
+                Text("8").tag(8)
+            }
+            if type == .totp {
+                TextField(tr("Period in seconds", "周期（秒）"), text: $period)
+            } else {
+                TextField(tr("Counter", "计数器"), text: $counter)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var editorActions: some View {
+        if shouldPreviewLink {
+            Button(tr("Preview Setup Link", "预览设置链接"), action: previewSetupLink)
+                .accessibilityIdentifier("account-setup-preview")
+                .keyboardShortcut(.defaultAction)
+        } else {
             Button(tr("Save Account", "保存账号"), action: submit)
+                .accessibilityIdentifier("account-save")
                 .keyboardShortcut(.defaultAction)
                 .disabled(account.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || (existing == nil && draft == nil && secret.isEmpty))
+                          || (existing == nil && setupDraft == nil && setupInput.isEmpty))
         }
-        .onAppear { focused = account.isEmpty ? .account : .issuer }
-        .onDisappear { secret = "" }
+    }
+
+    private func previewSetupLink() {
+        do {
+            let parsed = try AccountSetupInput.parse(setupInput)
+            guard parsed.kind == .entry else { throw AccountSetupInput.invalid }
+            if normalized(issuer).isEmpty { issuer = parsed.issuer ?? "" }
+            if normalized(account).isEmpty { account = parsed.accountName ?? "" }
+            setupDraft = parsed
+            setupInput = ""
+            store.errorMessage = nil
+            focused = .account
+        } catch {
+            store.errorMessage = (error as? AccountSetupInput)?.errorDescription
+                ?? AccountSetupInput.invalid.errorDescription
+        }
     }
 
     private func submit() {
@@ -188,32 +276,52 @@ struct AccountEditor: View {
         }
 
         do {
-            var item: VaultItem
+            let item: VaultItem
             if var original = existing {
                 original.issuer = parsedIssuer.isEmpty ? nil : parsedIssuer
                 original.accountName = parsedAccount
                 item = original
             } else {
-                let secretBytes = try draft?.secret ?? OTP.base32Decode(secret)
-                guard (1...255).contains(secretBytes.count) else { throw AccountInput.invalidSecret }
-                let enteredPeriod = type == .totp ? Int(period) : 30
-                let enteredCounter = type == .hotp ? Int64(counter) : nil
-                guard let enteredPeriod, (1...300).contains(enteredPeriod),
-                      type == .totp || (enteredCounter ?? -1) >= 0 else { throw AccountInput.invalidParameters }
-                item = VaultItem.make(type: type, issuer: parsedIssuer.isEmpty ? nil : parsedIssuer,
-                                      accountName: parsedAccount, secret: secretBytes, algorithm: algorithm,
-                                      digits: digits, period: enteredPeriod, counter: enteredCounter, origin: "manual")
+                item = try newItem(issuer: parsedIssuer.isEmpty ? nil : parsedIssuer, account: parsedAccount)
             }
             let id = item.id
             Task {
                 if await store.save(item) { saved(id) }
             }
-        } catch AccountInput.invalidParameters {
+        } catch EditorError.invalidParameters {
             store.errorMessage = tr("Use a period between 1 and 300 seconds or a supported nonnegative counter.",
                                     "周期必须在 1 到 300 秒之间，计数器必须是受支持的非负整数。")
+        } catch let error as AccountSetupInput {
+            store.errorMessage = error.errorDescription
         } catch {
-            store.errorMessage = tr("Enter a valid Base32 setup key.", "请输入有效的 Base32 设置密钥。")
+            store.errorMessage = AccountSetupInput.invalid.errorDescription
         }
+    }
+
+    private func newItem(issuer: String?, account: String) throws -> VaultItem {
+        let parsed = try setupDraft ?? AccountSetupInput.parse(setupInput)
+        if parsed.kind == .entry {
+            guard setupDraft != nil else { throw AccountSetupInput.invalid }
+            return VaultItem.make(type: parsed.type, issuer: issuer, accountName: account, secret: parsed.secret,
+                                  algorithm: parsed.algorithm, digits: parsed.digits, period: parsed.period,
+                                  counter: parsed.counter.flatMap { Int64(exactly: $0) }, origin: "manual")
+        }
+
+        guard (1...255).contains(parsed.secret.count) else { throw AccountSetupInput.invalid }
+        let enteredPeriod = type == .totp ? Int(period) : 30
+        let enteredCounter = type == .hotp ? Int64(counter) : nil
+        guard let enteredPeriod, (1...300).contains(enteredPeriod),
+              type == .totp || (enteredCounter ?? -1) >= 0 else { throw EditorError.invalidParameters }
+        return VaultItem.make(type: type, issuer: issuer, accountName: account, secret: parsed.secret,
+                              algorithm: algorithm, digits: digits, period: enteredPeriod, counter: enteredCounter, origin: "manual")
+    }
+
+    private func parameterSummary(_ parsed: OTPDraft) -> String {
+        let length = tr("\(parsed.digits) digits", "\(parsed.digits) 位")
+        let interval = parsed.type == .totp
+            ? tr("\(parsed.period) seconds", "\(parsed.period) 秒")
+            : tr("Counter \(parsed.counter ?? 0)", "计数器 \(parsed.counter ?? 0)")
+        return [parsed.type.rawValue, parsed.algorithm.rawValue, length, interval].joined(separator: " · ")
     }
 
     private func normalized(_ value: String) -> String {
@@ -230,7 +338,7 @@ struct AccountEditor: View {
         }
     }
 
-    private enum AccountInput: Error { case invalidSecret, invalidParameters }
+    private enum EditorError: Error { case invalidParameters }
 }
 
 @MainActor
@@ -446,6 +554,7 @@ struct ExportSheet: View {
     @State private var password = ""
     @State private var plaintextAcknowledged = false
     @State private var choosingLocation = false
+    @State private var savePanel: NSSavePanel?
 
     var body: some View {
         DesktopDialog(store: store, title: tr("Export Backup", "导出备份"), close: close) {
@@ -480,7 +589,10 @@ struct ExportSheet: View {
                 .disabled(choosingLocation || password.isEmpty || (format.plaintext && !plaintextAcknowledged))
         }
         .onChange(of: format) { _, _ in plaintextAcknowledged = false }
-        .onDisappear { password = "" }
+        .onDisappear {
+            password = ""
+            savePanel?.cancel(nil)
+        }
     }
 
     private func chooseLocation() {
@@ -495,10 +607,13 @@ struct ExportSheet: View {
         panel.canCreateDirectories = true
         panel.isExtensionHidden = false
         choosingLocation = true
+        savePanel = panel
+        let revision = store.lockRevision
 
         let completion: (NSApplication.ModalResponse) -> Void = { response in
             choosingLocation = false
-            guard response == .OK, let url = panel.url else { return }
+            savePanel = nil
+            guard response == .OK, store.lockRevision == revision, let url = panel.url else { return }
             Task {
                 if await store.export(to: url, format: selectedFormat, password: chosenPassword) {
                     lastBackup = Date.now.timeIntervalSince1970

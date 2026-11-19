@@ -297,51 +297,6 @@ final class SharedContractTests: XCTestCase {
         XCTAssertThrowsError(try VaultJSON.decode(JSONSerialization.data(withJSONObject: future)))
     }
 
-    func testSwiftExportsForIndependentReader() throws {
-        var model = try VaultJSON.decode(data("fixtures/backup-v1.expected.json"))
-        model.items.append(.make(type: .hotp, issuer: "Public Counter", accountName: "sample",
-                                 secret: Data("12345678901234567890".utf8), counter: 10_300, sortIndex: 3000))
-        let folder = try ProcessInfo.processInfo.environment["INKOTP_TEST_EXPORTS"].map { path in
-            let url = URL(fileURLWithPath: path, isDirectory: true)
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            try VaultJSON.encode(model).write(to: url.appendingPathComponent("expected.json"))
-            return url
-        }
-        for format in InterchangeFormat.allCases {
-            let output = try Interchange.encode(model, format: format, password: Self.fixturePassword)
-            XCTAssertEqual(try Interchange.detect(output.bytes), format)
-            let decoded = try Interchange.decode(output.bytes, password: Self.fixturePassword).model
-            XCTAssertEqual(decoded.items.map(Profile.init), model.items.map(Profile.init), format.rawValue)
-            if format == .inkotp2fab { XCTAssertEqual(decoded, model) }
-            if let folder {
-                let filename = "swift-\(format.rawValue).\(format.fileExtension)"
-                try output.bytes.write(to: folder.appendingPathComponent(filename))
-            }
-        }
-    }
-
-    private struct Profile: Equatable {
-        let type: OTPType
-        let account: String
-        let issuer: String?
-        let secret: Data
-        let algorithm: OTPAlgorithm
-        let digits: Int
-        let period: Int?
-        let counter: Int64?
-
-        init(_ item: VaultItem) {
-            type = item.type
-            account = item.accountName
-            issuer = item.issuer
-            secret = item.secret
-            algorithm = item.algorithm
-            digits = item.digits
-            period = item.type == .totp ? item.period : nil
-            counter = item.counter
-        }
-    }
-
     private static let fixturePassword = "correct horse battery staple"
 
     private func assertBackupError(_ code: String, _ data: Data,

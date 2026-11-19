@@ -1,0 +1,90 @@
+name: Android interchange core
+
+on:
+  workflow_call:
+    inputs:
+      operation:
+        description: Produce Android exports or read the macOS exports
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate operation
+        env:
+          INKOTP_OPERATION: ${{ inputs.operation }}
+        run: |
+          case "$INKOTP_OPERATION" in
+            export|consume) ;;
+            *) echo "Unsupported Android interchange operation" >&2; exit 1 ;;
+          esac
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+          cache-dependency-path: |
+            android/**/*.gradle.kts
+            android/gradle.properties
+            android/gradle/libs.versions.toml
+            android/gradle/wrapper/gradle-wrapper.properties
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install Android SDK packages
+        run: sdkmanager --install 'platforms;android-37.2' 'build-tools;36.0.0' 'platform-tools'
+
+      - name: Produce six actual Kotlin exports
+        if: inputs.operation == 'export'
+        working-directory: android
+        run: ./gradlew --build-cache :core:test --rerun --tests '*PeerInterchangeTest.productionInterchangeAgreement'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        if: inputs.operation == 'export'
+        with:
+          python-version: '3.13'
+      - name: Independently verify the exact Kotlin exports
+        if: inputs.operation == 'export'
+        run: |
+          python3 -m pip install -r tools/requirements.txt
+          python3 tools/reference_interchange.py --exports android/core/build/interoperability --export-prefix kotlin
+      - name: Hand verified Kotlin exports to macOS
+        if: inputs.operation == 'export'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-peer-exports
+          path: android/core/build/interoperability/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Download the verified Swift exports from this run
+        if: inputs.operation == 'consume'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: macos-peer-exports
+          path: ${{ runner.temp }}/macos-peer-exports
+      - name: Read all six actual macOS exports through the Kotlin core
+        if: inputs.operation == 'consume'
+        env:
+          INKOTP_TEST_PEER_EXPORTS: ${{ runner.temp }}/macos-peer-exports
+          INKOTP_TEST_PEER_REQUIRED: '1'
+        working-directory: android
+        run: ./gradlew --build-cache :core:test --rerun --tests '*PeerInterchangeTest.productionInterchangeAgreement'
+
+      - name: Retain Android interoperability test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-interchange-${{ inputs.operation }}-reports
+          path: android/core/build/test-results/test/
+          if-no-files-found: ignore
+          retention-days: 14

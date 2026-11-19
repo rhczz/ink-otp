@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 struct InkOTPDesktop: App {
     @StateObject private var store = VaultStore()
     @StateObject private var commands = DesktopCommands()
+    @StateObject private var activity = DesktopActivity()
 
     init() {
         if CommandLine.arguments.contains("--ci-vault-smoke") { VaultSmoke.runAndExit() }
@@ -18,6 +19,7 @@ struct InkOTPDesktop: App {
     var body: some Scene {
         Window("InkOTP", id: "vault") {
             DesktopVaultView(store: store, commands: commands)
+                .environmentObject(activity)
                 .frame(minWidth: 720, minHeight: 470)
         }
         .defaultSize(width: 940, height: 640)
@@ -56,6 +58,8 @@ struct InkOTPDesktop: App {
 
         Settings {
             DesktopSettings(store: store, commands: commands)
+                .modifier(DesktopPrivacyCurtain())
+                .environmentObject(activity)
         }
     }
 }
@@ -71,6 +75,55 @@ final class DesktopCommands: ObservableObject {
 
     func send(_ request: DesktopRequest) {
         requests.send(request)
+    }
+}
+
+@MainActor
+final class DesktopActivity: ObservableObject {
+    @Published private(set) var isActive = NSApplication.shared.isActive
+    private var observations = Set<AnyCancellable>()
+
+    init() {
+        NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.isActive = false } }
+            .store(in: &observations)
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.isActive = true } }
+            .store(in: &observations)
+    }
+}
+
+@MainActor
+struct DesktopPrivacyCurtain: ViewModifier {
+    @EnvironmentObject private var activity: DesktopActivity
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content
+            // Preserve the view's identity and draft values while the app is inactive.
+            .opacity(activity.isActive ? 1 : 0)
+            .allowsHitTesting(activity.isActive)
+            .accessibilityHidden(!activity.isActive)
+            .overlay {
+                if !activity.isActive {
+                    let ink = QuietInk(dark: scheme == .dark)
+                    Rectangle()
+                        .fill(ink.background)
+                        .overlay {
+                            Label(tr("InkOTP is inactive", "InkOTP 已切换至后台"), systemImage: "lock.shield")
+                                .foregroundStyle(ink.secondary)
+                                .accessibilityIdentifier("desktop-privacy-curtain")
+                        }
+                        .transition(.identity)
+                        .allowsHitTesting(false)
+                }
+            }
+            .transaction { transaction in
+                if !activity.isActive {
+                    transaction.disablesAnimations = true
+                    transaction.animation = nil
+                }
+            }
     }
 }
 
@@ -98,6 +151,7 @@ struct DesktopVaultView: View {
     @ObservedObject var commands: DesktopCommands
     @Environment(\.colorScheme) private var scheme
     @Environment(\.openSettings) private var openSettings
+    @EnvironmentObject private var activity: DesktopActivity
     @AppStorage("export.last-revision") private var lastBackupRevision = ""
     @State private var selection: String?
     @State private var query = ""
@@ -109,11 +163,12 @@ struct DesktopVaultView: View {
     @State private var codeFeedback: String?
     @State private var feedbackTask: Task<Void, Never>?
     @State private var fileTask: Task<Void, Never>?
+    @State private var openPanel: NSOpenPanel?
     @State private var fileBusy = false
     @State private var didStart = false
-    @State private var appActive = true
     @State private var clockChanged = false
 
+    private var appActive: Bool { activity.isActive }
     private var ink: QuietInk { QuietInk(dark: scheme == .dark) }
     private var items: [VaultItem] {
         (store.model?.items ?? []).sorted { ($0.sortIndex, $0.id) < ($1.sortIndex, $1.id) }
@@ -137,6 +192,7 @@ struct DesktopVaultView: View {
                 gate(icon: "hand.raised", title: tr("Privacy Statement", "隐私声明"),
                      message: tr("InkOTP generates verification codes on this Mac. Review the privacy statement to continue.", "InkOTP 在这台 Mac 上生成验证码。请阅读隐私声明后继续。")) {
                     Button(tr("Read Privacy Statement", "阅读隐私声明")) { present(.privacy) }
+                        .accessibilityIdentifier("privacy-read")
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 }
@@ -150,6 +206,7 @@ struct DesktopVaultView: View {
                     HStack {
                         Button(tr("Restore from Backup…", "从备份恢复…"), action: chooseBackup)
                         Button(tr("Create Vault…", "新建验证码库…")) { present(.setup) }
+                            .accessibilityIdentifier("vault-create")
                             .buttonStyle(.borderedProminent)
                             .keyboardShortcut(.defaultAction)
                     }
@@ -177,8 +234,11 @@ struct DesktopVaultView: View {
                 DesktopBusyIndicator().padding(16)
             }
         }
+        .modifier(DesktopPrivacyCurtain())
         .sheet(item: $sheet) { current in
             sheetView(current.content, sheetID: current.id)
+                .modifier(DesktopPrivacyCurtain())
+                .environmentObject(activity)
         }
         .confirmationDialog(tr("Delete account?", "删除账号？"), isPresented: Binding(
             get: { confirmDelete != nil },
@@ -199,10 +259,8 @@ struct DesktopVaultView: View {
             handle(request)
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSSystemClockDidChange)) { _ in clockChanged = true }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in appActive = true }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-            appActive = false
-            revealed.removeAll()
+        .onChange(of: appActive) { _, isActive in
+            if !isActive { revealed.removeAll() }
         }
         .onChange(of: selection) { _, newValue in commands.hasSelection = newValue != nil }
         .onChange(of: defaultHidden) { _, _ in revealed.removeAll() }
@@ -216,12 +274,14 @@ struct DesktopVaultView: View {
             sheet = nil
             revealed.removeAll()
             fileTask?.cancel()
+            openPanel?.cancel(nil)
             codeFeedback = nil
             unlockPassword = ""
             showRecovery = false
         }
         .onDisappear {
             fileTask?.cancel()
+            openPanel?.cancel(nil)
             feedbackTask?.cancel()
             commands.hasSelection = false
             if store.model != nil { store.lock() }
@@ -229,7 +289,6 @@ struct DesktopVaultView: View {
         .task(id: store.ready) {
             guard store.ready, !didStart else { return }
             didStart = true
-            appActive = NSApplication.shared.isActive
             if store.consent && store.initialized && store.model == nil {
                 await store.unlock()
             }
@@ -242,10 +301,12 @@ struct DesktopVaultView: View {
             VStack(spacing: 14) {
                 if showRecovery {
                     SecureField(tr("Recovery password", "恢复口令"), text: $unlockPassword)
+                        .accessibilityIdentifier("vault-recovery-password")
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 320)
                         .onSubmit(unlockWithPassword)
                     Button(tr("Unlock with Recovery Password", "使用恢复口令解锁"), action: unlockWithPassword)
+                        .accessibilityIdentifier("vault-recovery-submit")
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                         .disabled(unlockPassword.isEmpty || isBusy)
@@ -258,11 +319,13 @@ struct DesktopVaultView: View {
                     Button(tr("Unlock Vault", "解锁验证码库")) {
                         Task { await store.unlock() }
                     }
+                    .accessibilityIdentifier("vault-unlock")
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isBusy)
                     if store.hasRecoveryPassword {
                         Button(tr("Use Recovery Password…", "使用恢复口令…")) { showRecovery = true }
+                            .accessibilityIdentifier("vault-recovery-open")
                             .buttonStyle(.link)
                     }
                 }
@@ -337,6 +400,7 @@ struct DesktopVaultView: View {
                             Text(tr("Add a service to start generating codes.", "添加服务后即可生成验证码。"))
                         } actions: {
                             Button(tr("Add Account…", "添加账号…")) { present(.account(nil, nil)) }
+                                .accessibilityIdentifier("vault-add-account")
                                 .buttonStyle(.borderedProminent)
                                 .disabled(isBusy)
                         }
@@ -361,6 +425,7 @@ struct DesktopVaultView: View {
                 } label: {
                     Label(tr("Add Account", "添加账号"), systemImage: "plus")
                 }
+                .accessibilityIdentifier("vault-add-menu")
                 .disabled(isBusy)
                 Button { openSettings() } label: {
                     Label(tr("Settings", "设置"), systemImage: "gearshape")
@@ -368,6 +433,7 @@ struct DesktopVaultView: View {
                 Button { store.lock() } label: {
                     Label(tr("Lock Vault", "锁定验证码库"), systemImage: "lock")
                 }
+                .accessibilityIdentifier("vault-lock")
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -457,10 +523,12 @@ struct DesktopVaultView: View {
                         Text(item.issuer ?? item.accountName)
                             .font(.system(.title, design: .default).weight(.semibold))
                             .textSelection(.enabled)
+                            .accessibilityIdentifier(item.issuer == nil ? "account-detail-name" : "account-detail-issuer")
                         if item.issuer != nil {
                             Text(item.accountName)
                                 .foregroundStyle(ink.secondary)
                                 .textSelection(.enabled)
+                                .accessibilityIdentifier("account-detail-name")
                         }
                     }
                     Spacer()
@@ -531,6 +599,7 @@ struct DesktopVaultView: View {
                         .foregroundStyle(expiring ? ink.warningText : ink.foreground)
                         .accessibilityLabel(Text(hidden ? tr("Verification code hidden", "验证码已隐藏") : tr("Verification code", "验证码")))
                         .accessibilityValue(Text(rawCode ?? ""))
+                        .accessibilityIdentifier("account-code")
                     if item.type == .totp {
                         ProgressView(value: Double(remaining), total: Double(max(1, item.period)))
                             .tint(expiring ? ink.warning : ink.accent)
@@ -543,6 +612,7 @@ struct DesktopVaultView: View {
                 Button { copy(item) } label: {
                     Label(tr("Copy Code", "复制验证码"), systemImage: "document.on.document")
                 }
+                .accessibilityIdentifier("account-copy")
                 .buttonStyle(.borderedProminent)
                 Button {
                     if revealed.contains(item.id) { revealed.remove(item.id) } else { revealed.insert(item.id) }
@@ -613,7 +683,7 @@ struct DesktopVaultView: View {
     }
 
     private func handle(_ request: DesktopRequest) {
-        guard sheet == nil, confirmDelete == nil else { return }
+        guard appActive, sheet == nil, confirmDelete == nil, openPanel == nil else { return }
         switch request {
         case .add: if store.model != nil { present(.account(nil, nil)) }
         case .copy: if let selected { copy(selected) }
@@ -682,16 +752,11 @@ struct DesktopVaultView: View {
     private func openDraft(_ setup: String) {
         store.errorMessage = nil
         do {
-            guard setup.utf8.count <= 65_536 else { throw QRFailure.unsupported }
-            let draft = try Otpauth.parse(setup.trimmingCharacters(in: .whitespacesAndNewlines))
-            guard draft.kind != .migration else {
-                store.errorMessage = tr("Google Authenticator migration QR codes are unsupported. Use a setup link for one account.",
-                                        "暂不支持 Google Authenticator 迁移二维码。请使用单个账号的设置链接。")
-                return
-            }
-            present(.account(nil, draft))
+            present(.account(nil, try AccountSetupInput.parse(setup)))
+        } catch let error as AccountSetupInput {
+            store.errorMessage = error.errorDescription
         } catch {
-            store.errorMessage = tr("This is not a supported verification setup key or link.", "这不是受支持的验证码设置密钥或链接。")
+            store.errorMessage = AccountSetupInput.invalid.errorDescription
         }
     }
 
@@ -708,21 +773,24 @@ struct DesktopVaultView: View {
     }
 
     private func openFile(prompt: String, types: [UTType], receive: @escaping (URL) -> Void) {
-        guard !isBusy, sheet == nil else { return }
+        guard !isBusy, sheet == nil, openPanel == nil else { return }
         store.errorMessage = nil
         let panel = NSOpenPanel()
         panel.prompt = prompt
         panel.allowedContentTypes = types
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
+        let revision = store.lockRevision
+        openPanel = panel
+        let didChoose: (NSApplication.ModalResponse) -> Void = { response in
+            openPanel = nil
+            guard response == .OK, store.lockRevision == revision, let url = panel.url else { return }
+            receive(url)
+        }
         if let window = NSApplication.shared.keyWindow {
-            panel.beginSheetModal(for: window) { response in
-                if response == .OK, let url = panel.url { receive(url) }
-            }
+            panel.beginSheetModal(for: window, completionHandler: didChoose)
         } else {
-            panel.begin { response in
-                if response == .OK, let url = panel.url { receive(url) }
-            }
+            panel.begin(completionHandler: didChoose)
         }
     }
 

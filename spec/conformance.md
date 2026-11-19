@@ -21,3 +21,7 @@
 适配器输出 `expected.json`（Vault JSON v1）和全套 `<prefix>-<FORMAT>.<extension>` 供 Python 检查。Android、macOS、iOS 的前缀分别为 `kotlin`、`swift`、`ios`；iOS 独立输出目录也可沿用原有的 `swift` 前缀。预期模型使用 `backup-v1.expected.json` 中的两个账号和 RFC 4226 测试密钥的 `Public Counter` / `sample` HOTP 账号，计数器为 10300。独立对拍会先把各端报告的输入模型与这份公共预期比对，再读取写出文件。
 
 文件真实性由上游 Git blob 哈希检查。测试亦对认证数据、文件头、密文、tag 作变异，明确失败原因。XCTest/JUnit 的平台 UI、系统权限与设备测试依各平台另行运行。
+
+## 对端实际产物
+
+Android 与 macOS 的接收测试从对端 CI 产物读取六份实际导出文件，分别验证格式识别及导入。TOTP/HOTP 的服务、账号、密钥、算法、位数、周期与计数器须逐项一致；旧版 .2fab 还须保留完整库模型。缺少生产端产物、种类不齐或接收失败时，该方向的验收失败。

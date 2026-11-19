@@ -30,9 +30,10 @@ final class VaultStore: ObservableObject {
     private var observations = Set<AnyCancellable>()
     private var activeAuthentication: LAContext?
     private var backgroundLock: Task<Void, Never>?
+    private var backgroundDeadline: ContinuousClock.Instant?
     private var clipboardClear: Task<Void, Never>?
     private var clipboardChangeCount: Int?
-    private var requiresForegroundAuthentication = false
+    private var shouldUnlockOnReturn = false
 
     init() {
         consent = DesktopPrivacy.available && UserDefaults.standard.string(forKey: consentKey) == DesktopPrivacy.revision
@@ -89,10 +90,11 @@ final class VaultStore: ObservableObject {
 
     func lock(clearClipboard: Bool = true) {
         lockRevision &+= 1
-        requiresForegroundAuthentication = false
+        shouldUnlockOnReturn = false
         activeAuthentication?.invalidate()
         backgroundLock?.cancel()
         backgroundLock = nil
+        backgroundDeadline = nil
         model = nil
         session = nil
         cache.removeAll(keepingCapacity: false)
@@ -338,7 +340,7 @@ final class VaultStore: ObservableObject {
         let epoch = lockRevision
         defer {
             busy = false
-            if requiresForegroundAuthentication && NSApplication.shared.isActive {
+            if shouldUnlockOnReturn && NSApplication.shared.isActive {
                 Task { await enteredForeground() }
             }
         }
@@ -387,7 +389,7 @@ final class VaultStore: ObservableObject {
         updateRecord(output.record)
         guard lockRevision == epoch, consent else { return false }
         guard NSApplication.shared.isActive else {
-            requiresForegroundAuthentication = output.record.systemAuthentication
+            lockForReturn(clearClipboard: false)
             return false
         }
         cache.removeAll(keepingCapacity: true)
@@ -471,31 +473,45 @@ final class VaultStore: ObservableObject {
     private func enteredBackground() {
         guard let model, !NSApplication.shared.isActive else { return }
         if activeAuthentication != nil { return }
-        if systemAuthentication {
-            lock(clearClipboard: false)
-            requiresForegroundAuthentication = true
+        let timeout = model.settings.lockTimeoutSeconds
+        if systemAuthentication || timeout == 0 {
+            lockForReturn(clearClipboard: false)
             return
         }
-        backgroundLock?.cancel()
-        let timeout = model.settings.lockTimeoutSeconds
+        guard backgroundDeadline == nil else { return }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(timeout))
+        backgroundDeadline = deadline
         backgroundLock = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(timeout))
+            try? await Task.sleep(until: deadline, clock: .continuous)
             guard !Task.isCancelled, !NSApplication.shared.isActive else { return }
-            self?.lock(clearClipboard: false)
+            self?.lockForReturn(clearClipboard: false)
         }
     }
 
+    private func lockForReturn(clearClipboard: Bool) {
+        lock(clearClipboard: clearClipboard)
+        shouldUnlockOnReturn = true
+    }
+
     private func lockForSessionPause() {
-        let shouldAuthenticate = requiresForegroundAuthentication || (systemAuthentication && model != nil)
-        lock()
-        requiresForegroundAuthentication = shouldAuthenticate
+        if model != nil || shouldUnlockOnReturn {
+            lockForReturn(clearClipboard: true)
+        } else {
+            lock()
+        }
     }
 
     private func enteredForeground() async {
         guard NSApplication.shared.isActive else { return }
-        backgroundLock?.cancel()
-        guard requiresForegroundAuthentication, ready, consent, !busy else { return }
-        requiresForegroundAuthentication = false
+        if let deadline = backgroundDeadline, ContinuousClock.now >= deadline {
+            lockForReturn(clearClipboard: false)
+        } else {
+            backgroundLock?.cancel()
+            backgroundLock = nil
+            backgroundDeadline = nil
+        }
+        guard shouldUnlockOnReturn, ready, consent, !busy else { return }
+        shouldUnlockOnReturn = false
         await unlock()
     }
 
