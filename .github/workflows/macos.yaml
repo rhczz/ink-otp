@@ -273,7 +273,7 @@ jobs:
             https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip -o "$archive"
           printf '%s  %s\n' '4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806' "$archive" | shasum -a 256 -c -
           ditto -x -k "$archive" "$destination"
-          binary="$(find "$destination" -type f -name xcodegen -print)"
+          binary="$destination/xcodegen/bin/xcodegen"
           test -x "$binary"
           "$binary" --version
           dirname "$binary" >> "$GITHUB_PATH"
