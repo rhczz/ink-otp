@@ -109,7 +109,6 @@
 "Last backup" = "上次备份";
 "License" = "许可证";
 "Light" = "浅色";
-"Local data size" = "本机数据大小";
 "Lock now" = "立即锁定";
 "Make sure the code belongs to the right service and account." = "核对验证码对应的服务与账号。";
 "Merge and keep both duplicates" = "合并，重复时两个都保留";
@@ -262,3 +261,11 @@
 "No recovery password is set. Set one before changing devices or reinstalling the app." = "当前为设备绑定模式。换机或重装前请先设置恢复口令。";
 "scrypt license" = "scrypt 许可证";
 "Verify your identity to import accounts." = "验证身份以导入账号。";
+"Open encrypted vault" = "打开加密库";
+"Create encrypted vault" = "创建加密库";
+"Erase vault" = "清除验证码库";
+"Verify identity" = "身份验证";
+"Local vault files" = "本机库文件大小";
+"Sample duration" = "本次采样耗时";
+"Recent operation (includes verification)" = "最近操作（含验证等待）";
+"%lld ms" = "%lld 毫秒";

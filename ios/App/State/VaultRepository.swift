@@ -64,7 +64,12 @@ actor VaultRepository {
     }
 
     func byteCount() -> Int? {
-        try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        let keys: Set<URLResourceKey> = [.fileSizeKey]
+        guard let activeSize = try? url.resourceValues(forKeys: keys).fileSize else { return nil }
+        let previous = previousVaultURL
+        guard FileManager.default.fileExists(atPath: previous.path) else { return activeSize }
+        guard let previousSize = try? previous.resourceValues(forKeys: keys).fileSize else { return nil }
+        return activeSize + previousSize
     }
 
     func create(model: VaultModel, password: String?) throws -> VaultSession {

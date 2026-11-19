@@ -109,7 +109,6 @@
 "Last backup" = "Last backup";
 "License" = "License";
 "Light" = "Light";
-"Local data size" = "Local data size";
 "Lock now" = "Lock now";
 "Make sure the code belongs to the right service and account." = "Make sure the code belongs to the right service and account.";
 "Merge and keep both duplicates" = "Merge and keep both duplicates";
@@ -260,3 +259,11 @@
 "privacy.changes.body" = "InkOTP is for a general audience. Use it with a guardian's consent and guidance where the law requires it. Material changes to this notice will be announced and, where needed, presented for consent again.";
 "Use device authentication" = "Use device authentication";
 "No recovery password is set. Set one before changing devices or reinstalling the app." = "No recovery password is set. Set one before changing devices or reinstalling the app.";
+"Open encrypted vault" = "Open encrypted vault";
+"Create encrypted vault" = "Create encrypted vault";
+"Erase vault" = "Erase vault";
+"Verify identity" = "Verify identity";
+"Local vault files" = "Local vault files";
+"Sample duration" = "Sample duration";
+"Recent operation (includes verification)" = "Recent operation (includes verification)";
+"%lld ms" = "%lld ms";

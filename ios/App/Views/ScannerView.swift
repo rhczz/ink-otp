@@ -310,28 +310,41 @@ struct QRPhotoButton: View {
     }
 }
 
-private struct QRPhoto: Transferable, Sendable {
+struct QRPhoto: Transferable, Sendable {
+    static let maxEncodedBytes = 16 * 1024 * 1024
+    private static let maxSourceEdge = 32_768
+    private static let maxSourcePixels = 100_000_000
+    private static let maxDecodedEdge = 2048
+
     let bytes: Data
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(importedContentType: .image) { file in
-            QRPhoto(bytes: try readBoundedFile(file.file, maximum: 16 * 1024 * 1024))
+            try read(file.file)
         }
     }
 
+    static func read(_ url: URL) throws -> Self {
+        Self(bytes: try readBoundedFile(url, maximum: maxEncodedBytes))
+    }
+
     func decode() throws -> String? {
+        guard bytes.count <= Self.maxEncodedBytes else { throw CocoaError(.fileReadTooLarge) }
         let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(bytes as CFData, options),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
               let width = properties[kCGImagePropertyPixelWidth as String] as? Int,
               let height = properties[kCGImagePropertyPixelHeight as String] as? Int,
-              (1...32_768).contains(width), (1...32_768).contains(height),
-              width * height <= 100_000_000,
+              (1...Self.maxSourceEdge).contains(width), (1...Self.maxSourceEdge).contains(height),
+              width * height <= Self.maxSourcePixels,
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceThumbnailMaxPixelSize: 2048,
+                kCGImageSourceThumbnailMaxPixelSize: Self.maxDecodedEdge,
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-              ] as CFDictionary)
+                kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary),
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+              image.width <= Self.maxDecodedEdge, image.height <= Self.maxDecodedEdge
         else {
             throw CocoaError(.fileReadCorruptFile)
         }

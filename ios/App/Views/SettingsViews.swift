@@ -1,4 +1,3 @@
-import Darwin
 import InkOTPCore
 import SwiftUI
 
@@ -188,7 +187,7 @@ struct DiagnosticsView: View {
     let refresh: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var displayedTime = Date()
-    @State private var resources: ResourceSnapshot?
+    @State private var resources: VaultResourceSample?
     @State private var recalculated = false
     @State private var sampling = false
 
@@ -226,17 +225,21 @@ struct DiagnosticsView: View {
                 Text("InkOTP samples these values on your device when you choose Refresh. Memory and storage are measured separately.")
                     .font(.footnote).foregroundStyle(Ink.secondary)
                 if let resources {
-                    LabeledContent("Resident memory", value: resources.memory)
-                    LabeledContent("Local data size", value: resources.storage)
-                }
-                Button(sampling ? "Sampling…" : "Refresh resource usage") {
-                    sampling = true
-                    Task {
-                        let bytes = await state.privateStorageByteCount()
-                        resources = ResourceSnapshot.capture(vaultBytes: bytes)
-                        sampling = false
+                    LabeledContent("Resident memory", value: byteLabel(resources.residentMemoryBytes))
+                    LabeledContent("Local vault files", value: byteLabel(resources.vaultBytes.map(Int64.init)))
+                    LabeledContent("Sample duration") { elapsedLabel(resources.duration) }
+                    if let operation = resources.lastOperation {
+                        LabeledContent {
+                            VStack(alignment: .trailing, spacing: Ink.xs) {
+                                inkText(operation.kind.rawValue)
+                                elapsedLabel(operation.duration)
+                            }
+                        } label: {
+                            Text("Recent operation (includes verification)")
+                        }
                     }
                 }
+                Button(sampling ? "Sampling…" : "Refresh resource usage") { sampling = true }
                 .buttonStyle(InkButtonStyle(prominent: false))
                 .disabled(sampling)
             }
@@ -246,29 +249,22 @@ struct DiagnosticsView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { displayedTime = Date() }
         }
-    }
-}
-
-private struct ResourceSnapshot {
-    let memory: String
-    let storage: String
-
-    static func capture(vaultBytes: Int?) -> Self {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.stride / MemoryLayout<integer_t>.stride)
-        let capacity = Int(count)
-        let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: capacity) { raw in
-                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), raw, &count)
-            }
+        .task(id: sampling) {
+            guard sampling else { return }
+            defer { sampling = false }
+            if let sample = await state.sampleResources() { resources = sample }
         }
-        let memory = result == KERN_SUCCESS ? byteLabel(Int64(info.resident_size)) : "—"
-        let storage = vaultBytes.map { byteLabel(Int64($0)) } ?? "—"
-        return .init(memory: memory, storage: storage)
     }
 
-    private static func byteLabel(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
+    private func byteLabel(_ bytes: Int64?) -> String {
+        guard let bytes else { return "—" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
+    }
+
+    private func elapsedLabel(_ duration: Duration) -> some View {
+        let components = duration.components
+        let milliseconds = components.seconds * 1_000 + components.attoseconds / 1_000_000_000_000_000
+        return Text("\(milliseconds) ms").monospacedDigit()
     }
 }
 

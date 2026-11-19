@@ -80,6 +80,11 @@ jobs:
         with:
           name: inkotp-ios-simulator
           path: distribution
+      - if: needs.sign.result == 'skipped'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: inkotp-ios-device-unsigned
+          path: distribution
       - if: needs.sign.result == 'success'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -102,7 +107,9 @@ jobs:
             assets+=(InkOTP-iOS.ipa)
             printf '%s\n' 'The IPA is Apple-signed for the devices registered in the Ad Hoc provisioning profile.' > release.md
           else
-            printf '%s\n' 'Simulator preview. It runs in Xcode Simulator and has no iPhone or iPad installer.' > release.md
+            test -f InkOTP-iOS-unsigned.ipa
+            assets+=(InkOTP-iOS-unsigned.ipa)
+            printf '%s\n' 'The simulator ZIP runs in Xcode Simulator. The unsigned IPA was archived for iPhone and iPad. Installing it requires Apple code signing and provisioning for the intended device.' > release.md
           fi
           printf '\nCross-platform contract checks and XCTest passed in [GitHub Actions](%s/%s/actions/runs/%s).\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release.md
           sha256sum "${assets[@]}" > SHA256SUMS-iOS

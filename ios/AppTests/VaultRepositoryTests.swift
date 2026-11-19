@@ -1,6 +1,8 @@
+import Combine
 import Foundation
 import InkOTPCore
 import LocalAuthentication
+import UIKit
 import XCTest
 @testable import InkOTP
 
@@ -108,6 +110,8 @@ final class VaultRepositoryTests: XCTestCase {
         _ = try await repository.restore(model: restored, password: password, authorized: true)
         let predecessor = url.deletingLastPathComponent().appendingPathComponent("vault-before-restore.json")
         XCTAssertEqual(try Data(contentsOf: predecessor), original)
+        let byteCount = await repository.byteCount()
+        XCTAssertEqual(byteCount, try Data(contentsOf: url).count + original.count)
         let opened = try await repository.open(context: LAContext())
         XCTAssertEqual(opened.model, restored)
         try await repository.erase()
@@ -155,6 +159,95 @@ final class VaultRepositoryTests: XCTestCase {
         let committed = await state.commitImport(preview)
         XCTAssertFalse(committed)
         XCTAssertEqual(state.vault?.items.count, 0)
+    }
+
+    @MainActor
+    func testImmediateClipboardClearKeepsUserReplacementAndClearsOwnedCode() async {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        let clipboard = CodeClipboard(pasteboard: pasteboard)
+
+        clipboard.copy("123456", clearAfter: 1)
+        XCTAssertEqual(pasteboard.string, "123456")
+        pasteboard.string = "User replacement"
+        await nextMainQueueTurn()
+        XCTAssertEqual(pasteboard.string, "User replacement")
+
+        clipboard.copy("654321", clearAfter: 1)
+        XCTAssertEqual(pasteboard.string, "654321")
+        await nextMainQueueTurn()
+        XCTAssertNil(pasteboard.string)
+    }
+
+    @MainActor
+    func testAutomaticLockKeepsCopyUntilAnExplicitLock() async throws {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        let state = try await unlockedState(clipboard: CodeClipboard(pasteboard: pasteboard))
+        await state.updateSettings(VaultSettings(lockTimeoutSeconds: 0, clipboardClearSeconds: 0))
+        state.copy(code: "123456")
+
+        state.sceneChanged(.background)
+        XCTAssertEqual(state.phase, .locked)
+        XCTAssertEqual(pasteboard.string, "123456")
+
+        let reopened = expectation(description: "Vault reopened on foreground entry")
+        let observation = state.$phase.sink { if $0 == .unlocked { reopened.fulfill() } }
+        defer { observation.cancel() }
+        state.sceneChanged(.active)
+        await fulfillment(of: [reopened], timeout: 5)
+        state.lock()
+        XCTAssertNil(pasteboard.string)
+    }
+
+    @MainActor
+    func testDiagnosticsMeasureSampleAndMostRecentOperationOnlyWhileUnlocked() async throws {
+        let state = try await unlockedState()
+        let initialSample = await state.sampleResources()
+        let initial = try XCTUnwrap(initialSample)
+        XCTAssertEqual(initial.lastOperation?.kind, .setup)
+        XCTAssertGreaterThan(initial.vaultBytes ?? 0, 0)
+        XCTAssertGreaterThanOrEqual(initial.duration, .zero)
+
+        await state.updateSettings(VaultSettings(hideCodesByDefault: true))
+        let updatedSample = await state.sampleResources()
+        let recent = try XCTUnwrap(updatedSample?.lastOperation)
+        XCTAssertEqual(recent.kind, .save)
+        XCTAssertGreaterThanOrEqual(recent.duration, .zero)
+
+        let failedImport = await state.previewImport(data: Data(), password: nil)
+        XCTAssertNil(failedImport)
+        let failedSample = await state.sampleResources()
+        XCTAssertEqual(failedSample?.lastOperation?.kind, .importBackup)
+
+        state.lock()
+        let lockedSample = await state.sampleResources()
+        XCTAssertNil(lockedSample)
+    }
+
+    @MainActor
+    private func unlockedState(clipboard: CodeClipboard? = nil) async throws -> AppState {
+        let (url, _, repository) = makeRepository()
+        let suite = "InkOTP.Tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+        }
+        defaults.set(true, forKey: "PrivacyPolicyConsent.1")
+        let state = AppState(repository: repository, defaults: defaults, clipboard: clipboard)
+        state.sceneChanged(.active)
+        await state.start()
+        await state.setup(password: nil)
+        XCTAssertEqual(state.phase, .unlocked)
+        return state
+    }
+
+    @MainActor
+    private func nextMainQueueTurn() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
     }
 
     private func makeRepository() -> (URL, MemoryKeys, VaultRepository) {

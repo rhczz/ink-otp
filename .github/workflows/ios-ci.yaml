@@ -27,6 +27,16 @@ jobs:
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate --spec ios/project.yml --project ios
+      - name: Archive Release for iPhone and iPad
+        run: bash ios/Scripts/package-device.sh
+      - name: Verify device package after extraction
+        run: bash ios/Scripts/verify-device.sh ios/build/packages/InkOTP-iOS-unsigned.ipa
+      - name: Preserve verified unsigned device IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: inkotp-ios-device-unsigned
+          path: ios/build/packages/InkOTP-iOS-unsigned.ipa
+          if-no-files-found: error
       - name: Verify iOS application and UI with XCTest
         id: simulator
         run: |

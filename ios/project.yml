@@ -12,7 +12,7 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.5.3"
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "2"
 targets:
   InkOTP:
     type: application
@@ -47,6 +47,15 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: InkOTP
+  InkOTPUpgradeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UpgradeUITests, UITests/InkOTPFlowTests.swift]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: InkOTP
 schemes:
   InkOTP:
     build:
@@ -57,3 +66,10 @@ schemes:
       targets:
         - InkOTPTests
         - InkOTPUITests
+  InkOTPUpgrade:
+    build:
+      targets:
+        InkOTP: [test]
+    test:
+      targets:
+        - InkOTPUpgradeUITests

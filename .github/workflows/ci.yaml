@@ -82,6 +82,13 @@ jobs:
     permissions:
       contents: read
 
+  ios-upgrade:
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    needs: ios
+    uses: ./.github/workflows/ios-upgrade.yaml
+    permissions:
+      contents: read
+
   bidirectional:
     needs: [verify, ios]
     runs-on: ubuntu-latest
