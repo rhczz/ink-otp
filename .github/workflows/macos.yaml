@@ -300,7 +300,7 @@ jobs:
   publish:
     name: Publish macOS GitHub Release
     if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: [package, android-consume]
+    needs: [package, android-consume, desktop-ui]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -343,6 +343,9 @@ jobs:
 
           下载 DMG 并将 InkOTP 拖入 Applications。校验可用 \`SHA256SUMS.txt\`，源码和 CI 证据见下方。
 
+          - [桌面安装及从 Beta 1 升级的说明](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/macos/README.md)
+          - [公共测试集与备份格式](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/spec/conformance.md)
+          - [此版本的桌面行为和验证记录](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/docs/changes/2026-11-19-macos-desktop-lifecycle.md)
           - [源码提交](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA)
           - [本次流程](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
           NOTES

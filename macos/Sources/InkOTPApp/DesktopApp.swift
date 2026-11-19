@@ -413,6 +413,7 @@ struct DesktopVaultView: View {
                     Button(tr("Paste QR Link…", "粘贴二维码链接…"), action: pasteSetup)
                     Button(tr("Read QR Image…", "读取二维码图片…"), action: chooseQRImage)
                     Button(tr("Scan with Camera…", "使用相机扫描…")) { present(.camera) }
+                        .accessibilityIdentifier("camera-open")
                 } label: {
                     Label(tr("Add Account", "添加账号"), systemImage: "plus")
                 }
@@ -706,19 +707,20 @@ struct DesktopVaultView: View {
                 PasswordSheet(store: store, close: close)
             }
         case .camera:
-            CameraSheet(close: close) { value in
+            CameraSheet(store: store, close: close) { value in
+                let revision = store.lockRevision
                 close()
                 // Open the editor on the next run loop after dismissing the camera.
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(250))
-                    guard store.model != nil, appActive, sheet == nil else { return }
+                    guard store.lockRevision == revision, store.model != nil, appActive, sheet == nil else { return }
                     openDraft(value)
                 }
             }
         case .changePassword: PasswordSheet(store: store, close: close)
         case .privacy: PrivacySheet(store: store, close: close)
         case .diagnostics: DiagnosticsSheet(store: store, clockChanged: $clockChanged, close: close)
-        case .about: AboutSheet(close: close)
+        case .about: AboutSheet(store: store, close: close)
         case .onboarding: OnboardingSheet(close: close)
         }
     }

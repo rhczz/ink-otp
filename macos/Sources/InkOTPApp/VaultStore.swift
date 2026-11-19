@@ -17,16 +17,24 @@ final class VaultStore: ObservableObject {
     @Published var errorMessage: String?
     let supportsSystemAuthentication = Bundle.main.object(forInfoDictionaryKey: "InkOTPProtectedKeychainEnabled") as? Bool == true
 
-    private struct CachedCode {
+    private struct CachedCode: Sendable {
         let step: Int64
         let text: String
     }
+
+    private struct CodeRefresh: Sendable {
+        let values: [String: CachedCode]
+        let count: Int
+    }
+
+    private static let maximumCachedCodes = 1_024
 
     private let disk = VaultDisk()
     private let consentKey = "privacy-consent-revision"
     private var record: VaultRecord?
     private var session: VaultSession?
     private var cache: [String: CachedCode] = [:]
+    private var codeRefreshTask: Task<CodeRefresh?, Never>?
     private var observations = Set<AnyCancellable>()
     private var activeAuthentication: LAContext?
     private var authenticationDeadline: ContinuousClock.Instant?
@@ -77,7 +85,7 @@ final class VaultStore: ObservableObject {
     }
 
     @discardableResult
-    func unlock(password: String? = nil) async -> Bool {
+    func unlock(password: String? = nil, userInitiated: Bool = true) async -> Bool {
         await operation { [self] epoch in
             guard initialized, model == nil, record != nil else { throw VaultAccessError.locked }
             let password = password == "" ? nil : password
@@ -86,10 +94,10 @@ final class VaultStore: ObservableObject {
             }
             try check(epoch)
             let context = LAContext()
-            let interactive = password == nil && systemAuthentication
+            let interactive = password == nil && (systemAuthentication || userInitiated)
             if interactive { activeAuthentication = context }
             defer { finishAuthentication(context) }
-            let output = try await disk.unlock(password: password, context: context)
+            let output = try await disk.unlock(password: password, context: context, allowLegacyUI: userInitiated)
             return publish(output, epoch: epoch)
         } ?? false
     }
@@ -105,6 +113,7 @@ final class VaultStore: ObservableObject {
         backgroundDeadline = nil
         model = nil
         session = nil
+        codeRefreshTask?.cancel()
         cache.removeAll(keepingCapacity: false)
         if clearClipboard { clearOwnedClipboard() }
     }
@@ -201,13 +210,48 @@ final class VaultStore: ObservableObject {
         let step = time / Int64(item.period)
         if let cached = cache[item.id], cached.step == step { return cached.text }
 
-        let value = try? OTP.hotp(secret: item.secret, algorithm: item.algorithm, digits: item.digits,
-                                  counter: UInt64(step))
-        if let value {
-            if cache.count >= 1024 { cache.removeAll(keepingCapacity: true) }
-            cache[item.id] = CachedCode(step: step, text: value)
+        guard let value = Self.calculateTOTP(item, step: step) else { return nil }
+        if cache.count >= Self.maximumCachedCodes { cache.removeAll(keepingCapacity: true) }
+        cache[item.id] = value
+        return value.text
+    }
+
+    func recalculateCodes(at date: Date) async -> Int? {
+        guard let model, NSApplication.shared.isActive, codeRefreshTask == nil, !Task.isCancelled,
+              let time = Int64(exactly: date.timeIntervalSince1970.rounded(.down)), time >= 0 else { return nil }
+        let revision = lockRevision
+        let maximumCachedCodes = Self.maximumCachedCodes
+        let entries = model.items
+        let task = Task.detached(priority: .userInitiated) { () -> CodeRefresh? in
+            var refreshed = [String: CachedCode]()
+            var count = 0
+            for item in entries {
+                guard !Task.isCancelled else { return nil }
+                guard item.type == .totp, item.period > 0,
+                      let code = Self.calculateTOTP(item, step: time / Int64(item.period)) else { continue }
+                count += 1
+                if refreshed.count < maximumCachedCodes { refreshed[item.id] = code }
+            }
+            return CodeRefresh(values: refreshed, count: count)
         }
-        return value
+        codeRefreshTask = task
+        defer { codeRefreshTask = nil }
+
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        guard let result, !Task.isCancelled, !task.isCancelled, lockRevision == revision,
+              NSApplication.shared.isActive, self.model?.items == entries else { return nil }
+        cache = result.values
+        return result.count
+    }
+
+    private nonisolated static func calculateTOTP(_ item: VaultItem, step: Int64) -> CachedCode? {
+        guard let text = try? OTP.hotp(secret: item.secret, algorithm: item.algorithm, digits: item.digits,
+                                       counter: UInt64(step)) else { return nil }
+        return CachedCode(step: step, text: text)
     }
 
     @discardableResult
@@ -497,6 +541,7 @@ final class VaultStore: ObservableObject {
     }
 
     private func enteredBackground() {
+        codeRefreshTask?.cancel()
         if activeAuthentication != nil {
             guard authenticationDeadline == nil else { return }
             let deadline = ContinuousClock.now.advanced(by: .seconds(120))
@@ -553,7 +598,7 @@ final class VaultStore: ObservableObject {
         }
         guard shouldUnlockOnReturn, ready, consent, !busy else { return }
         shouldUnlockOnReturn = false
-        await unlock()
+        await unlock(userInitiated: false)
     }
 
     private func clearOwnedClipboard() {

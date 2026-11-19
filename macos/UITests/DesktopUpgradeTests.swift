@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 
@@ -23,16 +24,17 @@ final class DesktopUpgradeTests: XCTestCase {
         type(recoveryPassword, into: setup.element(boundBy: 0))
         type(recoveryPassword, into: setup.element(boundBy: 1))
         click(app.buttons["Create Vault"].firstMatch)
-        XCTAssertTrue(app.staticTexts["No Accounts"].firstMatch.waitForExistence(timeout: timeout))
-
-        app.typeKey("n", modifierFlags: .command)
+        click(app.buttons["Add Account…"].firstMatch)
         let accountFields = legacyFields(in: app, secure: false, count: 2)
         type(legacyIssuer, into: accountFields.element(boundBy: 0))
         type(legacyAccount, into: accountFields.element(boundBy: 1))
         let keyField = legacyFields(in: app, secure: true, count: 1)
         type(publicKey, into: keyField.firstMatch)
         click(app.buttons["Save Account"].firstMatch)
-        XCTAssertTrue(account(app, named: legacyAccount).waitForExistence(timeout: timeout))
+        let saved = account(app, named: legacyAccount)
+        if !saved.waitForExistence(timeout: timeout) {
+            XCTFail("The Beta 1 account was not found after saving. Accessibility tree:\n\(app.debugDescription)")
+        }
     }
 
     @MainActor
@@ -53,6 +55,8 @@ final class DesktopUpgradeTests: XCTestCase {
         try addURIAccount(in: app)
         let fixture = account(app, named: uriAccount)
         verifyPrivacyCurtainPreservesDraft(in: app, savedAccount: fixture)
+        verifyHiddenCopy(in: app)
+        try verifyImportedHOTP(in: app)
         setLockTimeout("Immediately", in: app)
         app.typeKey("n", modifierFlags: .command)
         let openEditor = element("account-setup-input", in: app)
@@ -141,6 +145,70 @@ final class DesktopUpgradeTests: XCTestCase {
     }
 
     @MainActor
+    private func verifyHiddenCopy(in app: XCUIApplication) {
+        app.typeKey(",", modifierFlags: .command)
+        click(element("settings-hide-codes", in: app))
+        app.typeKey("w", modifierFlags: .command)
+        click(account(app, named: uriAccount))
+
+        let code = element("account-code", in: app)
+        let hiddenLabel = "Verification code hidden"
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", hiddenLabel), object: code)
+        wait(for: [hidden], timeout: timeout)
+        XCTAssertTrue((code.value as? String ?? "").isEmpty)
+
+        let clipboard = NSPasteboard.general
+        let before = clipboard.changeCount
+        click(element("account-copy", in: app))
+        XCTAssertGreaterThan(clipboard.changeCount, before)
+        let copied = clipboard.string(forType: .string) ?? ""
+        XCTAssertEqual(copied.utf8.count, 8)
+        XCTAssertTrue(copied.utf8.allSatisfy { (48...57).contains($0) })
+        XCTAssertEqual(code.label, hiddenLabel)
+        XCTAssertTrue((code.value as? String ?? "").isEmpty)
+    }
+
+    @MainActor
+    private func verifyImportedHOTP(in app: XCUIApplication) throws {
+        let name = "counter-only-account"
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("public-hotp.txt")
+        let uri = "otpauth://hotp/Public%20Counter:\(name)?secret=\(publicKey)&issuer=Public%20Counter&counter=10300\n"
+        try Data(uri.utf8).write(to: file)
+
+        app.typeKey("o", modifierFlags: .command)
+        let choose = app.buttons["Choose Backup"].firstMatch
+        XCTAssertTrue(choose.waitForExistence(timeout: timeout))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(folder.path)
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        let fileRow = app.staticTexts.matching(NSPredicate(
+            format: "label == %@ OR value == %@",
+            file.lastPathComponent, file.lastPathComponent
+        )).firstMatch
+        click(fileRow)
+        click(choose)
+        click(app.buttons["Preview Backup"].firstMatch)
+        click(app.buttons["Import Accounts"].firstMatch)
+        click(account(app, named: name))
+
+        let detail = element("account-detail-name", in: app)
+        XCTAssertTrue(detail.waitForExistence(timeout: timeout))
+        XCTAssertTrue(detail.label == name || detail.value as? String == name)
+        let preserved = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@ OR value CONTAINS %@",
+            "preserves HOTP accounts", "preserves HOTP accounts"
+        )).firstMatch
+        XCTAssertTrue(preserved.waitForExistence(timeout: timeout))
+        let counter = app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "10300", "10300")).firstMatch
+        XCTAssertTrue(counter.waitForExistence(timeout: timeout), "Import preserved the HOTP counter")
+        XCTAssertFalse(element("account-code", in: app).exists)
+        XCTAssertFalse(element("account-copy", in: app).exists)
+    }
+
+    @MainActor
     private func setLockTimeout(_ label: String, in app: XCUIApplication) {
         app.typeKey(",", modifierFlags: .command)
         let picker = element("settings-lock-timeout", in: app)
@@ -165,8 +233,8 @@ final class DesktopUpgradeTests: XCTestCase {
 
     @MainActor
     private func account(_ app: XCUIApplication, named name: String) -> XCUIElement {
-        app.windows["InkOTP"].descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value == %@", name, name)).firstMatch
     }
 
     @MainActor

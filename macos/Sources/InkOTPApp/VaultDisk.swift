@@ -85,7 +85,7 @@ actor VaultDisk {
         return VaultDiskStatus(initialized: true, record: try? readRecord())
     }
 
-    func unlock(password: String?, context: LAContext = LAContext()) throws -> VaultOpenResult {
+    func unlock(password: String?, context: LAContext = LAContext(), allowLegacyUI: Bool = false) throws -> VaultOpenResult {
         try prepare()
         let record = try readRecord()
         let bytes = try Self.read(file(for: record.active))
@@ -96,7 +96,7 @@ actor VaultDisk {
                 return recoverDeviceCredential(model, session: session, record: record, context: context)
             }
 
-            let credential = try readCredential(record.active, context: context)
+            let credential = try readCredential(record.active, context: context, allowLegacyUI: allowLegacyUI)
             let (model, session) = try VaultFile.open(bytes, deviceCredential: credential)
             return VaultOpenResult(model: model, session: session, record: record)
         } catch let error as VaultAccessError {
@@ -344,7 +344,7 @@ actor VaultDisk {
         if status == errSecItemNotFound { try addCredential(session.deviceCredential, generation: generation) }
     }
 
-    private func readCredential(_ generation: VaultGeneration, context: LAContext) throws -> Data {
+    private func readCredential(_ generation: VaultGeneration, context: LAContext, allowLegacyUI: Bool = false) throws -> Data {
         var query = credentialQuery(generation)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -353,6 +353,8 @@ actor VaultDisk {
         if generation.systemAuthentication {
             query[kSecUseAuthenticationContext as String] = context
             context.localizedReason = tr("Unlock your InkOTP vault", "解锁 InkOTP 验证码库")
+            status = SecItemCopyMatching(query as CFDictionary, &result)
+        } else if allowLegacyUI {
             status = SecItemCopyMatching(query as CFDictionary, &result)
         } else {
             status = try withLegacyInteractionDisabled { SecItemCopyMatching(query as CFDictionary, &result) }
