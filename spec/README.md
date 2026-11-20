@@ -8,13 +8,14 @@ macOS 接入与公共验收范围见 [桌面版规格](macos-parity.md)。
 |---|---|
 | `vectors.json` | OTP / Base32 / 边界条件的机器可读测试向量（由 Python 参考实现生成并复核） |
 | `otpauth-cases.json` | `otpauth://` 解析器的 40 个一致性用例与错误码 |
-| `backup-format.md` | 可移植加密备份 `.2fab` v1（已冻结） |
+| `backup-format.md` | 旧版 `.2fab` 历史规格 |
 | `vault-format.md` | 设备本地加密库 `vault.bin` v1（已冻结） |
 | [release.md](release.md) | 三端共用版本、GitHub Release 资产与签名要求 |
 | `android-interaction.md` | Android 系统认证、无闪屏操作反馈、验证码到期及相册授权回归边界 |
-| `fixtures/` | 固定参数、可复现的 `.2fab` 测试夹具 |
+| [google-authenticator-transfer.md](google-authenticator-transfer.md) | Google Authenticator 迁移二维码契约 |
+| `fixtures/` | 固定的公共互通和历史样本 |
 
-> 规则：**不要手改 `vectors.json` 或 `fixtures/`**。它们由 `tools/reference_totp.py` / `tools/reference_backup.py` 生成；手改会与生成器、`crosscheck` 和 Kotlin 单测三方不一致。
+> 规则：**不要手改 `vectors.json` 或 `fixtures/`**。OTP 向量由 `tools/reference_totp.py` 生成，Google 样本由 `tools/generate_google_transfer_fixture.py` 生成，历史备份夹具保持原始字节。
 
 ---
 
@@ -33,12 +34,11 @@ tools/.venv/bin/python tools/reference_totp.py --selftest
 # 2) 重新生成测试向量（固定 seed=20261105，输出应稳定）
 tools/.venv/bin/python tools/reference_totp.py --generate-vectors spec/vectors.json
 
-# 3) 备份实现自测 + 重新生成 fixture（固定 salt/nonce，输出应逐字节稳定）
-tools/.venv/bin/python tools/reference_backup.py --selftest
-tools/.venv/bin/python tools/reference_backup.py --create-fixture
+# 3) Google 迁移样本复核（用 --write 重新生成）
+tools/.venv/bin/python tools/generate_google_transfer_fixture.py
 
 # 4) 全量交叉检查（不依赖 Android）
-tools/.venv/bin/python tools/crosscheck.py --spec spec --backup-dir /tmp/m0-empty
+tools/.venv/bin/python tools/crosscheck.py --spec spec
 
 # 5) JSON 语法
 python3 -m json.tool spec/vectors.json > /dev/null
@@ -215,7 +215,7 @@ RFC 4226 Appendix D：`counter = 0..9`，SHA1，6 位。
 }
 ```
 
-- `otpauth-migration://` 不解析 protobuf，只路由：
+- 通用 URI 解析器对 `otpauth-migration://` 返回迁移路由，后续由 [Google 专用编解码器](google-authenticator-transfer.md) 处理负载：
 
 ```json
 { "kind": "migration", "host": "offline", "dataBase64": "SGVsbG8" }
@@ -300,56 +300,20 @@ Warning 枚举：
 
 ---
 
-## 5. 备份与库格式错误码
+## 5. 库格式错误码
 
-完整定义见 `backup-format.md` / `vault-format.md`。前缀约定：
+`VLT_E_*` 见 [本地库格式](vault-format.md)。GCM 认证成功后才能解析库明文。
 
-| 前缀 | 格式 | 示例 |
-|---|---|---|
-| `BAK_E_*` | `.2fab` 备份 | `BAK_E_AUTH`、`BAK_E_KDF_PARAMS` |
-| `VLT_E_*` | `vault.bin` | `VLT_E_WRAP_AUTH`、`VLT_E_VAULT_AUTH` |
+## 6. 交换与历史备份样本
 
-备份与库的 GCM 认证失败都必须"先验证、后解析"；`BAK_E_AUTH` 不区分口令错误与篡改。
-
----
-
-## 6. `fixtures/`
-
-| 文件 | 大小 | SHA-256 |
-|---|---:|---|
-| `backup-v1.2fab` | 1476 B | `8f68c9679df531f9e73c36cafe5a84019654d51f775081939b70634f36c040b1` |
-| `backup-v1.expected.json` | 1410 B | `d400ad29e91ac39f21d35316942b2bda30db42f0c8634d2092954d3bc0189297` |
-| `backup-v1.meta.json` | 650 B | `cd35e7c0600b162313579e3a53c2d041007362c8b276ea1d1bb61f0594d80868` |
-
-- 口令：`correct horse battery staple`（一次性测试口令）。
-- KDF：Argon2id v1.3，`m=65536`、`t=3`、`p=2`；salt/nonce 固定，见 meta。
-- 明文：`schemaVersion=1`，2 个条目（SHA1/6/30 与 SHA256/8/60）。
-- 固定 salt/nonce **只用于 fixture**；生产导出必须随机。
-- 修改 fixture 必须通过 `reference_backup.py --create-fixture` 重新生成，并同步更新 README 中的哈希。
-
-### 6.1 Kotlin → Python 交叉检查契约
-
-Android 构建后可以把 Kotlin 生成的备份放到 `--backup-dir`：
-
-```text
-<backup-dir>/
-  kotlin-backup.2fab            # 必需（存在时才检查）
-  kotlin-backup.expected.json   # 必需（与解密结果做语义 JSON 比较）
-  kotlin-backup.meta.json       # 可选；{"password": "..."}
-```
-
-- 未提供 meta 时使用文档口令 `correct horse battery staple`。
-- 文件不存在时 `crosscheck` 打印 SKIP，M0 不因此失败。
-- 只要文件存在但解密/JSON 不匹配，`crosscheck` 退出非 0。
-
----
+`fixtures/interoperability/` 和 `fixtures/google-authenticator-v1.json` 用于目前的交换测试。`fixtures/backup-v1.*` 保存 0.5 及更早版本的历史参考字节，其中的 `backup-v1.expected.json` 也是独立交换测试的公共输入模型。历史密文和变异资料仅供复现旧版本。
 
 ## 7. 平台中立性
 
 - JSON 枚举用大写字符串；整数显式 `u32`/`i64`/`u64`；布尔用 JSON `true/false`。
 - 文件中所有整数大端序；文本 UTF-8 + NFC。
 - 禁止加入 Android/iOS 特有字段；新增字段必须提升版本并保持旧实现"拒绝未知版本"。
-- Phase 2 iOS 必须能读取 `.2fab` 与 `vault.bin` v1；设备包装（Keychain/Keystore）是平台本地实现，不属于跨平台文件。
+- 当前 iOS 继续读取 `vault.bin` v1；设备包装（Keychain/Keystore）是平台本地实现，不属于跨平台文件。
 
 ## 8. iOS 公共契约
 

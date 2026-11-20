@@ -6,7 +6,6 @@ public enum InterchangeFormat: String, CaseIterable, Identifiable, Sendable {
     case twofasEncrypted = "TWOFAS_ENCRYPTED"
     case twofasPlaintext = "TWOFAS_PLAINTEXT"
     case otpauthText = "OTPAUTH_TEXT"
-    case inkotp2fab = "INKOTP_2FAB"
 
     public var id: Self { self }
 
@@ -15,7 +14,6 @@ public enum InterchangeFormat: String, CaseIterable, Identifiable, Sendable {
         case .aegisEncrypted, .aegisPlaintext: "json"
         case .twofasEncrypted, .twofasPlaintext: "2fas"
         case .otpauthText: "txt"
-        case .inkotp2fab: "2fab"
         }
     }
 
@@ -52,7 +50,7 @@ public struct InterchangeError: LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         let message: String = switch code {
         case .unknownFormat:
-            interchangeMessage("Choose an Aegis, 2FAS, otpauth text, or InkOTP backup file.", "请选择 Aegis、2FAS、otpauth 文本或 InkOTP 备份。")
+            interchangeMessage("Choose an Aegis, 2FAS, or otpauth text file.", "请选择 Aegis、2FAS 或 otpauth 文本文件。")
         case .malformedFile:
             interchangeMessage("The backup is incomplete or damaged.", "文件不完整或已损坏。")
         case .fileTooLarge:
@@ -128,14 +126,12 @@ public enum Interchange {
     private static let maximumSecretText = 2_048
 
     private enum Input {
-        case legacy
         case uris(String)
         case aegis(JSONObject, encrypted: Bool)
         case twoFas(JSONObject, encrypted: Bool)
 
         var format: InterchangeFormat {
             switch self {
-            case .legacy: .inkotp2fab
             case .uris: .otpauthText
             case .aegis(_, let encrypted): encrypted ? .aegisEncrypted : .aegisPlaintext
             case .twoFas(_, let encrypted): encrypted ? .twofasEncrypted : .twofasPlaintext
@@ -155,9 +151,6 @@ public enum Interchange {
             var warnings = [InterchangeWarning]()
             let model: VaultModel
             switch input {
-            case .legacy:
-                guard let password else { throw InterchangeError(.passwordRequired) }
-                model = try LegacyBackup.decode(bytes, password: password)
             case .uris(let text):
                 model = try decodeURIText(text, warnings: &warnings)
             case .aegis(let root, let encrypted):
@@ -166,7 +159,7 @@ public enum Interchange {
                 model = try decodeTwoFas(root, password: encrypted ? password : nil, warnings: &warnings)
             }
             if format.plaintext { addWarning(.plaintextSecrets, to: &warnings) }
-            if format != .inkotp2fab { addWarning(.localSettingsNotTransferred, to: &warnings) }
+            addWarning(.localSettingsNotTransferred, to: &warnings)
             return ImportedVault(model: model, format: format, warningCodes: warnings)
         }
     }
@@ -175,11 +168,6 @@ public enum Interchange {
         try guarded {
             if format.requiresPassword && password == nil { throw InterchangeError(.passwordRequired) }
             guard model.items.count <= maximumEntries else { throw InterchangeError(.tooManyEntries) }
-            if format == .inkotp2fab {
-                guard let password else { throw InterchangeError(.passwordRequired) }
-                return ExportedVault(bytes: try LegacyBackup.encode(model, password: password), format: format, warningCodes: [])
-            }
-
             let items = try VaultJSON.validate(model).items.sorted { $0.sortIndex < $1.sortIndex }
             var warnings: [InterchangeWarning] = [.metadataNotTransferred, .localSettingsNotTransferred]
             if format.plaintext { warnings.append(.plaintextSecrets) }
@@ -201,8 +189,6 @@ public enum Interchange {
                 }
             case .twofasPlaintext, .twofasEncrypted:
                 bytes = try encodeTwoFas(items, password: format.requiresPassword ? password : nil)
-            case .inkotp2fab:
-                throw InterchangeError(.unknownFormat)
             }
             try checkSize(bytes)
             return ExportedVault(bytes: bytes, format: format, warningCodes: warnings)
@@ -211,7 +197,6 @@ public enum Interchange {
 
     private static func identify(_ bytes: Data) throws -> Input {
         try checkSize(bytes)
-        if bytes.starts(with: LegacyBackup.magic) { return .legacy }
         let text = try InterchangeJSON.text(bytes)
         let first = text.drop(while: \.isWhitespace)
         if first.prefix(10).lowercased() == "otpauth://" { return .uris(text) }
@@ -511,14 +496,6 @@ public enum Interchange {
             return try operation()
         } catch let error as InterchangeError {
             throw error
-        } catch let error as LegacyBackup.Failure {
-            switch error {
-            case .authentication: throw InterchangeError(.authenticationFailed)
-            case .version: throw InterchangeError(.unsupportedVersion)
-            case .kdfParameters, .kdfAlgorithm: throw InterchangeError(.unsupportedKDF)
-            case .fileTooLarge: throw InterchangeError(.fileTooLarge)
-            default: throw InterchangeError(.malformedFile)
-            }
         } catch {
             throw InterchangeError(.malformedFile)
         }

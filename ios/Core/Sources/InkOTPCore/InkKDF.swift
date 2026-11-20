@@ -3,12 +3,13 @@ import Foundation
 import Security
 
 public enum InkKDF {
+    private enum KDFError: Error { case parameters }
     public static func deriveRecoveryKey(password: String, salt: Data) throws -> Data {
         try argon2id(password: password, salt: salt, memoryKiB: 65_536, iterations: 3, lanes: 2)
     }
 
     static func argon2id(password: String, salt: Data, memoryKiB: UInt32, iterations: UInt32, lanes: UInt32) throws -> Data {
-        guard salt.count == 16, password.utf16.count <= 1024 else { throw BackupFailure.kdfParameters }
+        guard salt.count == 16, password.utf16.count <= 1024 else { throw KDFError.parameters }
         return try derive(password: password.precomposedStringWithCanonicalMapping, salt: salt) { pw, pwLen, salt, saltLen, output, length in
             ink_argon2id(memoryKiB, iterations, lanes, pw, pwLen, salt, saltLen, output, length)
         }

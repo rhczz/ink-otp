@@ -6,14 +6,12 @@ public enum InterchangeCodec {
     private static let maxEntries = 10_000
 
     private enum Source {
-        case inkotp
         case uri(String)
         case aegis(InterchangeFormat, InterchangeObject)
         case twoFas(InterchangeFormat, InterchangeObject)
 
         var format: InterchangeFormat {
             switch self {
-            case .inkotp: .inkotp2fab
             case .uri: .otpauthText
             case .aegis(let format, _), .twoFas(let format, _): format
             }
@@ -32,8 +30,6 @@ public enum InterchangeCodec {
             var warnings: Set<InterchangeWarningCode> = []
             let vault: VaultModel
             switch source {
-            case .inkotp:
-                vault = try BackupCodec.open(bytes, password: password)
             case .uri(let text):
                 vault = try decodeURIs(text, warnings: &warnings)
             case .aegis(let format, let root):
@@ -42,7 +38,7 @@ public enum InterchangeCodec {
                 vault = try decodeTwoFas(root, encrypted: format.requiresPassword, password: password, warnings: &warnings)
             }
             if format.plaintext { warnings.insert(.plaintextSecrets) }
-            if format != .inkotp2fab { warnings.insert(.localSettingsNotTransferred) }
+            warnings.insert(.localSettingsNotTransferred)
             return ImportedVault(
                 model: vault, format: format,
                 warnings: warnings.sorted { $0.rawValue < $1.rawValue }.map { InterchangeWarning($0) }
@@ -57,8 +53,6 @@ public enum InterchangeCodec {
             let entries = checked.items.sorted { $0.sortIndex < $1.sortIndex }
             let bytes: Data
             switch format {
-            case .inkotp2fab:
-                bytes = try BackupCodec.seal(checked, password: password)
             case .otpauthText:
                 bytes = Data(entries.map { OtpauthParser.encode($0) + "\n" }.joined().utf8)
             case .aegisEncrypted, .aegisPlaintext:
@@ -67,11 +61,10 @@ public enum InterchangeCodec {
                 bytes = try encodeTwoFas(entries, encrypted: format.requiresPassword, password: password)
             }
             guard bytes.count <= maxFileBytes else { throw InterchangeFailure(.fileTooLarge) }
-            var warnings: [InterchangeWarning] = []
-            if format != .inkotp2fab {
-                warnings.append(InterchangeWarning(.metadataNotTransferred, count: model.items.count))
-                warnings.append(InterchangeWarning(.localSettingsNotTransferred))
-            }
+            var warnings = [
+                InterchangeWarning(.metadataNotTransferred, count: model.items.count),
+                InterchangeWarning(.localSettingsNotTransferred)
+            ]
             if format.plaintext { warnings.append(InterchangeWarning(.plaintextSecrets)) }
             return ExportedVault(bytes: bytes, format: format, warnings: warnings)
         }
@@ -79,7 +72,6 @@ public enum InterchangeCodec {
 
     private static func source(_ bytes: Data) throws -> Source {
         guard bytes.count <= maxFileBytes else { throw InterchangeFailure(.fileTooLarge) }
-        if bytes.starts(with: BackupCodec.magic) { return .inkotp }
         let text = try InterchangeJSON.text(bytes)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.lowercasedPrefixMatches("otpauth://") { return .uri(text) }
@@ -378,7 +370,7 @@ public enum InterchangeCodec {
 
     private static func checkedPassword(_ password: String?, for format: InterchangeFormat) throws -> String {
         guard format.requiresPassword else { return "" }
-        guard let password, password.utf16.count <= 1024, !password.isEmpty || format == .inkotp2fab else {
+        guard let password, password.utf16.count <= 1024, !password.isEmpty else {
             throw InterchangeFailure(.passwordRequired)
         }
         return password
@@ -408,13 +400,6 @@ public enum InterchangeCodec {
             return try action()
         } catch let failure as InterchangeFailure {
             throw failure
-        } catch let failure as BackupFailure {
-            switch failure {
-            case .authentication: throw InterchangeFailure(.authenticationFailed)
-            case .version: throw InterchangeFailure(.unsupportedVersion)
-            case .kdfAlgorithm, .kdfParameters: throw InterchangeFailure(.unsupportedKDF)
-            default: throw InterchangeFailure(.malformedFile)
-            }
         } catch {
             throw InterchangeFailure(.malformedFile)
         }

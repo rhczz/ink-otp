@@ -44,7 +44,6 @@
 "Check the compatibility notes before saving the file." = "Check the compatibility notes before saving the file.";
 "Check the device date, time and time zone." = "Check the device date, time and time zone.";
 "Check whether the service expects a verification code or a backup code." = "Check whether the service expects a verification code or a backup code.";
-"Choose a format compatible with the app that will open the file. Use InkOTP’s format to preserve vault settings." = "Choose a format compatible with the app that will open the file. Use InkOTP’s format to preserve vault settings.";
 "Choose a less common recovery password." = "Choose a less common recovery password.";
 "Choose a photo" = "Choose a photo";
 "Choose a photo or enter the key manually." = "Choose a photo or enter the key manually.";
@@ -88,7 +87,6 @@
 "Export migration file" = "Export migration file";
 "Export unencrypted account keys?" = "Export unencrypted account keys?";
 "Getting started" = "Getting started";
-"Google Authenticator migration QR codes are unsupported. Choose a QR code for an individual account." = "Google Authenticator migration QR codes are unsupported. Choose a QR code for an individual account.";
 "HOTP account" = "HOTP account";
 "Help" = "Help";
 "Hide codes" = "Hide codes";
@@ -104,7 +102,6 @@
 "InkOTP privacy notice" = "InkOTP privacy notice";
 "InkOTP samples these values on your device when you choose Refresh. Memory and storage are measured separately." = "InkOTP samples these values on your device when you choose Refresh. Memory and storage are measured separately.";
 "InkOTP will lock and stop processing your codes. The encrypted vault and your exported backups are kept. You can agree again to continue." = "InkOTP will lock and stop processing your codes. The encrypted vault and your exported backups are kept. You can agree again to continue.";
-"InkOTP · encrypted (.2fab)" = "InkOTP · encrypted (.2fab)";
 "Last backup" = "Last backup";
 "License" = "License";
 "Light" = "Light";
@@ -267,3 +264,29 @@
 "Recent operation (includes verification)" = "Recent operation (includes verification)";
 "%lld ms" = "%lld ms";
 "Stop recording or mirroring to access InkOTP." = "Stop recording or mirroring to access InkOTP.";
+
+"Choose a format compatible with the app that will open the file." = "Choose a format compatible with the app that will open the file.";
+"Enter your current recovery password to prepare the transfer." = "Enter your current recovery password to prepare the transfer.";
+"Transfer to Google Authenticator" = "Transfer to Google Authenticator";
+"Import from Google Authenticator" = "Import from Google Authenticator";
+"Google Authenticator" = "Google Authenticator";
+"Scan each QR code from the same transfer." = "Scan each QR code from the same transfer.";
+"The transfer expired. Scan the QR codes again." = "The transfer expired. Scan the QR codes again.";
+"Show unencrypted account keys?" = "Show unencrypted account keys?";
+"Anyone who sees the QR codes can generate your verification codes. Open Transfer accounts in Google Authenticator and scan each page." = "Anyone who sees the QR codes can generate your verification codes. Open Transfer accounts in Google Authenticator and scan each page.";
+"There are no compatible accounts to transfer." = "There are no compatible accounts to transfer.";
+"Show QR codes" = "Show QR codes";
+"Show QR codes for compatible accounts" = "Show QR codes for compatible accounts";
+"Google Authenticator transfer QR code" = "Google Authenticator transfer QR code";
+"The QR code could not be displayed." = "The QR code could not be displayed.";
+"Next" = "Next";
+"Previous" = "Previous";
+"Merge and use incoming duplicates" = "Merge and use incoming duplicates";
+"%lld of %lld QR codes scanned" = "%lld of %lld QR codes scanned";
+"%lld accounts cannot be transferred" = "%lld accounts cannot be transferred";
+"%lld compatible accounts" = "%lld compatible accounts";
+"QR code %lld of %lld" = "QR code %lld of %lld";
+"%lld accounts from Google Authenticator" = "%lld accounts from Google Authenticator";
+"Set a recovery password first" = "Set a recovery password first";
+"A recovery password is required to import Google Authenticator accounts. Set it, then scan the transfer again." = "A recovery password is required to import Google Authenticator accounts. Set it, then scan the transfer again.";
+"HOTP parameters are kept for future exports. Use another authenticator to generate HOTP codes." = "HOTP parameters are kept for future exports. Use another authenticator to generate HOTP codes.";

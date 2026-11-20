@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 """Cross-check the committed specs/fixtures against the independent Python implementation.
 
-Checks:
-  * spec/vectors.json: RFC 4226/6238/4648 values, boundary behaviour, random coverage
-  * spec/fixtures/backup-v1.2fab: header, hashes, password decrypt, expected JSON
-  * spec/otpauth-cases.json: structural sanity (case names, accept/error shape)
-  * <backup-dir>/kotlin-backup.2fab (optional): decrypt with the documented
-    fixture password (or a password in kotlin-backup.meta.json) and compare
-    with kotlin-backup.expected.json
-
-Exit code 0 = PASS, 1 = verification failure.  A missing Kotlin artifact is a
-skip, not a failure.
+Checks the OTP and URI vectors and independently opens the public worked
+example in spec/vault-format.md.
 """
 
 from __future__ import annotations
@@ -18,20 +10,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sys
+import re
 from pathlib import Path
 from typing import Any, Callable
+from unicodedata import normalize
 
-TOOLS_DIR = Path(__file__).resolve().parent
-ROOT = TOOLS_DIR.parent
-sys.path.insert(0, str(TOOLS_DIR))
+from argon2.low_level import Type, hash_secret_raw
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-import reference_backup as rb  # noqa: E402
-import reference_totp as rt  # noqa: E402
-
-FIXTURE_PASSWORD = rb.FIXTURE_PASSWORD
-DEFAULT_PASSWORD = FIXTURE_PASSWORD
-
+import reference_totp as rt
 
 class CrosscheckFailure(Exception):
     pass
@@ -224,134 +211,44 @@ def check_otpauth_cases(spec_dir: Path) -> str:
     return f"{len(cases)} parser cases ({sum(c['accept'] for c in cases)} accepted)"
 
 
-# ---------------------------------------------------------------------------
-# backup fixture
-# ---------------------------------------------------------------------------
-
-
-def check_fixture(spec_dir: Path) -> str:
-    fixtures = spec_dir / "fixtures"
-    backup_path = fixtures / "backup-v1.2fab"
-    expected_path = fixtures / "backup-v1.expected.json"
-    meta_path = fixtures / "backup-v1.meta.json"
-    for path in (backup_path, expected_path, meta_path):
-        if not path.is_file():
-            raise CrosscheckFailure(f"missing fixture file: {path}")
-
-    data = backup_path.read_bytes()
-    if len(data) >= 8 * 1024:
-        raise CrosscheckFailure(f"fixture is {len(data)} bytes; expected < 8 KiB")
-    meta = _read_json(meta_path)
-    if meta.get("format") != "2fab":
-        raise CrosscheckFailure("fixture meta format is not 2fab")
-    if meta.get("formatVersion") != 1:
-        raise CrosscheckFailure("fixture meta formatVersion is not 1")
-    if meta.get("fileBytes") != len(data):
-        raise CrosscheckFailure("fixture meta fileBytes does not match the file")
-    if hashlib.sha256(data).hexdigest() != meta.get("fileSha256"):
-        raise CrosscheckFailure("fixture fileSha256 does not match meta")
-    if meta.get("tagHex") != data[-16:].hex():
-        raise CrosscheckFailure("fixture meta tagHex does not match the file")
-    if meta.get("password") != FIXTURE_PASSWORD:
-        raise CrosscheckFailure("fixture password does not match the documented password")
-    if meta.get("expected") != "backup-v1.expected.json":
-        raise CrosscheckFailure("fixture meta expected filename is wrong")
-
-    header = rb.parse_header(data)
-    if (header.m_kib, header.t_iter, header.p_lanes) != (rb.DEFAULT_MKIB, rb.DEFAULT_TITER, rb.DEFAULT_PLANES):
-        raise CrosscheckFailure("fixture KDF parameters are not 65536/3/2")
-    kdf_meta = meta.get("kdf", {})
-    if kdf_meta.get("mKiB") != header.m_kib or kdf_meta.get("tIter") != header.t_iter:
-        raise CrosscheckFailure("fixture meta KDF parameters disagree with the file")
-    if kdf_meta.get("pLanes") != header.p_lanes:
-        raise CrosscheckFailure("fixture meta pLanes disagrees with the file")
-    if kdf_meta.get("algorithm") != "Argon2id" or kdf_meta.get("version") != 19:
-        raise CrosscheckFailure("fixture meta KDF algorithm/version is wrong")
-    if kdf_meta.get("outputBytes") != 32:
-        raise CrosscheckFailure("fixture meta KDF outputBytes is not 32")
-    if header.salt.hex() != kdf_meta.get("saltHex"):
-        raise CrosscheckFailure("fixture meta salt disagrees with the file")
-    if header.nonce.hex() != meta.get("nonceHex"):
-        raise CrosscheckFailure("fixture meta nonce disagrees with the file")
-    if header.ct_len != meta.get("ctLen"):
-        raise CrosscheckFailure("fixture meta ctLen disagrees with the file")
-
-    expected_bytes = expected_path.read_bytes()
-    if hashlib.sha256(expected_bytes).hexdigest() != meta.get("plaintextSha256"):
-        raise CrosscheckFailure("expected plaintext hash does not match meta")
-    decrypted = rb.decrypt_backup(data, FIXTURE_PASSWORD)
-    if decrypted != expected_bytes:
-        raise CrosscheckFailure("decrypted fixture does not match backup-v1.expected.json byte-for-byte")
-    parsed = rb.parse_vault_json(decrypted)
-    expected_parsed = _read_json(expected_path)
-    if parsed != expected_parsed:
-        raise CrosscheckFailure("decrypted fixture JSON does not match expected JSON")
-    items = parsed.get("items", [])
-    if len(items) != 2:
-        raise CrosscheckFailure(f"fixture should contain 2 items, got {len(items)}")
-    profiles = {(item.get("algorithm"), item.get("digits"), item.get("period")) for item in items}
-    if profiles != {("SHA1", 6, 30), ("SHA256", 8, 60)}:
-        raise CrosscheckFailure(f"fixture item profiles are {sorted(profiles)}")
-
-    return (
-        f"{len(data)} bytes, {len(items)} items, "
-        f"sha256 {hashlib.sha256(data).hexdigest()[:16]}..."
-    )
-
-
-# ---------------------------------------------------------------------------
-# optional Kotlin-produced backup
-# ---------------------------------------------------------------------------
-
-
-def check_kotlin_backup(backup_dir: Path) -> str:
-    if not backup_dir.is_dir():
-        return f"backup dir {backup_dir} not found (skipped)"
-    kotlin_path = backup_dir / "kotlin-backup.2fab"
-    if not kotlin_path.is_file():
-        return f"{kotlin_path} not found (skipped)"
-
-    expected_path = backup_dir / "kotlin-backup.expected.json"
-    if not expected_path.is_file():
-        raise CrosscheckFailure(f"{kotlin_path.name} exists but {expected_path.name} is missing")
-    meta_path = backup_dir / "kotlin-backup.meta.json"
-    password = DEFAULT_PASSWORD
-    if meta_path.is_file():
-        meta = _read_json(meta_path)
-        if isinstance(meta.get("password"), str):
-            password = meta["password"]
-
-    data = kotlin_path.read_bytes()
-    decrypted = rb.decrypt_backup(data, password)
-    actual = rb.parse_vault_json(decrypted)
-    expected = _read_json(expected_path)
-    if actual != expected:
-        raise CrosscheckFailure("Kotlin backup JSON does not match kotlin-backup.expected.json")
-    return f"{len(data)} bytes decrypted with documented password, JSON matches"
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+def check_vault_example(spec_dir: Path) -> str:
+    text = (spec_dir / "vault-format.md").read_text(encoding="utf-8")
+    example = text.split("## 6. Worked example", 1)[1].split("## 7.", 1)[0]
+    file_hex = re.search(r"(?m)^fileHex =\n([0-9a-f\n]+)```$", example)[1]
+    data = bytes.fromhex(file_hex)
+    expected_sha = re.search(r"(?m)^sha256 += +([0-9a-f]{64})$", example)
+    if not expected_sha or hashlib.sha256(data).hexdigest() != expected_sha[1]:
+        raise CrosscheckFailure("vault example SHA-256 differs from its specification")
+    if data[:7] != b"2FAV\x01\x01\x01":
+        raise CrosscheckFailure("vault example header is inconsistent")
+    memory, iterations, lanes = (int.from_bytes(data[offset:offset + 4], "big")
+                                 for offset in (7, 11, 15))
+    if (memory, iterations, lanes) != (65_536, 3, 2):
+        raise CrosscheckFailure("unexpected public vault KDF parameters")
+    password = re.search(r'(?m)^password += "([^"]+)"$', example)[1]
+    kek = hash_secret_raw(normalize("NFC", password).encode(), data[19:35],
+                          iterations, memory, lanes, 32, Type.ID)
+    expected_kek = re.search(r"(?m)^KEK += ([0-9a-f]{64})$", example)[1]
+    if kek.hex() != expected_kek:
+        raise CrosscheckFailure("vault Argon2id KEK differs from the documented example")
+    dek = AESGCM(kek).decrypt(data[35:47], data[63:111], data[:63])
+    plaintext = AESGCM(dek).decrypt(data[47:59], data[115:], data[:115])
+    expected = re.search(r"(?m)^```json\n([^\n]+)\n```$", example)[1].encode()
+    if plaintext != expected or len(plaintext) != int.from_bytes(data[111:115], "big"):
+        raise CrosscheckFailure("vault AES-GCM plaintext differs from its specification")
+    return f"{len(data)} bytes, independent Argon2id and two authenticated AES-GCM opens"
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Cross-check InkOTP specs and fixtures")
     parser.add_argument("--spec", default="spec", help="spec directory (default: spec)")
-    parser.add_argument(
-        "--backup-dir",
-        default=str(ROOT / "android" / "core" / "build" / "crosscheck"),
-        help="directory containing optional kotlin-backup.2fab",
-    )
     args = parser.parse_args(argv)
 
     spec_dir = Path(args.spec).expanduser()
-    backup_dir = Path(args.backup_dir).expanduser()
     checks: list[tuple[str, Callable[[], str]]] = [
         ("vectors.json", lambda: check_vectors(spec_dir)),
         ("otpauth-cases.json", lambda: check_otpauth_cases(spec_dir)),
-        ("fixture backup-v1.2fab", lambda: check_fixture(spec_dir)),
-        ("Kotlin backup", lambda: check_kotlin_backup(backup_dir)),
+        ("vault-format.md", lambda: check_vault_example(spec_dir)),
     ]
     failures = 0
     for label, call in checks:

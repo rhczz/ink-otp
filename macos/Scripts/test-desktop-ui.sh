@@ -31,7 +31,8 @@ mkdir -p "$mount" "$(dirname "$staged")"
 # Use a normal user-selected file outside the XCTest runner's private container.
 printf '%s\n' 'otpauth://hotp/Public%20Counter:counter-only-account?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Public%20Counter&counter=10300' \
     > "$(dirname "$staged")/public-hotp.txt"
-xcrun swift "$root/macos/Scripts/make-ui-qr-fixtures.swift" "$root/spec/otpauth-cases.json" "$(dirname "$staged")"
+xcrun swift "$root/macos/Scripts/make-ui-qr-fixtures.swift" "$root/spec/otpauth-cases.json" \
+    "$root/spec/fixtures/google-authenticator-v1.json" "$(dirname "$staged")"
 ditto "$root/macos/UITests" "$scratch/UITests"
 (
     cd "$scratch/UITests"
@@ -113,3 +114,8 @@ run_ui_tests "$result" \
 
 # The QR case saves an additional account after diagnostics has checked the seeded vault.
 run_ui_tests "${result%.xcresult}-qr.xcresult" DesktopUpgradeTests/testPublishedQRImageImportAndPersistence
+
+run_ui_tests "${result%.xcresult}-google.xcresult" DesktopUpgradeTests/testGoogleTransferPreviewsEntireBatchBeforeImport
+
+# Replacement intentionally removes the seeded accounts, so confirm it last.
+run_ui_tests "${result%.xcresult}-replace.xcresult" DesktopUpgradeTests/testReplacementKeepsOnlyConfirmedBackupAccounts

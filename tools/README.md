@@ -5,8 +5,9 @@
 | 脚本 | 作用 |
 |---|---|
 | `reference_totp.py` | Base32 / HOTP / TOTP 独立实现；RFC 自测；生成 `spec/vectors.json` |
-| `reference_backup.py` | `.2fab` 独立实现；自测；生成 fixture；解密/检查备份 |
-| `crosscheck.py` | 交叉检查 vectors、fixture、可选 Kotlin 备份 |
+| `reference_interchange.py` | Aegis、2FAS 与 otpauth 文件的独立验证 |
+| `generate_google_transfer_fixture.py` | 生成、复核公共 Google Authenticator 迁移样本 |
+| `crosscheck.py` | 核对 OTP、URI 和本地库公开样本 |
 | `check_no_internet.py` | 检查 merged manifest 是否申请网络/存储权限 |
 | `check_design_tokens.py` | 扫描 Kotlin 里的硬编码颜色/字号/圆角 |
 | `fetch_material_symbols.py` | 开发期拉取 Material Symbols SVG 并生成 Android vector（生成物已提交） |
@@ -18,7 +19,7 @@ argon2-cffi==25.1.0
 cryptography==50.0.2
 ```
 
-Python 版本：**3.15**（CI 与本机一致）。
+GitHub Actions 使用 Python 3.13，本机验证使用 Python 3.15。
 
 ### 图标资产
 
@@ -85,89 +86,23 @@ tools/.venv/bin/python tools/reference_totp.py --generate-vectors spec/vectors.j
 
 ---
 
-## 3. `.2fab` 参考实现
-
-### 3.1 自测
+## 3. Google Authenticator 迁移样本
 
 ```bash
-tools/.venv/bin/python tools/reference_backup.py --selftest
+python3 tools/generate_google_transfer_fixture.py
+python3 tools/generate_google_transfer_fixture.py --write
 ```
 
-覆盖：
-
-- 默认参数（65536/3/2）与最低参数（8192/1/1）的 round-trip；
-- magic / version / kdfAlgo / KDF 参数 / ctLen / 截断 / 尾随字节 / 超大文件；
-- 错误口令、密文翻转、tag 翻转、salt/nonce 翻转；
-- 非法 JSON、不支持的 `schemaVersion`。
-
-输出：
-
-```text
-[ok] round-trip AES-256-GCM / Argon2id default parameters
-...
-SELFTEST PASS (15/15)
-```
-
-### 3.2 生成 fixture
-
-```bash
-tools/.venv/bin/python tools/reference_backup.py --create-fixture
-```
-
-写入：
-
-```text
-spec/fixtures/backup-v1.2fab            # 1476 B
-spec/fixtures/backup-v1.expected.json   # 1410 B（明文）
-spec/fixtures/backup-v1.meta.json       # 口令/KDF/salt/nonce/哈希
-```
-
-固定 salt/nonce，因此可复现；生产导出使用 CSPRNG。重新生成后哈希应保持不变；若改变明文/参数，需要同步更新 `spec/README.md` 中的哈希表。
-
-### 3.3 解密 / 检查
-
-```bash
-tools/.venv/bin/python tools/reference_backup.py --inspect spec/fixtures/backup-v1.2fab
-tools/.venv/bin/python tools/reference_backup.py --decrypt spec/fixtures/backup-v1.2fab \
-  --password 'correct horse battery staple'
-```
-
-- `--inspect` 只打印头部字段，不派生密钥、不解密。
-- `--decrypt` 打印解密后的 JSON（原样）；失败时 stderr 输出 `BAK_E_*` 并以 2 退出。
-- 口令通过命令行参数传入，只用于本地交叉检查；不要把它写进脚本或日志。
-
-格式细节、KDF 参数、AAD、错误码见 `spec/backup-format.md`。
-
----
+默认核对版本库中的样本。变更样本时由 `--write` 重新生成。输入只使用 RFC 4226 公开测试密钥，涵盖双账号单码、乱序多码、UTF-8、缺省字段和损坏、越界及不支持的输入。
 
 ## 4. 交叉检查
 
 ```bash
-tools/.venv/bin/python tools/crosscheck.py --spec spec --backup-dir /tmp/m0-empty
+tools/.venv/bin/python tools/crosscheck.py --spec spec
+tools/.venv/bin/python tools/reference_interchange.py --exports android/core/build/interoperability
 ```
 
-检查：
-
-1. `spec/vectors.json`：18 TOTP / 10 HOTP / Base32 / 12 boundary / 72 random，逐条重算；校验 RFC 表完整性、随机覆盖。
-2. `spec/otpauth-cases.json`：结构、唯一 name、accept/error 一致性。
-3. `spec/fixtures/backup-v1.2fab`：文件哈希、meta、KDF 参数、GCM 解密、明文逐字节比较、2 个条目 profile。
-4. `<backup-dir>/kotlin-backup.2fab`（可选）：用文档口令（或 `kotlin-backup.meta.json` 的 password）解密，与 `kotlin-backup.expected.json` 做语义 JSON 比较。
-
-示例 PASS：
-
-```text
-[PASS] vectors.json: 18 TOTP, 10 HOTP, 29 Base32, 12 boundary, 72 random
-[PASS] otpauth-cases.json: 40 parser cases (19 accepted)
-[PASS] fixture backup-v1.2fab: 1476 bytes, 2 items, sha256 8f68c9679df531f9...
-[PASS] Kotlin backup: ... not found (skipped)
-CROSSCHECK PASS
-```
-
-- Kotlin 文件不存在 → SKIP，不失败（M0 正常）。
-- 任何已存在的文件不匹配 → 退出 1。
-- 退出码：0 PASS，1 校验失败。
-
-Kotlin 侧建议在 `:core` 的测试任务后把 `kotlin-backup.2fab`、`kotlin-backup.expected.json` 写到 `android/core/build/crosscheck/`，再跑 `make crosscheck`。
+`crosscheck` 独立重算 OTP 向量、核对 URI 用例结构，并用 Argon2id 和 AES-GCM 打开规范中的 `2FAV` 公共库。交换检查核对 10 份固定上游文件及实际写出的五种交换文件，逐项验证服务、账户和验证码参数。
 
 ---
 
@@ -228,10 +163,10 @@ FAIL: 2 violation(s) in 1 file(s)
 
 ```bash
 make setup       # venv + pip
-make spec        # reference_totp --selftest + reference_backup --selftest
+make spec        # OTP 自测和 Google 迁移样本校验
 make test        # Kotlin 单测（消费 spec/vectors.json）
 make build
-make crosscheck  # 构建后跑 crosscheck（可选 Kotlin 备份）
+make crosscheck  # 构建后对拍实际标准交换文件
 make verify      # test + build + lint + 权限/设计 token/Python 自测
 ```
 
@@ -244,7 +179,7 @@ CI 建议顺序：
 5. `make build`
 6. `check_no_internet`（对合并 manifest）
 7. `check_design_tokens`
-8. `crosscheck`（有 Kotlin 备份时）
+8. `crosscheck` 与 `reference_interchange`
 
 ---
 

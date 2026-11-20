@@ -14,15 +14,8 @@ final class PublicConformanceTests: XCTestCase {
             let warnings: [String]?
         }
 
-        struct Mutation: Decodable {
-            let offset: Int
-            let xor: UInt8
-            let error: String
-        }
-
         let version: Int
         let interchange: [InterchangeCase]
-        let legacyBackupMutations: [Mutation]
     }
 
     private struct InterchangeManifest: Decodable {
@@ -32,11 +25,6 @@ final class PublicConformanceTests: XCTestCase {
         }
 
         let fixtures: [Fixture]
-    }
-
-    private struct LegacyBackupManifest: Decodable {
-        let file: String
-        let password: String
     }
 
     func testPublicInterchangeConformance() throws {
@@ -76,29 +64,6 @@ final class PublicConformanceTests: XCTestCase {
                 XCTAssertEqual(imported.model.items.count, count, row.file)
                 let warningCodes = Set(imported.warnings.map(\.code.rawValue))
                 XCTAssertTrue(Set(row.warnings ?? []).isSubset(of: warningCodes), row.file)
-            }
-        }
-    }
-
-    func testPublicLegacyBackupMutations() throws {
-        let mutations = try readContract().legacyBackupMutations
-        let manifest = try JSONDecoder().decode(LegacyBackupManifest.self, from: spec("fixtures/backup-v1.meta.json"))
-        let baseline = try spec("fixtures/" + manifest.file)
-        XCTAssertFalse(mutations.isEmpty)
-
-        for mutation in mutations {
-            let offset = mutation.offset < 0 ? baseline.count + mutation.offset : mutation.offset
-            guard baseline.indices.contains(offset) else {
-                XCTFail("Legacy backup mutation offset \(mutation.offset) is out of bounds")
-                continue
-            }
-            var changed = baseline
-            changed[offset] ^= mutation.xor
-            XCTAssertThrowsError(
-                try BackupCodec.open(changed, password: manifest.password),
-                "Legacy backup mutation at offset \(mutation.offset)"
-            ) { error in
-                XCTAssertEqual((error as? BackupFailure)?.rawValue, mutation.error)
             }
         }
     }

@@ -2,7 +2,7 @@
 
 > 状态：**已冻结（v1）**。本文件是设备本地加密库 `vault.bin` 的唯一事实来源。
 > 适用范围：Android v1.0 读写；Phase 2 iOS 读写同一布局。
-> 相关：`spec/backup-format.md`（可移植备份 `.2fab`，与本格式相互独立）。
+> 相关：[可移植备份和迁移](interoperability.md)。
 
 ## 1. 目标与范围
 
@@ -118,7 +118,7 @@ fileLen = 67 + ctLen + 16
 | 输出 | 32 B | 固定 32 B |
 | 约束 | — | `mKiB >= 8 * pLanes` |
 
-口令处理与 `.2fab` 完全一致：**Unicode NFC 规范化后按 UTF-8 编码**，不 trim、不改大小写。
+口令处理使用**Unicode NFC 规范化后按 UTF-8 编码**，不 trim、不改大小写。
 
 ---
 

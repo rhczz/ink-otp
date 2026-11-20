@@ -101,6 +101,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onPause() {
         foreground = false
+        if (privacyAccepted) vault.onContentHidden()
         touchInProgress = false
         window.decorView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         super.onPause()

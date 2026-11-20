@@ -32,12 +32,10 @@ lint:
 
 spec:
 	$(PY) tools/reference_totp.py --selftest
-	$(PY) tools/reference_backup.py --selftest
+	$(PY) tools/generate_google_transfer_fixture.py
 
-# The Kotlin test writes build/crosscheck/kotlin-backup.2fab, then Python
-# decrypts it with the documented password and compares the JSON.
 crosscheck: test
-	$(PY) tools/crosscheck.py --spec spec --backup-dir $(ANDROID)/core/build/crosscheck
+	$(PY) tools/crosscheck.py --spec spec
 	$(PY) tools/reference_interchange.py --exports $(ANDROID)/core/build/interoperability
 
 verify: crosscheck build lint spec
@@ -67,7 +65,7 @@ ci-gradle:
 	cd $(ANDROID) && ./gradlew :core:check :app:testDebugUnitTest :app:jacocoDebugReport :app:benchmarkProjection :app:assembleDebug :app:assembleRelease :app:lintDebug :app:lintRelease --console=plain
 
 ci-python: spec
-	$(PY) tools/crosscheck.py --spec spec --backup-dir $(ANDROID)/core/build/crosscheck
+	$(PY) tools/crosscheck.py --spec spec
 	$(PY) tools/reference_interchange.py --exports $(ANDROID)/core/build/interoperability
 	PYTHONDONTWRITEBYTECODE=1 $(PY) -m unittest discover -s tools/tests -v
 	$(PY) tools/check_no_internet.py --manifest $(MERGED_MANIFEST)

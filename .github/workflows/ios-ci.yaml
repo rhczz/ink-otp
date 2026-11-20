@@ -31,6 +31,8 @@ jobs:
         run: bash ios/Scripts/select-xcode.sh
       - name: Verify offline crypto source fingerprints
         run: shasum -a 256 -c ios/Core/Sources/CInkKDF/SHA256SUMS
+      - name: Test the shared Apple migration codec
+        run: swift test --package-path apple/GoogleOTPTransfer
       - name: Run the public contract suite
         run: swift test --package-path ios/Core --enable-code-coverage
       - name: Generate project
@@ -91,7 +93,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: inkotp-swift-contract-files
-          path: ios/Core/.contract-exports/
+          path: ios/Core/.contract-exports/interoperability/
           if-no-files-found: error
           include-hidden-files: true
       - name: Preserve verification evidence

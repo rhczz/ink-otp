@@ -91,21 +91,21 @@ enum BackupCrypto {
         return output
     }
 
-    static func seal(_ plaintext: Data, key: Data, nonce: Data, aad: Data = Data()) throws -> Data {
+    static func seal(_ plaintext: Data, key: Data, nonce: Data) throws -> Data {
         let box = try AES.GCM.seal(
-            plaintext, using: SymmetricKey(data: key), nonce: AES.GCM.Nonce(data: nonce), authenticating: aad
+            plaintext, using: SymmetricKey(data: key), nonce: AES.GCM.Nonce(data: nonce)
         )
         return box.ciphertext + box.tag
     }
 
-    static func open(_ ciphertextAndTag: Data, key: Data, nonce: Data, aad: Data = Data()) throws -> Data {
+    static func open(_ ciphertextAndTag: Data, key: Data, nonce: Data) throws -> Data {
         guard ciphertextAndTag.count >= tagLength else { throw Failure.invalidCiphertext }
         let box = try AES.GCM.SealedBox(
             nonce: AES.GCM.Nonce(data: nonce),
             ciphertext: ciphertextAndTag.dropLast(tagLength),
             tag: ciphertextAndTag.suffix(tagLength)
         )
-        return try AES.GCM.open(box, using: SymmetricKey(data: key), authenticating: aad)
+        return try AES.GCM.open(box, using: SymmetricKey(data: key))
     }
 }
 

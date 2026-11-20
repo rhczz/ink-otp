@@ -5,6 +5,7 @@ on:
     branches: ['**']
     paths:
       - 'macos/**'
+      - 'apple/**'
       - 'android/app/build.gradle.kts'
       - 'android/core/**'
       - 'android/*.gradle.kts'
@@ -23,6 +24,7 @@ on:
   pull_request:
     paths:
       - 'macos/**'
+      - 'apple/**'
       - 'android/app/build.gradle.kts'
       - 'android/core/**'
       - 'android/*.gradle.kts'
@@ -140,7 +142,7 @@ jobs:
               print(f"- {metric}: {covered}/{total} ({covered/total:.1%})" if total else
                     f"- {metric}: no instrumentation reported by the toolchain")
           PY
-      - name: Independently verify shared data and all six Swift exports
+      - name: Independently verify shared data and all five Swift exports
         run: |
           python3 -m pip install -r tools/requirements.txt
           python3 tools/crosscheck.py --spec spec
@@ -150,7 +152,7 @@ jobs:
         with:
           name: android-peer-exports
           path: ${{ runner.temp }}/android-peer-exports
-      - name: Read all six actual Android exports through the Swift core
+      - name: Read all five actual Android exports through the Swift core
         env:
           INKOTP_TEST_PEER_EXPORTS: ${{ runner.temp }}/android-peer-exports
           INKOTP_TEST_PEER_REQUIRED: '1'

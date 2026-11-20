@@ -6,7 +6,9 @@ import SwiftUI
 
 struct ImportPreview {
     fileprivate let id: UUID
-    let format: InterchangeFormat
+    enum Source { case file(InterchangeFormat), google }
+
+    let source: Source
     let warnings: [String]
     let added: Int
     let duplicates: Int
@@ -296,17 +298,28 @@ final class AppState: ObservableObject {
         await perform(.importBackup) { token in
             let imported = try await repository.decodeImport(data, password: password)
             guard current(token) else { return }
-            let local = session?.model.items ?? []
-            let merged = BackupMerge.merge(localItems: local, remoteItems: imported.model.items)
-            let id = UUID()
-            pendingImport = PendingImport(id: id, revision: sessionRevision, vault: imported.model)
-            preview = ImportPreview(
-                id: id, format: imported.format, warnings: imported.warnings.map(\.message),
-                added: merged.items.count - local.count, duplicates: merged.conflicts.count,
-                items: Self.project(imported.model).items
-            )
+            preview = prepareImport(imported.model, source: .file(imported.format),
+                                    warnings: imported.warnings.map(\.message))
         }
         return preview
+    }
+
+    func previewGoogleImport(_ items: [VaultItem]) -> ImportPreview? {
+        guard phase == .unlocked, recoveryConfigured, scene != .background, !busy else { return nil }
+        error = nil
+        return prepareImport(VaultModel(items: items), source: .google, warnings: [])
+    }
+
+    private func prepareImport(_ model: VaultModel, source: ImportPreview.Source, warnings: [String]) -> ImportPreview {
+        let local = session?.model.items ?? []
+        let merged = BackupMerge.merge(localItems: local, remoteItems: model.items)
+        let id = UUID()
+        pendingImport = PendingImport(id: id, revision: sessionRevision, vault: model)
+        return ImportPreview(
+            id: id, source: source, warnings: warnings,
+            added: merged.items.count - local.count, duplicates: merged.conflicts.count,
+            items: Self.project(model).items
+        )
     }
 
     func commitImport(
@@ -378,6 +391,17 @@ final class AppState: ObservableObject {
             payload = ExportPayload(data: output.bytes, warnings: output.warnings.map(\.message), filename: "InkOTP-\(date).\(format.fileExtension)")
         }
         return payload
+    }
+
+    func exportGoogle(password: String) async -> GoogleMigrationExport? {
+        guard let session, scene == .active else { return nil }
+        var result: GoogleMigrationExport?
+        await perform(.exportBackup) { token in
+            let plan = try await repository.exportGoogle(session, password: password)
+            guard current(token), scene == .active else { return }
+            result = plan
+        }
+        return result
     }
 
     func markExportWritten() {
@@ -567,6 +591,8 @@ final class AppState: ObservableObject {
         catch let failure as VaultFailure {
             if current(token) { error = failure.rawValue }
         } catch let failure as InterchangeFailure {
+            if current(token) { error = failure.localizedDescription }
+        } catch let failure as GoogleMigrationError {
             if current(token) { error = failure.localizedDescription }
         } catch {
             if current(token) { self.error = "InkOTP could not complete this operation." }

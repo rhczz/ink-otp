@@ -8,11 +8,10 @@ enum class InterchangeFormat(val extension: String, val requiresPassword: Boolea
     TWOFAS_ENCRYPTED("2fas", true, false),
     TWOFAS_PLAINTEXT("2fas", false, true),
     OTPAUTH_TEXT("txt", false, true),
-    INKOTP_2FAB("2fab", true, false),
 }
 
 enum class InterchangeError(val message: String) {
-    UNKNOWN_FORMAT("无法识别文件格式，请选择 Aegis、2FAS、otpauth 文本或 InkOTP 备份。"),
+    UNKNOWN_FORMAT("无法识别文件格式，请选择 Aegis、2FAS 或 otpauth 文本。"),
     MALFORMED_FILE("文件内容无效或已损坏，现有账号不会被替换。"),
     FILE_TOO_LARGE("交换文件超过 12 MiB，请分批导出。"),
     TOO_MANY_ENTRIES("交换文件超过 10000 个账号，请分批导出。"),

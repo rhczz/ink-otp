@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import GoogleOTPTransfer
 import InkOTPCore
 import LocalAuthentication
 
@@ -307,21 +308,9 @@ final class VaultStore: ObservableObject {
     func commitImport(_ preview: ImportedVault, replace: Bool = false, initialPassword: String? = nil,
                       systemAuthentication: Bool = false, policy: MergePolicy = .keepLocal) async -> Bool {
         await operation { [self] epoch in
-            if var current = model, let record, let session {
-                guard record.hasPassword else { throw VaultAccessError.noPassword }
-                if record.systemAuthentication {
-                    try await authenticateDevice(reason: tr("Import an InkOTP backup", "导入 InkOTP 备份"))
-                    try check(epoch)
-                }
-                let existing = current.items.sorted { $0.sortIndex < $1.sortIndex }
-                let incoming = preview.model.items.sorted { $0.sortIndex < $1.sortIndex }
-                current.items = VaultMerge.merge(local: existing, incoming: incoming, policy: policy)
-                current.updatedAt = VaultJSON.timestamp()
-                let saved = try await disk.write(current, session: session, record: record)
-                try check(epoch)
-                cache.removeAll(keepingCapacity: true)
-                model = saved
-                return true
+            if model != nil {
+                guard hasRecoveryPassword else { throw VaultAccessError.noPassword }
+                return try await applyImport(preview.model.items, replace: replace, policy: policy, epoch: epoch)
             }
             if initialized {
                 guard replace else { throw VaultAccessError.needsConfirmation }
@@ -349,13 +338,57 @@ final class VaultStore: ObservableObject {
     }
 
     @discardableResult
+    func importGoogleAccounts(_ items: [VaultItem], policy: MergePolicy) async -> Bool {
+        await operation { [self] epoch in
+            try await applyImport(items, replace: false, policy: policy, epoch: epoch)
+        } ?? false
+    }
+
+    private func applyImport(_ items: [VaultItem], replace: Bool, policy: MergePolicy, epoch: Int) async throws -> Bool {
+        let (opened, session, record) = try requireOpen()
+        var current = opened
+        if record.systemAuthentication {
+            try await authenticateDevice(reason: tr("Import accounts to InkOTP", "将账号导入 InkOTP"))
+        }
+        try check(epoch)
+        let incoming = items.sorted { $0.sortIndex < $1.sortIndex }
+        if replace {
+            // A replacement keeps all incoming entries, including duplicates within the source.
+            current.items = incoming.map { item in
+                var item = item
+                item.id = UUID().uuidString.lowercased()
+                return item
+            }
+        } else {
+            let existing = current.items.sorted { $0.sortIndex < $1.sortIndex }
+            current.items = VaultMerge.merge(local: existing, incoming: incoming, policy: policy)
+        }
+        current.updatedAt = VaultJSON.timestamp()
+        let saved = try await disk.write(current, session: session, record: record)
+        try check(epoch)
+        cache.removeAll(keepingCapacity: true)
+        model = saved
+        return true
+    }
+
+    func exportGoogleAccounts(password: String, compatibleOnly: Bool) async -> [String]? {
+        await operation { [self] epoch in
+            let model = try await authorizeExport(password: password, epoch: epoch)
+            let accounts = model.items.sorted { $0.sortIndex < $1.sortIndex }.map(\.googleTransferAccount)
+            let included = compatibleOnly ? accounts.filter { GoogleOTPTransferCodec.exportIssue($0) == nil } : accounts
+            do {
+                return try GoogleOTPTransferCodec.encode(included)
+            } catch let error as GoogleOTPTransferError {
+                throw DesktopGoogleTransferError(error: error)
+            }
+        }
+    }
+
+    @discardableResult
     func export(to url: URL, format: InterchangeFormat, password: String?) async -> Bool {
         await operation { [self] epoch in
-            let (model, _, record) = try requireOpen()
-            guard record.hasPassword else { throw VaultAccessError.noPassword }
-            guard let password, !password.isEmpty else { throw VaultAccessError.noPassword }
-            try await disk.checkPassword(password, record: record)
-            try check(epoch)
+            guard let password else { throw VaultAccessError.noPassword }
+            let model = try await authorizeExport(password: password, epoch: epoch)
             let normalizedPassword = password.precomposedStringWithCanonicalMapping
             let exported = try await Task.detached(priority: .userInitiated) {
                 try Interchange.encode(model, format: format, password: format.requiresPassword ? normalizedPassword : nil)
@@ -364,6 +397,14 @@ final class VaultStore: ObservableObject {
             try await disk.writeExport(exported.bytes, to: url)
             return true
         } ?? false
+    }
+
+    private func authorizeExport(password: String, epoch: Int) async throws -> VaultModel {
+        let (model, _, record) = try requireOpen()
+        guard record.hasPassword, !password.isEmpty else { throw VaultAccessError.noPassword }
+        try await disk.checkPassword(password, record: record)
+        try check(epoch)
+        return model
     }
 
     private func mutate(_ update: (inout VaultModel) throws -> Void) async -> Bool {
@@ -402,6 +443,8 @@ final class VaultStore: ObservableObject {
             guard lockRevision == epoch else { return nil }
             if let safeError = error as? InterchangeError {
                 errorMessage = safeError.localizedDescription
+            } else if let error = error as? DesktopGoogleTransferError {
+                errorMessage = error.errorDescription
             } else if let error = error as? VaultAccessError {
                 errorMessage = error.errorDescription
             } else {

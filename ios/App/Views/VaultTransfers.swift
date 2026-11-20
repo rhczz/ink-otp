@@ -4,7 +4,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 enum TransferRequest: Equatable {
-    case importBackup, exportBackup, recoveryPassword
+    case importBackup, exportBackup, exportGoogle, recoveryPassword
 }
 
 @MainActor
@@ -16,6 +16,7 @@ struct VaultTransfers: ViewModifier {
     @State private var route: Route?
     @State private var operation = UUID()
     @State private var temporaryExport: URL?
+    @State private var googleExportTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
@@ -93,6 +94,24 @@ struct VaultTransfers: ViewModifier {
             }
             .navigationTitle("Review export")
             .navigationBarTitleDisplayMode(.inline)
+        case .googlePassword:
+            TransferPasswordForm(
+                title: "Transfer to Google Authenticator",
+                message: "Enter your current recovery password to prepare the transfer.",
+                mode: .current, state: state, cancelWhileBusy: true, onCancel: cancel
+            ) { _, password in
+                let token = operation
+                googleExportTask = Task {
+                    let preview = await state.exportGoogle(password: password)
+                    guard operation == token, !Task.isCancelled else { return }
+                    googleExportTask = nil
+                    if let preview { route = .googleReview(preview) }
+                }
+            }
+        case .googleReview(let preview):
+            GoogleExportReview(preview: preview, cancel: cancel) { route = .googlePages(preview.pages) }
+        case .googlePages(let pages):
+            GoogleExportPages(pages: pages, done: finish)
         case .recoveryPassword:
             TransferPasswordForm(
                 title: state.recoveryConfigured ? "Change recovery password" : "Set recovery password",
@@ -115,6 +134,8 @@ struct VaultTransfers: ViewModifier {
 
     private func begin(_ next: TransferRequest?) {
         if next == nil {
+            googleExportTask?.cancel()
+            googleExportTask = nil
             removeTemporaryFile()
             route = nil
             operation = UUID()
@@ -129,6 +150,8 @@ struct VaultTransfers: ViewModifier {
             route = .importPicker
         case .exportBackup:
             route = .exportFormat
+        case .exportGoogle:
+            route = .googlePassword
         case .recoveryPassword:
             route = .recoveryPassword
         case nil:
@@ -235,6 +258,8 @@ struct VaultTransfers: ViewModifier {
     }
 
     private func finish() {
+        googleExportTask?.cancel()
+        googleExportTask = nil
         route = nil
         operation = UUID()
         request = nil
@@ -251,6 +276,7 @@ struct VaultTransfers: ViewModifier {
     private enum Route: Identifiable {
         case importPicker, loading, importPassword(Data, InterchangeFormat), importPreview(ImportPreview), restore(ImportPreview)
         case exportFormat, exportPassword(InterchangeFormat), exportReview(ExportPayload, InterchangeFormat), exportPicker(URL)
+        case googlePassword, googleReview(GoogleMigrationExport), googlePages([String])
         case recoveryPassword
 
         var id: Int {
@@ -265,6 +291,9 @@ struct VaultTransfers: ViewModifier {
             case .exportReview: 7
             case .exportPicker: 8
             case .recoveryPassword: 9
+            case .googlePassword: 10
+            case .googleReview: 11
+            case .googlePages: 12
             }
         }
     }
@@ -341,6 +370,7 @@ private struct TransferPasswordForm: View {
     var format: InterchangeFormat?
     let mode: Mode
     @ObservedObject var state: AppState
+    var cancelWhileBusy = false
     let onCancel: () -> Void
     let onSubmit: (String?, String) -> Void
 
@@ -376,7 +406,7 @@ private struct TransferPasswordForm: View {
             .disabled(state.busy || !valid)
             Button("Cancel", action: onCancel)
                 .buttonStyle(InkButtonStyle(prominent: false))
-                .disabled(state.busy && format == nil)
+                .disabled(state.busy && format == nil && !cancelWhileBusy)
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
@@ -398,7 +428,7 @@ private struct ExportFormatForm: View {
 
     var body: some View {
         InkPage {
-            Text("Choose a format compatible with the app that will open the file. Use InkOTP’s format to preserve vault settings.")
+            Text("Choose a format compatible with the app that will open the file.")
                 .foregroundStyle(Ink.secondary)
             InkCard {
                 Picker("Backup format", selection: $selection) {
@@ -420,7 +450,7 @@ private struct ExportFormatForm: View {
 }
 
 @MainActor
-private struct ImportReview: View {
+struct ImportReview: View {
     let preview: ImportPreview
     @ObservedObject var state: AppState
     let cancel: () -> Void
@@ -428,11 +458,32 @@ private struct ImportReview: View {
     let commit: (MergeConflictPolicy, Bool) -> Void
     @State private var replacing = false
 
+    private var isGoogle: Bool {
+        if case .google = preview.source { return true }
+        return false
+    }
+
+    private var sourceTitle: LocalizedStringKey {
+        switch preview.source {
+        case .file(let format): format.title
+        case .google: "Google Authenticator"
+        }
+    }
+
     var body: some View {
         InkPage {
             InkCard {
-                Text(preview.format.title).font(.headline)
-                Text("\(preview.items.count) accounts in this backup")
+                Text(sourceTitle).font(.headline)
+                if isGoogle {
+                    Text("\(preview.items.count) accounts from Google Authenticator")
+                    if preview.items.contains(where: { $0.type == .hotp }) {
+                        Label("HOTP parameters are kept for future exports. Use another authenticator to generate HOTP codes.",
+                              systemImage: "info.circle")
+                            .font(.footnote).foregroundStyle(Ink.warning)
+                    }
+                } else {
+                    Text("\(preview.items.count) accounts in this backup")
+                }
                 if state.phase == .unlocked {
                     Text("\(preview.duplicates) duplicate accounts. Merging keeps your local security settings and recovery password.")
                 }
@@ -447,18 +498,23 @@ private struct ImportReview: View {
             }
             if let error = state.error { inkText(error).font(.footnote).foregroundStyle(Ink.danger) }
             if state.phase == .unlocked {
-                Button("Merge and keep local duplicates") { commit(.keepLocal, false) }
-                    .buttonStyle(InkButtonStyle())
-                    .disabled(state.busy)
-                Button("Merge and use backup duplicates") { commit(.overwriteLocal, false) }
+                VStack(spacing: Ink.m) {
+                    Button("Merge and keep local duplicates") { commit(.keepLocal, false) }
+                        .buttonStyle(InkButtonStyle())
+                    Button(isGoogle ? "Merge and use incoming duplicates" : "Merge and use backup duplicates") {
+                        commit(.overwriteLocal, false)
+                    }
                     .buttonStyle(InkButtonStyle(prominent: false))
-                    .disabled(state.busy)
-                Button("Merge and keep both duplicates") { commit(.keepBoth, false) }
-                    .buttonStyle(InkButtonStyle(prominent: false))
-                    .disabled(state.busy)
-                Button("Replace all local accounts…", role: .destructive) { replacing = true }
-                    .frame(maxWidth: .infinity, minHeight: Ink.touch)
-                    .disabled(state.busy)
+                    Button("Merge and keep both duplicates") { commit(.keepBoth, false) }
+                        .buttonStyle(InkButtonStyle(prominent: false))
+                }
+                .disabled(state.busy)
+                if !isGoogle {
+                    Divider().padding(.top, Ink.s)
+                    Button("Replace all local accounts…", role: .destructive) { replacing = true }
+                        .frame(maxWidth: .infinity, minHeight: Ink.touch)
+                        .disabled(state.busy)
+                }
             } else {
                 Button("Continue to password setup", action: restore)
                     .buttonStyle(InkButtonStyle())
@@ -497,7 +553,6 @@ private extension InterchangeFormat {
         case .twofasEncrypted: "2FAS · encrypted"
         case .twofasPlaintext: "2FAS · plaintext"
         case .otpauthText: "otpauth text · plaintext"
-        case .inkotp2fab: "InkOTP · encrypted (.2fab)"
         }
     }
 }

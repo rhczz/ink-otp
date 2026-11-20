@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "name": "single",
+      "uri": "otpauth-migration://offline?data=Cj8KFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEhlQdWJsaWM6YWxpY2VAZXhhbXBsZS50ZXN0GgZQdWJsaWMgASgBMAIKLwoUMTIzNDU2Nzg5MDEyMzQ1Njc4OTASCeiuoeaVsOWZqBoDUkZDIAEoATABOLxQEAEYASAAKBU%3D",
+      "expected": {
+        "version": 1,
+        "batchId": 21,
+        "batchSize": 1,
+        "batchIndex": 0,
+        "entries": [
+          {
+            "issuer": "Public",
+            "accountName": "alice@example.test",
+            "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+            "algorithm": "SHA1",
+            "digits": 6,
+            "type": "TOTP",
+            "period": 30,
+            "counter": null
+          },
+          {
+            "issuer": "RFC",
+            "accountName": "计数器",
+            "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+            "algorithm": "SHA1",
+            "digits": 6,
+            "type": "HOTP",
+            "period": null,
+            "counter": 10300
+          }
+        ]
+      }
+    },
+    {
+      "name": "second_page_urlsafe",
+      "uri": "otpauth-migration://offline?data=CisKFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEg3npLrkvos65biz6JmfIAIoAjACEAEYAiABKNb__________wE",
+      "expected": {
+        "version": 1,
+        "batchId": -42,
+        "batchSize": 2,
+        "batchIndex": 1,
+        "entries": [
+          {
+            "issuer": "示例",
+            "accountName": "帳號",
+            "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+            "algorithm": "SHA256",
+            "digits": 8,
+            "type": "TOTP",
+            "period": 30,
+            "counter": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "first_page_defaults",
+      "uri": "otpauth-migration://offline?data=CiIKFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEgpTdGFuZGFsb25lEAEYAiAAKNb%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwE%3D",
+      "expected": {
+        "version": 1,
+        "batchId": -42,
+        "batchSize": 2,
+        "batchIndex": 0,
+        "entries": [
+          {
+            "issuer": null,
+            "accountName": "Standalone",
+            "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+            "algorithm": "SHA1",
+            "digits": 6,
+            "type": "TOTP",
+            "period": 30,
+            "counter": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "version_2_unique_id",
+      "uri": "otpauth-migration://offline?data=CjsKFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEgdDdXJyZW50GgZQdWJsaWNCEnN5bnRoZXRpYy1lbnRyeS1pZBACGAEgACgV",
+      "expected": {
+        "version": 2,
+        "batchId": 21,
+        "batchSize": 1,
+        "batchIndex": 0,
+        "entries": [
+          {
+            "issuer": "Public",
+            "accountName": "Current",
+            "secretBase64": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+            "algorithm": "SHA1",
+            "digits": 6,
+            "type": "TOTP",
+            "period": 30,
+            "counter": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "truncated_varint",
+      "uri": "otpauth-migration://offline?data=Cj8KFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEhlQdWJsaWM6YWxpY2VAZXhhbXBsZS50ZXN0GgZQdWJsaWMgASgBMAIQARgBIAAoFYA%3D",
+      "expected": null
+    },
+    {
+      "name": "wrong_version",
+      "uri": "otpauth-migration://offline?data=Cj8KFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEhlQdWJsaWM6YWxpY2VAZXhhbXBsZS50ZXN0GgZQdWJsaWMgASgBMAIQYxgBIAAoFQ%3D%3D",
+      "expected": null
+    },
+    {
+      "name": "invalid_page_number",
+      "uri": "otpauth-migration://offline?data=Cj8KFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEhlQdWJsaWM6YWxpY2VAZXhhbXBsZS50ZXN0GgZQdWJsaWMgASgBMAIQARgCIAIoFQ%3D%3D",
+      "expected": null
+    },
+    {
+      "name": "too_many_pages",
+      "uri": "otpauth-migration://offline?data=Cj8KFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEhlQdWJsaWM6YWxpY2VAZXhhbXBsZS50ZXN0GgZQdWJsaWMgASgBMAIQARj1AyAAKBU%3D",
+      "expected": null
+    },
+    {
+      "name": "no_accounts",
+      "uri": "otpauth-migration://offline?data=EAEYASAAKBU%3D",
+      "expected": null
+    },
+    {
+      "name": "empty_name",
+      "uri": "otpauth-migration://offline?data=ChgKFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEgAQARgBIAAoFQ%3D%3D",
+      "expected": null
+    },
+    {
+      "name": "unsupported_algorithm",
+      "uri": "otpauth-migration://offline?data=CiAKFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEgZQdWJsaWMgBBABGAEgACgV",
+      "expected": null
+    },
+    {
+      "name": "unsupported_digits",
+      "uri": "otpauth-migration://offline?data=CiAKFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEgZQdWJsaWMoAxABGAEgACgV",
+      "expected": null
+    },
+    {
+      "name": "negative_counter",
+      "uri": "otpauth-migration://offline?data=CisKFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEgZQdWJsaWMwATj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2F%2F8BEAEYASAAKBU%3D",
+      "expected": null
+    },
+    {
+      "name": "invalid_utf8",
+      "uri": "otpauth-migration://offline?data=ChkKFDEyMzQ1Njc4OTAxMjM0NTY3ODkwEgH%2FEAEYASAAKBU%3D",
+      "expected": null
+    }
+  ]
+}

@@ -151,15 +151,8 @@ final class SharedContractTests: XCTestCase {
             let warnings: [String]?
         }
 
-        struct Mutation: Decodable {
-            let offset: Int
-            let xor: UInt8
-            let error: String
-        }
-
         let version: Int
         let interchange: [Fixture]
-        let legacyBackupMutations: [Mutation]
     }
 
     private var contract: Contract {
@@ -233,22 +226,6 @@ final class SharedContractTests: XCTestCase {
         }
     }
 
-    func testLegacyBackupAndAuthenticatedMutations() throws {
-        let fixture = try data("fixtures/backup-v1.2fab")
-        let expected = try VaultJSON.decode(data("fixtures/backup-v1.expected.json"))
-        XCTAssertEqual(try Interchange.detect(fixture), .inkotp2fab)
-        XCTAssertEqual(try LegacyBackup.decode(fixture, password: Self.fixturePassword), expected)
-        assertBackupError("BAK_E_AUTH", fixture, password: "incorrect-public-test")
-        assertBackupError("BAK_E_TRAILING_DATA", fixture + Data([0]))
-        assertBackupError("BAK_E_FILE_TRUNCATED", Data(fixture.dropLast()))
-        for mutation in try contract.legacyBackupMutations {
-            var changed = fixture
-            let offset = mutation.offset < 0 ? fixture.count + mutation.offset : mutation.offset
-            changed[offset] ^= mutation.xor
-            assertBackupError(mutation.error, changed)
-        }
-    }
-
     func testPublishedPlatformNeutralVaultExample() throws {
         let document = try String(decoding: data("vault-format.md"), as: UTF8.self)
         let fileHex = try XCTUnwrap(document.components(separatedBy: "fileHex =\n").dropFirst().first)
@@ -298,13 +275,6 @@ final class SharedContractTests: XCTestCase {
     }
 
     private static let fixturePassword = "correct horse battery staple"
-
-    private func assertBackupError(_ code: String, _ data: Data,
-                                   password: String = "correct horse battery staple") {
-        XCTAssertThrowsError(try LegacyBackup.decode(data, password: password)) {
-            XCTAssertEqual(($0 as? LegacyBackup.Failure)?.rawValue, code)
-        }
-    }
 
     private func assertInterchangeError<T>(_ code: String, _ indexes: [Int], _ label: String, _ action: () throws -> T) {
         XCTAssertThrowsError(try action(), label) { error in

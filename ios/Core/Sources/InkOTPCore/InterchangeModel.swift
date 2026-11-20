@@ -6,7 +6,6 @@ public enum InterchangeFormat: String, CaseIterable, Identifiable, Sendable {
     case twofasEncrypted = "TWOFAS_ENCRYPTED"
     case twofasPlaintext = "TWOFAS_PLAINTEXT"
     case otpauthText = "OTPAUTH_TEXT"
-    case inkotp2fab = "INKOTP_2FAB"
 
     public var id: String { rawValue }
 
@@ -15,13 +14,12 @@ public enum InterchangeFormat: String, CaseIterable, Identifiable, Sendable {
         case .aegisEncrypted, .aegisPlaintext: "json"
         case .twofasEncrypted, .twofasPlaintext: "2fas"
         case .otpauthText: "txt"
-        case .inkotp2fab: "2fab"
         }
     }
 
     public var requiresPassword: Bool {
         switch self {
-        case .aegisEncrypted, .twofasEncrypted, .inkotp2fab: true
+        case .aegisEncrypted, .twofasEncrypted: true
         case .aegisPlaintext, .twofasPlaintext, .otpauthText: false
         }
     }
@@ -47,7 +45,7 @@ public enum InterchangeError: String, Sendable {
 
     var message: String {
         switch self {
-        case .unknownFormat: interchangeText("无法识别文件格式，请选择 Aegis、2FAS、otpauth 文本或 InkOTP 备份。", "Choose an Aegis, 2FAS, otpauth text, or InkOTP backup file.")
+        case .unknownFormat: interchangeText("无法识别文件格式，请选择 Aegis、2FAS 或 otpauth 文本文件。", "Choose an Aegis, 2FAS, or otpauth text backup file.")
         case .malformedFile: interchangeText("文件内容无效或已损坏，现有账号不会被替换。", "The backup file is invalid or damaged. Your existing accounts are intact.")
         case .fileTooLarge: interchangeText("交换文件超过 12 MiB，请分批导出。", "The backup exceeds 12 MiB. Export smaller batches.")
         case .tooManyEntries: interchangeText("交换文件超过 10000 个账号，请分批导出。", "The backup exceeds 10,000 accounts. Export smaller batches.")

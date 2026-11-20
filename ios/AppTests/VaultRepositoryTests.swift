@@ -143,6 +143,43 @@ final class VaultRepositoryTests: XCTestCase {
     }
 
     @MainActor
+    func testGoogleTransferRequiresPasswordAndCannotCommitAcrossLock() async throws {
+        let (url, _, repository) = makeRepository()
+        let suite = "InkOTP.Tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+        }
+        defaults.set(true, forKey: "PrivacyPolicyConsent.1")
+        let state = AppState(repository: repository, defaults: defaults)
+        await state.start()
+        state.sceneChanged(.active)
+        let password = "public fixture password"
+        await state.setup(password: password)
+        let item = VaultItem(issuer: "Lab", accountName: "Public", secret: Data([65, 66, 67]))
+        let preview = try XCTUnwrap(state.previewGoogleImport([item]))
+        XCTAssertEqual(preview.added, 1)
+        XCTAssertTrue(preview.items.allSatisfy { $0.secret.isEmpty })
+        XCTAssertTrue(state.vault?.items.isEmpty == true)
+
+        let committed = await state.commitImport(preview)
+        XCTAssertTrue(committed)
+        XCTAssertEqual(state.vault?.items.first?.accountName, item.accountName)
+        let wrongPassword = await state.exportGoogle(password: "wrong")
+        XCTAssertNil(wrongPassword)
+        let result = await state.exportGoogle(password: password)
+        XCTAssertEqual(result?.supportedCount, 1)
+        XCTAssertEqual(result?.pages.count, 1)
+        XCTAssertNil(state.lastBackupAt)
+
+        let stale = try XCTUnwrap(state.previewGoogleImport([item]))
+        state.lock()
+        let committedAcrossLock = await state.commitImport(stale)
+        XCTAssertFalse(committedAcrossLock)
+    }
+
+    @MainActor
     func testCancelledPreviewCannotBeCommitted() async throws {
         let (url, _, repository) = makeRepository()
         let suite = "InkOTP.Tests." + UUID().uuidString

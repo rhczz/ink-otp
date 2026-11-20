@@ -1,6 +1,7 @@
 import Accessibility
 import AppKit
 import Combine
+import GoogleOTPTransfer
 import InkOTPCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -41,6 +42,11 @@ struct InkOTPDesktop: App {
                 Button(tr("Export Backup…", "导出备份…")) { commands.send(.exportBackup) }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
                     .disabled(store.model == nil || store.busy)
+                Menu("Google Authenticator") {
+                    Button(tr("Import Transfer QR Codes…", "导入迁移二维码…")) { commands.send(.importGoogle) }
+                    Button(tr("Export Transfer QR Codes…", "导出迁移二维码…")) { commands.send(.exportGoogle) }
+                }
+                .disabled(store.model == nil || store.busy)
             }
             CommandGroup(after: .pasteboard) {
                 Button(tr("Copy Verification Code", "复制验证码")) { commands.send(.copy) }
@@ -69,7 +75,8 @@ struct InkOTPDesktop: App {
 }
 
 enum DesktopRequest {
-    case add, copy, edit, importBackup, exportBackup, diagnostics, privacy, about, changePassword, onboarding
+    case add, copy, edit, importBackup, exportBackup, importGoogle, exportGoogle
+    case diagnostics, privacy, about, changePassword, onboarding
 }
 
 @MainActor
@@ -133,6 +140,8 @@ struct DesktopSheet: Identifiable {
         case account(String?, OTPDraft?)
         case importBackup(URL, InterchangeFormat)
         case exportBackup
+        case googleImport(String?)
+        case googleExport
         case camera
         case changePassword
         case privacy
@@ -165,6 +174,7 @@ struct DesktopVaultView: View {
     @State private var openPanel: NSOpenPanel?
     @State private var fileBusy = false
     @State private var clockChanged = false
+    @State private var animatedVaultRevision: Int?
 
     private var appActive: Bool { activity.isActive }
     private var ink: QuietInk { QuietInk(dark: scheme == .dark) }
@@ -257,6 +267,9 @@ struct DesktopVaultView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSSystemClockDidChange)) { _ in clockChanged = true }
         .onChange(of: selection) { _, newValue in commands.selectedAccountID = newValue }
+        .onChange(of: appActive) { _, active in
+            if !active, store.model != nil { animatedVaultRevision = store.lockRevision }
+        }
         .onChange(of: visible.map(\.id)) { _, ids in
             if let selection, !ids.contains(selection) { self.selection = nil }
         }
@@ -342,10 +355,13 @@ struct DesktopVaultView: View {
     }
 
     private var vault: some View {
-        NavigationSplitView {
+        let firstRows = items.prefix(6).map(\.id)
+        return NavigationSplitView {
             List(selection: $selection) {
                 ForEach(visible, id: \.id) { item in
                     accountRow(item)
+                        .modifier(DesktopVaultRowEntrance(index: firstRows.firstIndex(of: item.id),
+                                                          entered: animatedVaultRevision == store.lockRevision))
                         .tag(item.id)
                         .contextMenu { accountActions(item) }
                 }
@@ -400,6 +416,13 @@ struct DesktopVaultView: View {
             .background(ink.background)
         }
         .navigationSplitViewStyle(.balanced)
+        .task {
+            let revision = store.lockRevision
+            guard animatedVaultRevision != revision else { return }
+            await Task.yield()
+            guard !Task.isCancelled, store.lockRevision == revision, store.model != nil else { return }
+            animatedVaultRevision = revision
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Menu {
@@ -408,6 +431,10 @@ struct DesktopVaultView: View {
                     Button(tr("Read QR Image…", "读取二维码图片…"), action: chooseQRImage)
                     Button(tr("Scan with Camera…", "使用相机扫描…")) { present(.camera) }
                         .accessibilityIdentifier("camera-open")
+                    Button(tr("Import from Google Authenticator…", "从 Google Authenticator 导入…")) {
+                        present(.googleImport(nil))
+                    }
+                    .accessibilityIdentifier("google-import-open")
                 } label: {
                     Label(tr("Add Account", "添加账号"), systemImage: "plus")
                 }
@@ -667,6 +694,8 @@ struct DesktopVaultView: View {
         case .edit: if let selected { present(.account(selected.id, nil)) }
         case .importBackup: if store.consent { chooseBackup() }
         case .exportBackup: if store.model != nil { present(.exportBackup) }
+        case .importGoogle: if store.model != nil { present(.googleImport(nil)) }
+        case .exportGoogle: if store.model != nil { present(.googleExport) }
         case .diagnostics: present(.diagnostics)
         case .privacy: present(.privacy)
         case .about: present(.about)
@@ -691,12 +720,20 @@ struct DesktopVaultView: View {
             AccountEditor(store: store, existing: items.first { $0.id == id }, draft: draft) {
                 selection = $0
                 close()
-            } close: { close() }
+            } close: { close() } openGoogleImport: { value in present(.googleImport(value)) }
         case let .importBackup(url, format):
             ImportSheet(store: store, url: url, format: format, close: close)
         case .exportBackup:
             if store.hasRecoveryPassword {
                 ExportSheet(store: store, close: close)
+            } else {
+                PasswordSheet(store: store, close: close)
+            }
+        case let .googleImport(initialURI):
+            DesktopGoogleImportSheet(store: store, initialURI: initialURI, close: close)
+        case .googleExport:
+            if store.hasRecoveryPassword {
+                DesktopGoogleExportSheet(store: store, close: close)
             } else {
                 PasswordSheet(store: store, close: close)
             }
@@ -729,6 +766,10 @@ struct DesktopVaultView: View {
 
     private func openDraft(_ setup: String) {
         store.errorMessage = nil
+        if GoogleOTPTransferCodec.isMigrationURI(setup) {
+            present(.googleImport(setup))
+            return
+        }
         do {
             present(.account(nil, try AccountSetupInput.parse(setup)))
         } catch let error as AccountSetupInput {
@@ -805,6 +846,26 @@ struct DesktopVaultView: View {
                 }
             }
         }
+    }
+}
+
+private struct DesktopVaultRowEntrance: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let index: Int?
+    let entered: Bool
+
+    func body(content: Content) -> some View {
+        let ready = entered || reduceMotion || index == nil
+        content
+            .opacity(ready ? 1 : 0)
+            .offset(y: ready ? 0 : 5)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.22).delay(0.016 * Double(index ?? 0)), value: entered)
+            .transaction { transaction in
+                if reduceMotion {
+                    transaction.disablesAnimations = true
+                    transaction.animation = nil
+                }
+            }
     }
 }
 

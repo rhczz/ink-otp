@@ -5,6 +5,7 @@ let package = Package(
     name: "InkOTPCore",
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [.library(name: "InkOTPCore", targets: ["InkOTPCore"])],
+    dependencies: [.package(path: "../../apple/GoogleOTPTransfer")],
     targets: [
         .target(
             name: "CInkKDF",
@@ -12,7 +13,7 @@ let package = Package(
             publicHeadersPath: "include",
             cSettings: [.headerSearchPath("argon2")]
         ),
-        .target(name: "InkOTPCore", dependencies: ["CInkKDF"]),
-        .testTarget(name: "InkOTPCoreTests", dependencies: ["InkOTPCore"])
+        .target(name: "InkOTPCore", dependencies: ["CInkKDF", .product(name: "GoogleOTPTransfer", package: "GoogleOTPTransfer")]),
+        .testTarget(name: "InkOTPCoreTests", dependencies: ["InkOTPCore", .product(name: "GoogleOTPTransfer", package: "GoogleOTPTransfer")])
     ]
 )

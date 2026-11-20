@@ -46,7 +46,7 @@ class BackupFilesTest {
     }
 
     @Test fun rejectsFileNetworkAndRelativeUrisBeforeOpeningAnyStream() {
-        for (uri in listOf(Uri.parse("file:///public-test.2fab"), Uri.parse("https://example.invalid/public-test"), Uri.parse("public-test.2fab"))) {
+        for (uri in listOf(Uri.parse("file:///public-test.json"), Uri.parse("https://example.invalid/public-test"), Uri.parse("public-test.json"))) {
             assertThrows(IllegalArgumentException::class.java) { runBlocking { BackupFiles.read(context, uri) } }
             assertThrows(IllegalArgumentException::class.java) { runBlocking { BackupFiles.write(context, uri, byteArrayOf(1)) } }
         }

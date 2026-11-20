@@ -11,6 +11,14 @@ struct URIExample: Decodable {
     let accept: Bool
 }
 
+struct MigrationExamples: Decodable {
+    struct Example: Decodable {
+        let name: String
+        let uri: String
+    }
+    let cases: [Example]
+}
+
 struct FixtureError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
@@ -21,8 +29,12 @@ func makeCode(named name: String, from examples: [URIExample], using renderer: C
     guard matches.count == 1, let example = matches.first else {
         throw FixtureError(message: "Expected exactly one accepted public URI example named \(name)")
     }
+    return try makeCode(example.input, name: name, using: renderer)
+}
+
+func makeCode(_ uri: String, name: String, using renderer: CIContext) throws -> CGImage {
     let filter = CIFilter.qrCodeGenerator()
-    filter.message = Data(example.input.utf8)
+    filter.message = Data(uri.utf8)
     filter.correctionLevel = "M"
     guard let qr = filter.outputImage,
           let bitmap = renderer.createCGImage(qr, from: qr.extent) else {
@@ -59,11 +71,12 @@ func writeImage(_ codes: [CGImage], tile: Int, scale: Int, to url: URL) throws {
 }
 
 do {
-    guard CommandLine.arguments.count == 3 else {
-        throw FixtureError(message: "Usage: swift make-ui-qr-fixtures.swift <otpauth-cases.json> <output-directory>")
+    guard CommandLine.arguments.count == 4 else {
+        throw FixtureError(message: "Usage: swift make-ui-qr-fixtures.swift <otpauth-cases.json> <google-transfer-cases.json> <output-directory>")
     }
     let spec = URL(fileURLWithPath: CommandLine.arguments[1])
-    let directory = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+    let googleSpec = URL(fileURLWithPath: CommandLine.arguments[2])
+    let directory = URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true)
     let examples = try JSONDecoder().decode([URIExample].self, from: Data(contentsOf: spec))
     let renderer = CIContext(options: [.useSoftwareRenderer: true])
     let primary = try makeCode(named: "standard_totp_uri", from: examples, using: renderer)
@@ -75,6 +88,15 @@ do {
     try writeImage([primary], tile: tile, scale: scale, to: directory.appendingPathComponent("qr-single.png"))
     try writeImage([], tile: tile, scale: scale, to: directory.appendingPathComponent("qr-blank.png"))
     try writeImage([primary, second], tile: tile, scale: scale, to: directory.appendingPathComponent("qr-multiple.png"))
+    let migration = try JSONDecoder().decode(MigrationExamples.self, from: Data(contentsOf: googleSpec))
+    guard let firstPage = migration.cases.first(where: { $0.name == "first_page_defaults" }),
+          let secondPage = migration.cases.first(where: { $0.name == "second_page_urlsafe" }) else {
+        throw FixtureError(message: "Missing the public two-page Google Authenticator transfer")
+    }
+    let transferCode = try makeCode(secondPage.uri, name: secondPage.name, using: renderer)
+    let transferTile = (transferCode.width + 16) * scale
+    try writeImage([transferCode], tile: transferTile, scale: scale, to: directory.appendingPathComponent("google-page-two.png"))
+    try firstPage.uri.write(to: directory.appendingPathComponent("google-page-one.txt"), atomically: true, encoding: .utf8)
 } catch {
     FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
     exit(1)

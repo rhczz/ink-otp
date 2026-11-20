@@ -35,6 +35,7 @@ struct AddOptions: View {
 struct AddAccountView: View {
     @ObservedObject var state: AppState
     let done: () -> Void
+    let onMigration: (String) -> Void
 
     @State private var issuer = ""
     @State private var account = ""
@@ -46,9 +47,10 @@ struct AddAccountView: View {
     @State private var issuerMismatch = false
     @State private var controlsStripped = false
 
-    init(state: AppState, input: String, done: @escaping () -> Void) {
+    init(state: AppState, input: String, onMigration: @escaping (String) -> Void, done: @escaping () -> Void) {
         self.state = state
         self.done = done
+        self.onMigration = onMigration
         _input = State(initialValue: input)
     }
 
@@ -130,11 +132,16 @@ struct AddAccountView: View {
             formError = "The key or link is too long."
             return
         }
+        if isGoogleMigrationURI(value) {
+            input = ""
+            onMigration(value)
+            return
+        }
         do {
             let item: VaultItem
             switch try OtpauthParser.parse(value) {
             case .migration:
-                formError = "Google Authenticator migration QR codes are unsupported. Choose a QR code for an individual account."
+                formError = "The Base32 key or otpauth link is invalid. Check the original and try again."
                 return
             case .uri(let fields):
                 guard fields.type == .totp else {

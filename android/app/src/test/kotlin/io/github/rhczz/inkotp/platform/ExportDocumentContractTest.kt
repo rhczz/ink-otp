@@ -26,7 +26,6 @@ class ExportDocumentContractTest {
             Triple(InterchangeFormat.TWOFAS_ENCRYPTED, "2fas", "application/octet-stream"),
             Triple(InterchangeFormat.TWOFAS_PLAINTEXT, "2fas", "application/octet-stream"),
             Triple(InterchangeFormat.OTPAUTH_TEXT, "txt", "text/plain"),
-            Triple(InterchangeFormat.INKOTP_2FAB, "2fab", "application/octet-stream"),
         )
         for ((format, extension, mime) in cases) {
             assertEquals(extension, format.extension)

@@ -23,14 +23,13 @@ import org.robolectric.annotation.GraphicsMode
 class BackupFormatDialogTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun allSixFormatsAreReachableAndAllThreePlaintextOptionsWarnAboutSecrets() {
+    @Test fun allFiveFormatsAreReachableAndAllThreePlaintextOptionsWarnAboutSecrets() {
         showDialog()
 
         InterchangeFormat.entries.forEach { format ->
             compose.onNodeWithText(format.displayName()).performScrollTo().assertIsDisplayed()
         }
         compose.onAllNodesWithText("含明文账号密钥，仅用于主动迁移").assertCountEquals(3)
-        compose.onNodeWithText("用于兼容旧版 InkOTP，不是通用格式").assertExists()
     }
 
     @Test fun confirmingWithoutChangingSelectionUsesEncryptedAegisByDefault() {
