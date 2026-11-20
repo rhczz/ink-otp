@@ -1,25 +1,25 @@
 # InkOTP for macOS
 
-原生 SwiftUI 桌面应用，支持 macOS 14 及以上。SwiftPM 区分平台中立内核、密码学桥接和 macOS 应用。备份兼容范围见 [交换规格](../spec/interoperability.md)，桌面行为见 [macOS 规格](../spec/macos-parity.md)。
+InkOTP 是原生离线验证器，支持 macOS 14 及以上的 Apple Silicon 和 Intel Mac。加密库保存在应用沙箱内，可用恢复口令重新绑定本机钥匙串。
 
-## 安装与升级
+## 下载与升级
 
-在 [GitHub Releases](https://github.com/rhczz/ink-otp/releases) 的版本页 **Assets** 下载 `InkOTP-{版本}-macOS-universal.dmg` 和 `SHA256SUMS`。旧版通用 DMG 仍可从 [macOS Beta 2 发布页](https://github.com/rhczz/ink-otp/releases/tag/macos-v0.1.0-beta.2) 下载。同一个 DMG 支持 Apple Silicon 和 Intel。打开 DMG，将 InkOTP 拖入「应用程序」，再从那里启动。应用在沙箱的 Application Support 中保存加密库，导出的备份保存到你在系统面板选择的位置。
+在 [GitHub Releases](https://github.com/rhczz/ink-otp/releases) 的同一版本 **Assets** 中下载 `InkOTP-{版本}-macOS-universal.dmg` 和 `SHA256SUMS`。校验后打开 DMG，将 InkOTP 拖到「应用程序」并从那里启动。
 
-从临时签名的 Beta 1 升级前，在旧版本确认已经设置恢复口令，并导出一份加密备份。退出旧版本后替换应用。如果普通自动解锁没有成功，可以点「解锁验证码库」并按照 Mac 的钥匙串界面操作。如果系统仍无法授权且旧库设置了恢复口令，选择「使用恢复口令」并输入原口令。进入账号列表后，可以锁定再解锁一次，确认设备访问已经恢复。
+Beta 可采用临时签名。首次打开可能需要通过 macOS 的安全界面授权。临时签名版的受保护钥匙串入口无法使用。设置恢复口令并保留一份加密备份，便于将来迁移到新的签名身份。
+
+覆盖升级前，先在旧版导出一份加密备份。退出旧版后替换应用。自动解锁失败时，点「解锁验证码库」并按钥匙串提示操作。也可用原恢复口令重新绑定设备凭据。
 
 ## 备份与迁移
 
-加密备份可使用 Aegis 或 2FAS，导入预览后可合并账号。替换现有账号需要再次确认。仍持有旧 `.2fab` 的用户可以在 [历史版](https://github.com/rhczz/ink-otp/releases/tag/v0.5.4-beta.1) 中打开文件，再导出 Aegis 加密备份并导入当前版本。
+- 在「设置 → 备份」导出文件或导入备份。推荐 Aegis 加密备份，也支持 2FAS 和逐行 `otpauth://` 文本。导入时先核对账号，再合并或确认替换。若持有 0.6 之前生成的 `.2fab`，可在升级前用 [历史版](https://github.com/rhczz/ink-otp/releases/tag/v0.5.4-beta.1) 打开并另存为 Aegis 加密备份。已经升级的用户可在另一台设备或独立测试环境转换文件。
+- 从 Google Authenticator 迁入时，在「添加账号」选择「从 Google Authenticator 导入…」，使用相机、二维码图片或粘贴链接。收齐同一批的每张二维码后，核对一次再合并。
+- 迁出时，在「设置 → 备份 → Google Authenticator」选择「导出迁移二维码…」，核对兼容项、确认明文密钥提示并输入当前恢复口令，再在目标设备逐页扫描。可迁出的 TOTP 使用 SHA1、6 位、30 秒。HOTP 参数和计数器可保留并再次导出，生成验证码需要支持 HOTP 的验证器。[迁移规格](../spec/google-authenticator-transfer.md)
 
-通过「添加账号」可以读取 Google Authenticator 迁移二维码，支持相机、图片和粘贴链接。每页读齐后再预览并合并。向 Google Authenticator 迁移时，在「设置 → 备份 → Google Authenticator」选择导出，确认明文二维码风险并输入当前恢复口令，然后在目标设备扫描各页二维码。兼容范围见 [迁移规格](../spec/google-authenticator-transfer.md)。
+## 构建与验收
 
-## CI 与分发
+[macOS 工作流](../.github/workflows/macos.yaml) 在 GitHub 的 Apple Silicon 和 Intel 运行器执行公共协议测试、覆盖率、独立 Python 对拍、Android 与 macOS 的五种交换文件互读，并打包和验证通用 DMG。OpenSSL 与 Argon2 源码按固定 SHA-256 校验后静态链接。[开发指南](../docs/development.md) · [macOS 规格](../spec/macos-parity.md)
 
-- [macOS 工作流](../.github/workflows/macos.yaml) 在 GitHub 的 Apple Silicon 与 Intel 运行器执行公共协议测试、生成覆盖率报告、进行独立 Python 对拍与编译。Android 与 Mac 互读对方实际导出的五种交换文件。通用 DMG 的升级与窗口行为由桌面 XCTest 验证。
-- 新版使用共享的 `v{版本}` 标签。macOS 工作流打包并验收 DMG，统一发布工作流把 DMG 与 Android 和 iOS 的包上传到同一 Release。详见 [发布指南](../docs/releasing.md)。
-- Beta 在没有 Apple 凭据时使用临时签名。Gatekeeper 可能拦截首次打开，需在验证下载校验和后按 Apple 系统提供的方式授权开启。受保护的 Keychain 每次进入验证在临时签名版本不可用。请设置恢复口令并保留加密便携备份，便于将来迁移到新的签名身份。
-- 正式版本要求 Developer ID 签名、公证和贴票，接受已有仓库环境中的 `INKOTP_MACOS_*` 凭据。需要 `DEVELOPER_ID`、`P12_BASE64`、`P12_PASSWORD`、`PROFILE_BASE64`、`NOTARY_APPLE_ID`、`TEAM_ID` 和 `NOTARY_PASSWORD`。Developer ID 配置描述文件须匹配 `io.github.rhczz.inkotp.macos` 并允许该 App 的私有 Keychain 组。测试分支和拉取请求始终使用临时签名。
-- OpenSSL 3.5 LTS 与 Argon2 源包在运行器上按固定 SHA-256 校验并静态链接。应用只依赖系统框架，不下载运行时组件。第三方许可证包含于应用包。
+正式发布要求 Developer ID 签名、公证和贴票。环境中的 `INKOTP_MACOS_*` 凭据包括 `DEVELOPER_ID`、`P12_BASE64`、`P12_PASSWORD`、`PROFILE_BASE64`、`NOTARY_APPLE_ID`、`TEAM_ID` 和 `NOTARY_PASSWORD`。描述文件须匹配 `io.github.rhczz.inkotp.macos` 并授权应用的私有钥匙串组。[发布指南](../docs/releasing.md)
 
-发布包的 Apple 工具链、打包与验收在 GitHub Actions 执行。
+0.6.0-beta.1 的 9 项安装包 XCTest 已通过，包括 Google 多页样本导入、取消、替换后重启。仍需用实际 Google Authenticator 双向互扫，并在实体 Mac 上核对签名迁移、系统认证、相机、权限及辅助功能。[本版验证记录](../docs/changes/2026-11-20-transfer-and-motion.md)

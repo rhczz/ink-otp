@@ -1,39 +1,28 @@
-# 标准机制与生态兼容原则
+# 标准机制与生态兼容
 
-## 默认采用的机制
+## 验证码与迁移格式
 
-| 需求 | 采用的机制 | 仍需明确的边界 |
-|---|---|---|
-| 生成验证码 | RFC 4226 / RFC 6238、Base32 RFC 4648 | 不支持的算法或参数明确提示，不能猜测替换 |
-| 单账号交换 | 社区广泛采用的 otpauth URI | 它是生态约定；不能声称所有验证器都支持所有参数 |
-| 用户验证 | Android BiometricPrompt / Keyguard / Keystore | 系统决定可用的认证类型；不收集手机锁屏密码 |
-| 本地文件 | 应用内部私有存储、AtomicFile、DataStore | Android 清理应用自己的数据，不能承诺闪存取证级擦除 |
-| 文件导入导出 | Storage Access Framework 和系统选择器 | 用户导出的外部文件在卸载后保留，这是用户文件的标准生命周期 |
-| 权限 | 按需请求相机权限、系统文件访问授权 | 不申请联网或宽存储权限 |
-| 备份互通 | 成熟验证器公开格式、带版本的兼容矩阵 | 没有统一通吃的加密备份；必须用独立样本验证 |
+| 用途 | InkOTP 使用的约定 | 相关说明 |
+| --- | --- | --- |
+| 出码 | RFC 6238 定义 TOTP，复用 RFC 4226 的 HOTP 算法。 | [TOTP 原理](totp.md) |
+| 添加单个账号 | 读取验证器生态常用的 `otpauth://` 设置链接，密钥以 RFC 4648 Base32 编码。 | [URI 参数与校验](../spec/README.md) |
+| 文件备份与交换 | 支持 Aegis JSON、2FAS 和每行一个 `otpauth://` 的文本。加密备份默认写为 Aegis JSON。 | [格式、版本与字段兼容矩阵](../spec/interoperability.md) |
+| Google Authenticator | 通过相机、图片或粘贴链接收集同批迁移二维码。迁出时显示目标设备逐页扫描的二维码。 | [迁移规格与不兼容参数](../spec/google-authenticator-transfer.md) |
 
-旧版 InkOTP `.2fab` 已于 0.6 下线。新增成熟格式时提供清楚的名称、加密状态和信息损失说明，不用相同扩展名掩盖自定义结构。
+加密文件和明文文件各有明确选项。导出明文文件或迁移码前需要额外确认。导入遇到不支持的 OTP 类型或参数时给出提示，账号备注、图标等附加资料的保留范围按各格式说明。旧版 InkOTP `.2fab` 从 0.6 起移除。
 
-当前已实现 Aegis 加密/明文 JSON、2FAS 加密/明文 `.2fas`、多行 otpauth 文本和 Google Authenticator 迁移二维码的双向交换。版本、字段、密码编码和独立样本依据见 [兼容矩阵](../spec/interoperability.md)。默认导出为 Aegis 加密 JSON。明文交换必须额外确认，且不会被写入私有临时文件。
+## 系统认证与文件选择
 
-## 卸载与所有权
+- Android 使用系统 BiometricPrompt 或 Keyguard。Android 11+ 使用强生物识别或锁屏凭据，Android 8–10 使用系统锁屏凭据确认。文件通过 Storage Access Framework 的系统选择器打开与保存。 [Android 生物识别](https://developer.android.com/identity/sign-in/biometric-auth) · [系统文件选择器](https://developer.android.com/training/data-storage/shared/documents-files)
+- iOS 通过 LocalAuthentication 验证身份，用系统文件选择器打开和导出备份。导出时应用先在私有临时目录生成受文件保护的文件，供选择器转交。 [iOS 规格](../spec/ios-parity.md)
+- macOS 使用 LocalAuthentication、Keychain 和系统打开、保存面板。受保护钥匙串的可用性与签名方式有关。 [macOS 规格](../spec/macos-parity.md)
 
-业务数据、设备包装、普通元数据和组件缓存放在 Android 标准沙箱或系统 Keystore。不要在公共存储根目录创建隐蔽工作目录，不依赖应用在卸载前获得执行机会。
+设备锁屏凭据只在系统界面输入。应用恢复口令用于本机库恢复和备份加密。在 Android 上，开启每次进入验证后，文件选择器的暂时离开宽限为 60 秒，系统认证宽限为 120 秒。重复生命周期回调不会延长它们。 [Android 规格](design/2FA验证器-技术设计文档.md)
 
-用户通过系统选择器导出的备份、已有相册二维码和别处保存的副本由用户管理。导出文件不会仅因卸载本应用而删除；应用也不应持有为了未来偷偷删除这些文件而申请的额外权限。
+## 文件归属
 
-Android 普通完整卸载、应用归档和保留数据是不同的生命周期。对外只描述已实现的清理配置与标准卸载行为，不声称设备、系统或第三方的所有痕迹都被擦除。
+应用将本机数据、设备包装和缓存保留在应用私有位置或系统密钥存储。用户主动保存的备份、已存在的相册二维码和外部副本由用户管理。卸载应用后，应按所选位置的规则管理这些文件。
 
-Manifest 显式关闭自动备份和保留数据提示，旧版备份规则与新版云备份、设备迁移规则都排除全部应用数据域。`tools/check_android_storage.py` 检查配置，变异回归防止以后漏掉某个域。没有添加卸载广播、清理服务或公共目录工作区。
+Android 在 Manifest 和系统备份规则中排除应用数据。普通卸载、应用归档与系统保留数据属于不同流程。项目通过 `tools/check_android_storage.py` 核对配置，系统实际行为以真机检查为准。 [Android 应用专属存储](https://developer.android.com/training/data-storage/app-specific) · [Android 自动备份规则](https://developer.android.com/identity/data/autobackup)
 
-以上遵循 Android 官方的 [应用专属文件生命周期](https://developer.android.com/training/data-storage/app-specific)、[SAF 用户文件生命周期](https://developer.android.com/training/data-storage/shared/documents-files) 和 [自动备份规则](https://developer.android.com/identity/data/autobackup)。厂商系统是否严格执行仍需真机观察。
-
-## 系统验证
-
-设置项使用官方 [BiometricPrompt 与设备凭据流程](https://developer.android.com/identity/sign-in/biometric-auth)。Android 11+ 请求系统强生物识别或锁屏凭据；Android 8–10 使用系统锁屏凭据确认。普通相机人脸不一定达到 Android 强生物识别等级，系统未允许的方式不会显示，也不会由应用自行模拟。
-
-手机锁屏凭据与应用恢复口令是两种不同凭据。前者只在系统界面输入；后者用于数据恢复和备份加密。开启后正常切出再进入会重新验证。用户主动调用系统文件选择器有 60 秒上限；系统认证本身有 120 秒上限，重复生命周期回调不能延长它们。
-
-## 验证要求
-
-每个新增交换格式都记录来源、版本、支持字段、拒绝条件和独立样本；加密格式同时检查认证失败和资源上限。性能与覆盖率按真实报告保存，实际手机能力以真机记录为准。
+新增格式时需要记录来源、版本、字段、拒绝条件和独立样本。加密格式还要验证认证失败和资源上限。 [验证入口](testing/github-ci.md)

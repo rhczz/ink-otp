@@ -1,33 +1,19 @@
-# Android 与 iOS 的平台中立性
+# 跨平台数据契约
 
-> 设计文档 §4.4、§5.4、§13.3。Android 先行发布。现有库和备份格式作为 Android 与 iOS 的跨端契约。
+Android、iOS 和 macOS 使用 [公共规格](../spec/README.md) 中的 OTP 向量、设置链接示例和交换夹具。各平台用自己的系统接口处理存储、认证、剪贴板和文件选择。
 
-## 1. 硬性规则
+## 本地库与可移植备份
 
-1. `spec/` 是唯一事实来源；实现按 spec 写，不能反向定义 spec。
-2. 库 JSON 与 `2FAV` 头中**不得出现** Android/Kotlin 特有概念：`Uri` 序列化、Java 类名、资源 id、平台异常文本、`Int` 溢出语义。
-3. 枚举一律大写字符串；整数显式位宽（u32/i64）；时间用 UTC ISO-8601/Unix 秒；UUID 小写带连字符。
-4. 种子内部存原始字节（Base64），对外导出统一规范 Base32；文本 UTF-8 + NFC。
-5. `:core` 不得 import `android.*` / `androidx.*`；平台能力通过接口注入。
-6. 任何格式变更：`formatVersion/schemaVersion + 1` + 迁移 + `spec/` 更新 + Python 参考实现对拍（C-08/C-27）。
+- [本地加密库](../spec/vault-format.md)的 `2FAV` 字节布局和测试样本为三端共用。Android 和 macOS 写入私有 `vault.bin`，iOS 将 `2FAV` 负载封装在私有 `vault-v1.json` 中。设备密钥和认证状态由各平台管理。
+- 换机与跨平台导入使用 [Aegis、2FAS 或 otpauth 交换格式](../spec/interoperability.md)，也可使用 [Google Authenticator 迁移二维码](../spec/google-authenticator-transfer.md)。导入在目标设备重新加密，兼容矩阵列出各格式保留的字段与参数范围。
 
-## 2. 自动检查
+## 实现规则
 
-```bash
-# 1) core 无 Android 依赖（模块构建配置保证）
-# 2) 源码不得出现 android/androidx import
-grep -RInE '^import (android|androidx)\.' android/core/src || true
+1. 按各自规格编码字段、枚举和整数范围。库模型和 `2FAV` 头只使用规范定义的字节和字段，系统对象、资源 ID 和平台错误留在接口层。
+2. `2FAV` 的整数按大端序读写。库 JSON 使用 UTF-8，显示名称按契约规范化，密钥按格式要求编码。
+3. Android `:core` 只依赖 JVM 接口，系统能力由 App 层提供。iOS 和 macOS 共用 `apple/GoogleOTPTransfer` 解析及生成迁移二维码内容。
+4. 库布局或语义发生不兼容变化时，更新对应版本、规格和迁移演练，补齐独立实现及既有样本的测试证据。
 
-# 3) Python 验证本地库样本并对拍 Kotlin 交换文件
-make crosscheck
+## 怎样验证
 
-# 4) schema 字段白名单/枚举测试（M1 起，:core 单测）
-```
-
-CI 应断言第 2 条为零命中；`tools/check_no_internet.py` 额外检查合并 manifest。
-
-## 3. 跨端验收
-
-Android 和 iOS 消费同一份 RFC 4226/6238 向量、解析用例、`2FAV` 规范示例及公开备份夹具。CI 传递两端实际生成的导出文件，使用对方的生产解码器读取，并且用独立 Python 参考实现核对交换账号和验证码参数。文件或参数不兼容时验证整份拒绝、具体错误码及序号。
-
-iOS 用 App Support 和本机 Keychain 管理私有库。`2FAV` 二进制及 Aegis、2FAS、otpauth 文件交换沿用公共契约，只有本机的 Keychain 绑定和系统验证策略独立存放。当前 iOS 范围与真机待测见 [iOS 说明](../ios/README.md)。
+运行 `make setup` 和 `make crosscheck`，用独立 Python 实现验证 OTP、URI、本地库示例和 Kotlin 实际导出的交换文件。[Android 与 iOS CI](../.github/workflows/ci.yaml)和 [macOS CI](../.github/workflows/macos.yaml)分别验证两组双向交换。三端都使用独立生成的 Google 迁移样本。真机和系统安装范围按对应版本的[变更记录](changes/README.md)核对。

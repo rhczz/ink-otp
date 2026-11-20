@@ -1,6 +1,6 @@
 # InkOTP 版本发布
 
-Android、macOS 和 iOS 共用一个 `v{版本}` 标签与一个 GitHub Release。合并发布版本到 `master` 后推送该提交的标签，例如 `v0.5.4-beta.1`。标签对应 Android `versionName`，Apple 两端用 `0.5.4` 作为系统包版本。构建号按平台的安装和覆盖升级规则递增。格式、资产命名及签名约束见 [发布契约](../spec/release.md)。
+Android、macOS 和 iOS 共用一个 `v{版本}` 标签与一个 GitHub Release。发布版本合入 `master` 后，在该提交上创建并推送标签。例如 `v0.6.0-beta.1` 对应 Android 的 `versionName` `0.6.0-beta.1` 和 Apple 的系统包版本 `0.6.0`。三个平台的应用显示完整版本。构建号按各平台的安装和覆盖升级规则递增。 [发布契约](../spec/release.md)
 
 原先的 Android 版本、`macos-v*` 和 `ios-v*` 发布继续提供下载。新的公开发布使用 `v*` 标签，由统一的工作流创建。
 
@@ -14,15 +14,15 @@ Android、macOS 和 iOS 共用一个 `v{版本}` 标签与一个 GitHub Release�
 
 ## Android 固定签名与首次配置
 
-现有本地 beta 的公开证书 SHA-256 指纹固定在 `.github/release.yaml`：
+官方 Android 发行签名的公开证书 SHA-256 指纹固定在 `.github/release.yaml`。
 
 ```text
 f1e8211a3f245bed886a048f8088b16be229072dcf77b65981e6ca5dcf642589
 ```
 
-这只是公开指纹，不能用于签名。为保持覆盖升级，GitHub 必须使用对应的既有私钥。不要创建新密钥来绕过缺少 Secrets 的错误，也不要把私钥、签名配置或口令加入仓库。
+要保持官方 APK 的覆盖升级，GitHub Actions 使用与该公开指纹匹配的既有私钥。本机内测签名和保存位置见 [开发与贡献](development.md#本地签名内测包)。
 
-管理员经用户明确同意后，在 `rhczz/ink-otp` 的 Actions Secrets 配置以下四项。私钥上传是独立授权事项；实现工作流不表示已经授权或已经上传。本轮已取得用户明确授权，核对既有证书后，将四项 Secrets 配置至目标仓库并复核名称；未将秘密值写入任何公开文件或日志。后续仓库迁移仍需重新核对授权与配置。
+管理员获得私钥上传授权后，在 `rhczz/ink-otp` 的 Actions Secrets 配置以下四项。首次配置的记录随首个发布归档。迁移仓库时重新核对授权、Secrets 和证书指纹。 [首次配置与发布记录](changes/2026-11-17-ci-and-release.md)
 
 | Secret | 内容 |
 | --- | --- |
@@ -51,11 +51,11 @@ iOS 正式发布要求启用 `INKOTP_IOS_RELEASE_SIGNED` 并配置 Apple 分发�
 
 同一版本页的 **Assets** 提供 Android APK、macOS 通用 DMG、iOS 模拟器 ZIP、iPhone/iPad IPA、`build-info.json`、`release-notes.md` 和 `SHA256SUMS`。`SHA256SUMS` 覆盖所有其他发布资产，Android 仍可用 `apksigner` 独立核对签名证书。发布页说明当前 macOS 和 iOS 包的签名状态。
 
-对已发布版本，重新下载完整资产并核对哈希，确认每个平台的包可在同一页取得。上传中断可能留下未公开的草稿。遇到发布中断，从 Actions 运行、标签和资产状态定位，确认后再处理。现有 Release 的自动覆盖和重传由历史检查拒绝。
+发布后，从版本页将资产全部下载到同一目录，执行 `shasum -a 256 -c SHA256SUMS`，并确认每个平台的包都可下载。上传中断可能留下未公开的草稿。遇到发布中断，从 Actions 运行、标签和资产状态定位，确认后再处理。现有 Release 的自动覆盖和重传由历史检查拒绝。
 
 ## 验证范围
 
-本地可运行 `python3 -m unittest discover -s tools/tests -v` 验证发布工具，再用 `actionlint` 检查工作流。当前 actionlint 1.7.12 对 GitHub 已支持的 `concurrency.queue` 给出额外诊断，可精确忽略该字段的诊断。
+本地可运行 `python3 -m unittest discover -s tools/tests -v` 验证发布工具，再用 `actionlint` 检查工作流。actionlint 1.7.12 会报告 `concurrency.queue` 未知。可忽略这一条诊断，其余检查照常执行。
 
 发布通过需要本次 Actions 运行和远端资产复核。Android 和 iOS 真机安装、覆盖升级、取消、系统验证、相机和性能，以及 macOS 硬件环境与签名迁移，依实际验收结果记录。Beta 说明应列出尚待核实的范围。早期 Android 发布证据见 [首版交付记录](changes/2026-11-17-ci-and-release.md) 和 [0.4.1 发布记录](changes/2026-11-17-release-0.4.1.md)。
 
