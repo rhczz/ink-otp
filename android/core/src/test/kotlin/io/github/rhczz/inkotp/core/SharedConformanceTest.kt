@@ -1,7 +1,5 @@
 package io.github.rhczz.inkotp.core
 
-import io.github.rhczz.inkotp.core.backup.BackupCodec
-import io.github.rhczz.inkotp.core.backup.BackupException
 import io.github.rhczz.inkotp.core.interchange.InterchangeCodec
 import io.github.rhczz.inkotp.core.interchange.InterchangeException
 import kotlinx.serialization.json.JsonObject
@@ -66,19 +64,8 @@ class SharedConformanceTest {
         }
     }
 
-    @Test fun publicLegacyBackupMutations() {
-        val baseline = fixture("fixtures/backup-v1.2fab")
-        for (value in contract.getValue("legacyBackupMutations").jsonArray) {
-            val row = value.jsonObject
-            val position = row.getValue("offset").jsonPrimitive.int
-            val offset = if (position >= 0) position else baseline.size + position
-            val mask = row.getValue("xor").jsonPrimitive.int
-            val changed = baseline.copyOf()
-            changed[offset] = (changed[offset].toInt() xor mask).toByte()
-            val failure = assertThrows<BackupException> {
-                BackupCodec.open(changed, TestVault.PASSWORD.toCharArray())
-            }
-            assertEquals(row.text("error"), failure.code.name, "mutation at $position")
-        }
+    @Test fun rejectsRetiredInkOTPBackupAtTheImportBoundary() {
+        val retiredHeader = byteArrayOf(0x32, 0x46, 0x41, 0x42, 1, 1, 0)
+        assertThrows<InterchangeException> { InterchangeCodec.decode(retiredHeader) }
     }
 }

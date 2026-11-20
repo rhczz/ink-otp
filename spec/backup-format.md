@@ -1,6 +1,6 @@
 # 备份文件格式 v1（`.2fab`）
 
-> 状态：**已冻结（v1）**。本文件是 `.2fab` 的唯一事实来源。
+> 状态：**历史归档**。自 InkOTP 0.6 起移除 `.2fab` 读写。当前支持的备份见 [交换规格](interoperability.md)，旧工具可从 [历史发布源码](https://github.com/rhczz/ink-otp/tree/v0.5.4-beta.1/tools) 查阅。
 > 适用范围：Android v1.0 导出/导入；**Phase 2 iOS 必须按本文件读取 v1 备份**，不得扩展字段含义。
 > 设计依据：`docs/design/2FA验证器-技术设计文档.md` §7.2 / §7.3，并做出一处明确修正（见下）。
 

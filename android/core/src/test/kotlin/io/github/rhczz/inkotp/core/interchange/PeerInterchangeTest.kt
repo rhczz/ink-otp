@@ -80,13 +80,9 @@ internal object PublicInterchangeContract {
         val password = if (format.requiresPassword) TestVault.PASSWORD.toCharArray() else null
         val decoded = InterchangeCodec.decode(bytes, password)
         assertEquals(format, decoded.format, format.name)
-        if (format == InterchangeFormat.INKOTP_2FAB) {
-            assertTrue(decoded.model == expected, "${format.name}: complete vault JSON changed")
-        } else {
-            val expectedProfiles = expected.items.map(::profile)
-            val decodedProfiles = decoded.model.items.map(::profile)
-            assertTrue(decodedProfiles == expectedProfiles, "${format.name}: OTP profiles or order changed")
-        }
+        val expectedProfiles = expected.items.map(::profile)
+        val decodedProfiles = decoded.model.items.map(::profile)
+        assertTrue(decodedProfiles == expectedProfiles, "${format.name}: OTP profiles or order changed")
     }
 
     private fun filename(prefix: String, format: InterchangeFormat) = "$prefix-${format.name}.${format.extension}"

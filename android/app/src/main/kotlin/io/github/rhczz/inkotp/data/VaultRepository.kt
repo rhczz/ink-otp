@@ -6,7 +6,6 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.UserNotAuthenticatedException
 import io.github.rhczz.inkotp.platform.SystemAuthRequest
 import io.github.rhczz.inkotp.platform.SystemAuthProof
-import io.github.rhczz.inkotp.core.backup.BackupCodec
 import io.github.rhczz.inkotp.core.backup.BackupMerge
 import io.github.rhczz.inkotp.core.backup.MergeConflictPolicy
 import io.github.rhczz.inkotp.core.crypto.Argon2Kdf
@@ -219,19 +218,6 @@ class VaultRepository internal constructor(
             SecretBytes.wipe(verifiedDek)
         }
     }
-
-    suspend fun exportBackup(password: CharArray): ByteArray {
-        try {
-            val current = model ?: fail(VaultAccessError.LOCKED)
-            if (!hasPassword()) fail(VaultAccessError.PASSWORD_REQUIRED)
-            if (!verifyPassword(password.copyOf())) fail(VaultAccessError.PASSWORD_INCORRECT)
-            return BackupCodec.seal(current, password, random = random, kdf = kdf)
-        } finally { password.fill('\u0000') }
-    }
-
-    suspend fun decodeBackup(bytes: ByteArray, password: CharArray): VaultModel = try {
-        BackupCodec.open(bytes, password, kdf = kdf)
-    } finally { password.fill('\u0000') }
 
     suspend fun importBackup(
         remote: VaultModel, policy: MergeConflictPolicy, replace: Boolean, proof: SystemAuthProof? = null,

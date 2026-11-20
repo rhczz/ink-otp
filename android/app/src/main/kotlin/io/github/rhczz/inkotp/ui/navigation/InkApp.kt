@@ -15,14 +15,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.SecureFlagPolicy
 import io.github.rhczz.inkotp.BuildConfig
+import io.github.rhczz.inkotp.app.GOOGLE_IMPORT_SOURCE
+import io.github.rhczz.inkotp.app.GoogleExportReview
 import io.github.rhczz.inkotp.app.VaultViewModel
 import io.github.rhczz.inkotp.core.backup.MergeConflictPolicy
 import io.github.rhczz.inkotp.core.interchange.InterchangeCodec
 import io.github.rhczz.inkotp.core.interchange.InterchangeFormat
 import io.github.rhczz.inkotp.core.interchange.InterchangeException
+import io.github.rhczz.inkotp.core.uri.GoogleMigrationCodec
 import io.github.rhczz.inkotp.platform.*
 import io.github.rhczz.inkotp.ui.components.*
 import io.github.rhczz.inkotp.ui.model.UnlockUiState
@@ -39,8 +40,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private enum class Screen { List, Detail, ManualAdd, Scan, Settings, Diagnostics, About }
-private enum class PasswordTask { Change, Export, Import, Restore }
+private enum class Screen { List, Detail, ManualAdd, Scan, Settings, Diagnostics, About, GoogleImport }
+private enum class PasswordTask { Change, Export, Import, Restore, GoogleExport }
 
 @Composable
 internal fun InkApp(
@@ -83,6 +84,7 @@ internal fun InkApp(
     var exportFormat by remember { mutableStateOf(InterchangeFormat.AEGIS_ENCRYPTED) }
     var importFormat by rememberSaveable { mutableStateOf<InterchangeFormat?>(null) }
     var exportReviewToken by rememberSaveable { mutableStateOf<Long?>(null) }
+    var googleExportReview by remember { mutableStateOf<GoogleExportReview?>(null) }
 
     fun cancelFileOperation() {
         fileRequest++
@@ -108,7 +110,12 @@ internal fun InkApp(
         }.also { job -> job.invokeOnCompletion { cleanup() } }
     }
     fun navigate(next: Screen) { stack.add(screen); screen = next }
-    fun back() { cancelFileOperation(); scannedInput = ""; screen = if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) else Screen.List }
+    fun back() {
+        if (screen == Screen.GoogleImport) viewModel.cancelImport()
+        cancelFileOperation()
+        scannedInput = ""
+        screen = if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) else Screen.List
+    }
     fun copy(item: VaultItemUi) {
         if (item.type == "totp" && viewModel.isCurrentSession(sessionToken)) security.copyCode(item.code, viewModel.state.settings.clipboardClearSeconds)
     }
@@ -171,6 +178,26 @@ internal fun InkApp(
         } else if (accepted && forRestore) viewModel.cancelImport()
         else if (uri != null) viewModel.report("这次文件选择已失效，请重新选择备份")
     }
+    fun acceptGoogleInput(input: String) {
+        if (!viewModel.isCurrentSession(sessionToken)) return
+        if (screen != Screen.GoogleImport) {
+            if (stack.lastOrNull() == Screen.GoogleImport) stack.removeAt(stack.lastIndex)
+            else if (screen != Screen.Scan && screen != Screen.ManualAdd) stack.add(screen)
+            screen = Screen.GoogleImport
+        }
+        scannedInput = ""
+        requirePassword { viewModel.ingestGoogleImport(input) }
+    }
+    fun routeQr(input: String, fromCamera: Boolean) {
+        if (!viewModel.isCurrentSession(sessionToken)) return
+        if (input.trimStart().startsWith(GoogleMigrationCodec.SCHEME, ignoreCase = true) ||
+            screen == Screen.GoogleImport || stack.lastOrNull() == Screen.GoogleImport) {
+            acceptGoogleInput(input)
+        } else {
+            scannedInput = input
+            if (fromCamera) screen = Screen.ManualAdd else navigate(Screen.ManualAdd)
+        }
+    }
     val chooseImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         val token = imagePickerToken
         imagePickerToken = null
@@ -178,12 +205,12 @@ internal fun InkApp(
         if (uri != null && accepted) {
             launchFileOperation(token!!, "图片无法读取，请重新选择或手动输入") {
                 val input = readQrImage(context, uri)
-                if (viewModel.isCurrentSession(token)) { scannedInput = input; navigate(Screen.ManualAdd) }
+                if (viewModel.isCurrentSession(token)) routeQr(input, fromCamera = false)
             }
         } else if (uri != null) viewModel.report("这次图片选择已失效，请解锁后重新选择")
     }
     fun gallery() {
-        if (!viewModel.isCurrentSession(sessionToken)) return
+        if (!viewModel.isCurrentSession(sessionToken) || session.busy || fileBusy || imagePickerToken != null) return
         val token = viewModel.beginPicker()
         imagePickerToken = token
         try { chooseImage.launch("image/*") }
@@ -242,6 +269,7 @@ internal fun InkApp(
             stack.clear(); screen = Screen.List; selectedId = null; query = ""; addSheet = false
             scannedInput = ""; passwordTask = null; importUri = null; importFormat = null; replaceConfirm = false; chooseExportFormat = false; exportReviewToken = null
             exportPickerToken = null; importPickerToken = null; imagePickerToken = null
+            googleExportReview = null
             observedSessionToken = sessionToken
         }
     }
@@ -252,7 +280,12 @@ internal fun InkApp(
         }
     }
 
-    val secure = !BuildConfig.DEBUG || passwordTask != null || screen == Screen.ManualAdd || setup || !session.unlocked
+    LaunchedEffect(Unit) {
+        if (passwordTask == PasswordTask.GoogleExport && googleExportReview == null) passwordTask = null
+    }
+
+    val secure = !BuildConfig.DEBUG || passwordTask != null || screen == Screen.ManualAdd || setup ||
+        screen == Screen.GoogleImport || session.googleExportPageCount > 0 || !session.unlocked
     DisposableEffect(secure, security) {
         security.secureScreen(secure)
         onDispose { security.secureScreen(!BuildConfig.DEBUG) }
@@ -260,13 +293,15 @@ internal fun InkApp(
     DisposableEffect(Unit) {
         onDispose {
             val current = viewModel.state
+            if (current.googleExportPageCount > 0) viewModel.discardGoogleExport()
+            if (screen == Screen.GoogleImport || current.googleImportProgress != null || current.importFormat == GOOGLE_IMPORT_SOURCE) viewModel.cancelImport()
             if (fileBusy && importUri == null && current.backupRestoreActive &&
                 !current.busy && current.restoreAccountCount == null) viewModel.cancelImport()
             fileRequest++
             fileJob?.cancel()
         }
     }
-    BackHandler(enabled = !readingPrivacy && session.unlocked && !setup && stack.isNotEmpty() && !session.busy) { back() }
+    BackHandler(enabled = !readingPrivacy && session.unlocked && !setup && (stack.isNotEmpty() || screen == Screen.GoogleImport) && !session.busy) { back() }
     BackHandler(enabled = readingPrivacy) { readingPrivacy = false }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -297,7 +332,9 @@ internal fun InkApp(
                     state = VaultListUiState(items = session.items, query = query, backupReminder = session.backupReminder, clockWarning = session.clockWarning, passwordWarning = !session.passwordSet),
                     onQueryChange = { query = it }, onOpenItem = { selectedId = it.id; navigate(Screen.Detail) }, onAdd = { addSheet = true },
                     onSettings = { navigate(Screen.Settings) }, onOpenDiagnostics = { navigate(Screen.Diagnostics) }, onCopy = ::copy,
-                    onLock = { security.clearClipboard(); viewModel.lock() })
+                    onLock = { security.clearClipboard(); viewModel.lock() },
+                    animateEntry = viewModel.shouldAnimateVaultEntry(sessionToken),
+                    onEntry = { viewModel.markVaultEntryPlayed(sessionToken) })
                 Screen.Detail -> {
                     val item = session.items.firstOrNull { it.id == selectedId }
                     if (item == null) LaunchedEffect(Unit) { back() } else ItemDetailScreen(item = item, secretBase32 = "", onBack = ::back,
@@ -305,10 +342,18 @@ internal fun InkApp(
                         onCopy = { copy(item) }, onMoveUp = { viewModel.move(item.id, -1) }, onMoveDown = { viewModel.move(item.id, 1) })
                 }
                 Screen.ManualAdd -> ManualAddScreen(onBack = ::back, initialInput = scannedInput,
-                    onSave = { issuer, account, input -> viewModel.add(issuer, account, input) { scannedInput = ""; stack.clear(); screen = Screen.List } })
-                Screen.Scan -> ScanScreen(onBack = ::back, onDetected = { scannedInput = it; screen = Screen.ManualAdd },
+                    onSave = { issuer, account, input ->
+                        if (input.trimStart().startsWith(GoogleMigrationCodec.SCHEME, ignoreCase = true) ||
+                            stack.lastOrNull() == Screen.GoogleImport) {
+                            acceptGoogleInput(input)
+                        } else viewModel.add(issuer, account, input) { scannedInput = ""; stack.clear(); screen = Screen.List }
+                    })
+                Screen.Scan -> ScanScreen(onBack = ::back, onDetected = { routeQr(it, fromCamera = true) },
                     onGallery = ::gallery, onManual = { scannedInput = ""; screen = Screen.ManualAdd },
                     onPrivacy = openPrivacy)
+                Screen.GoogleImport -> GoogleImportScreen(session.googleImportProgress, session.busy || fileBusy, ::back,
+                    onScan = { navigate(Screen.Scan) }, onGallery = ::gallery,
+                    onPaste = { scannedInput = ""; navigate(Screen.ManualAdd) })
                 Screen.Settings -> SettingsScreen(state = session.settings, onBack = ::back,
                     onSystemAuthenticationChange = { viewModel.systemAuthentication(it, security) },
                     onLockTimeoutChange = { seconds -> viewModel.settings { it.copy(lockTimeoutSeconds = seconds) } },
@@ -317,6 +362,7 @@ internal fun InkApp(
                     onDiagnostics = { navigate(Screen.Diagnostics) }, onAbout = { navigate(Screen.About) },
                     onOnboarding = { message = "添加账号可使用列表右下角的加号。设置恢复口令后可导出加密备份，换机时可在首次启动选择从备份恢复。" },
                     onPassword = { passwordTask = PasswordTask.Change }, onExport = { requirePassword { chooseExportFormat = true } }, onImport = ::importBackup,
+                    onGoogleExport = { requirePassword { viewModel.reviewGoogleExport { googleExportReview = it } } },
                     onLock = { security.clearClipboard(); viewModel.lock() },
                     onPrivacy = openPrivacy, onWithdrawPrivacy = onWithdrawPrivacy?.let { { confirmingWithdrawal = true } })
                 Screen.Diagnostics -> DiagnosticsScreen(
@@ -328,7 +374,8 @@ internal fun InkApp(
         }
         if (foreground && addSheet && session.unlocked) InkBottomSheet(onDismiss = { addSheet = false }) {
             AddSheetContent(onScan = { addSheet = false; navigate(Screen.Scan) }, onGallery = { addSheet = false; gallery() },
-                onManual = { addSheet = false; scannedInput = ""; navigate(Screen.ManualAdd) })
+                onManual = { addSheet = false; scannedInput = ""; navigate(Screen.ManualAdd) },
+                onGoogleImport = { addSheet = false; requirePassword { navigate(Screen.GoogleImport) } })
         }
         if (!foreground) Box(Modifier.fillMaxSize().background(colors.surface))
         OperationBusyOverlay(
@@ -353,17 +400,19 @@ internal fun InkApp(
     }
     if (foreground && skipPassword) InkConfirmDialog("暂不设置恢复口令？", "这台设备仍会加密保存账号，但换机或重装将无法恢复。你可以稍后在设置中补设恢复口令。", "暂时跳过",
         { skipPassword = false; viewModel.initialize(null) }, { skipPassword = false })
-    if (foreground) passwordTask?.let { task ->
+    if (foreground) passwordTask?.takeUnless { it == PasswordTask.GoogleExport && googleExportReview == null }?.let { task ->
         VaultPasswordDialog(
             title = when (task) {
                 PasswordTask.Change -> if (session.passwordSet) "修改恢复口令" else "设置恢复口令"
                 PasswordTask.Export -> if (exportFormat.plaintext) "导出迁移文件" else "导出加密备份"
                 PasswordTask.Import -> "打开加密备份"
+                PasswordTask.GoogleExport -> "验证本机恢复口令"
                 PasswordTask.Restore -> if (session.exists) "替换本机库并恢复？" else "设置新的本机恢复口令"
             },
             message = when (task) {
                 PasswordTask.Change -> "口令至少 8 个字符，建议使用较长短语。修改不会更新旧备份，旧备份仍使用原口令。"
                 PasswordTask.Export -> "所选格式：${exportFormat.displayName()}。请输入本机当前恢复口令，验证后准备导出。"
+                PasswordTask.GoogleExport -> "验证通过后，在此设备上显示迁移二维码。"
                 PasswordTask.Import -> "已识别：${importFormat?.displayName() ?: "验证器备份"}。请输入创建这份备份时使用的口令。"
                 PasswordTask.Restore -> if (session.exists)
                     "将用所选备份建立新的本机库。原库密文留在本应用的私有空间。此次操作会更新之前保留的副本。请设置新的本机恢复口令。"
@@ -377,6 +426,7 @@ internal fun InkApp(
                 passwordTask = null
                 importUri = null
                 if (task == PasswordTask.Import && importForRestore) viewModel.cancelImport()
+                if (task == PasswordTask.GoogleExport) googleExportReview = null
             },
             onConfirm = { current, password -> when (task) {
                 PasswordTask.Change -> viewModel.setPassword(current, password, security) { passwordTask = null; message = "恢复口令已更新。旧备份仍使用原来的口令，建议重新导出备份。" }
@@ -399,6 +449,12 @@ internal fun InkApp(
                         }
                     }
                 }
+                PasswordTask.GoogleExport -> googleExportReview?.let { review ->
+                    viewModel.exportGoogle(password, review, allowSubset = review.supported < review.total) {
+                        passwordTask = null
+                        googleExportReview = null
+                    }
+                }
                 PasswordTask.Restore -> viewModel.confirmBackupRestore(password, security)
             } })
     }
@@ -416,6 +472,17 @@ internal fun InkApp(
         )
     }
 
+    if (foreground && session.unlocked) {
+        googleExportReview?.takeIf { passwordTask != PasswordTask.GoogleExport }?.let { review ->
+            GoogleExportReviewDialog(review,
+                onContinue = { passwordTask = PasswordTask.GoogleExport },
+                onDismiss = { googleExportReview = null })
+        }
+        if (session.googleExportPageCount > 0) {
+            GoogleExportQrDialog(session.googleExportPageCount, viewModel::googleExportPage, viewModel::discardGoogleExport)
+        }
+    }
+
     if (foreground && session.restoreAccountCount != null && passwordTask != PasswordTask.Restore) {
         InkConfirmDialog(
             title = "恢复 ${session.restoreAccountCount} 个账号",
@@ -429,28 +496,23 @@ internal fun InkApp(
             onDismiss = viewModel::cancelImport,
         )
     }
-    if (foreground && session.importNames != null) AlertDialog(
-        onDismissRequest = { if (!session.busy) viewModel.cancelImport() }, properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
-        shape = RoundedCornerShape(AppTokens.Radius.sheet), containerColor = colors.surface,
-        title = { Text("导入 ${session.importNames.size} 个账号", style = AppType.section) },
-        text = { Column(Modifier.verticalScroll(rememberScrollState())) {
-            Text("${session.importConflicts} 个账号与本机重复。合并保留本机设置和恢复口令。", style = AppType.body)
-            session.importFormat?.let { name ->
-                Text("格式：${runCatching { InterchangeFormat.valueOf(name).displayName() }.getOrDefault(name)}", style = AppType.caption)
-            }
-            session.importWarnings.forEach { warning ->
-                Spacer(Modifier.height(AppTokens.Spacing.s))
-                Text(warning, style = AppType.caption, color = colors.warning)
-            }
-            Spacer(Modifier.height(AppTokens.Spacing.m))
-            session.importNames.take(50).forEach { Text(it, style = AppType.caption) }
-            if (session.importNames.size > 50) Text("其余 ${session.importNames.size - 50} 个账号也将导入", style = AppType.caption)
-            Spacer(Modifier.height(AppTokens.Spacing.l))
-            InkPrimaryButton("合并，重复时保留本机", { viewModel.confirmImport(MergeConflictPolicy.KEEP_LOCAL, false, security) }, enabled = !session.busy)
-            InkSecondaryButton("合并，重复时使用备份", { viewModel.confirmImport(MergeConflictPolicy.OVERWRITE_LOCAL, false, security) }, enabled = !session.busy)
-            InkSecondaryButton("合并，重复时两个都保留", { viewModel.confirmImport(MergeConflictPolicy.KEEP_BOTH, false, security) }, enabled = !session.busy)
-            InkSecondaryButton("替换本机全部账号…", { replaceConfirm = true }, enabled = !session.busy)
-        } }, confirmButton = {}, dismissButton = { TextButton(enabled = !session.busy, onClick = viewModel::cancelImport) { Text("取消") } })
+    if (foreground && session.importNames != null && !replaceConfirm) {
+        val source = session.importFormat?.let { name ->
+            InterchangeFormat.entries.firstOrNull { it.name == name }?.displayName() ?: name
+        }
+        val google = session.importFormat == GOOGLE_IMPORT_SOURCE
+        ImportReviewDialog(
+            accounts = session.importNames, conflicts = session.importConflicts, source = source,
+            warnings = session.importWarnings, busy = session.busy,
+            onImport = { policy ->
+                viewModel.confirmImport(policy, replace = false, security) {
+                    if (google) { stack.clear(); screen = Screen.List }
+                }
+            },
+            onReplace = if (google) null else ({ replaceConfirm = true }),
+            onDismiss = { if (google && screen == Screen.GoogleImport) back() else viewModel.cancelImport() },
+        )
+    }
     if (foreground && replaceConfirm) InkConfirmDialog("替换本机全部账号？", "本机现有账号将被这份备份替换。建议先导出本机备份。", "替换",
         { replaceConfirm = false; viewModel.confirmImport(MergeConflictPolicy.KEEP_LOCAL, true, security) }, { replaceConfirm = false }, destructive = true)
     val alert = session.error ?: session.notice ?: message

@@ -44,7 +44,7 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager --install 'platforms;android-37.2' 'build-tools;36.0.0' 'platform-tools'
 
-      - name: Produce six actual Kotlin exports
+      - name: Produce five actual Kotlin exports
         if: inputs.operation == 'export'
         working-directory: android
         run: ./gradlew --build-cache :core:test --rerun --tests '*PeerInterchangeTest.productionInterchangeAgreement'
@@ -72,7 +72,7 @@ jobs:
         with:
           name: macos-peer-exports
           path: ${{ runner.temp }}/macos-peer-exports
-      - name: Read all six actual macOS exports through the Kotlin core
+      - name: Read all five actual macOS exports through the Kotlin core
         if: inputs.operation == 'consume'
         env:
           INKOTP_TEST_PEER_EXPORTS: ${{ runner.temp }}/macos-peer-exports

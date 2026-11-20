@@ -72,13 +72,9 @@ final class PeerInterchangeTests: XCTestCase {
         XCTAssertEqual(try Interchange.detect(bytes), format)
         let decoded = try Interchange.decode(bytes, password: format.requiresPassword ? fixturePassword : nil)
         XCTAssertEqual(decoded.format, format)
-        if format == .inkotp2fab {
-            XCTAssertTrue(decoded.model == expected, "\(format.rawValue): complete vault JSON changed")
-        } else {
-            let expectedProfiles = expected.items.map(Profile.init)
-            let decodedProfiles = decoded.model.items.map(Profile.init)
-            XCTAssertTrue(decodedProfiles == expectedProfiles, "\(format.rawValue): OTP profiles or order changed")
-        }
+        let expectedProfiles = expected.items.map(Profile.init)
+        let decodedProfiles = decoded.model.items.map(Profile.init)
+        XCTAssertTrue(decodedProfiles == expectedProfiles, "\(format.rawValue): OTP profiles or order changed")
     }
 
     private func filename(_ prefix: String, _ format: InterchangeFormat) -> String {

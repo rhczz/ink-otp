@@ -26,7 +26,7 @@ Android 支持 Android 8.0 及以上。已有用户建议先导出一份加密�
 
 - **不联网**：不申请 `INTERNET` 权限，不集成分析/崩溃 SDK。
 - **加密存储**：整库 AES-256-GCM；DEK 由 Android Keystore 或恢复口令包装。
-- **可恢复与互通**：默认 Aegis 加密备份，支持 2FAS/otpauth 交换和旧 `.2fab`；版本与信息损失以 [兼容矩阵](spec/interoperability.md) 为准。
+- **可恢复与互通**：默认 Aegis 加密备份，支持 2FAS/otpauth 文件及 Google Authenticator 迁移二维码双向交换；版本与信息损失以 [兼容矩阵](spec/interoperability.md) 为准。
 - **可审计**：开源（GPL-3.0），依赖最小并锁定版本。
 
 > 验证器只负责**生成**验证码，不负责校验；也无法在忘记恢复口令时帮你找回数据。

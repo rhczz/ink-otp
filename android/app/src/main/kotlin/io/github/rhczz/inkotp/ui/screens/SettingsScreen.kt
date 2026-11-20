@@ -54,6 +54,7 @@ fun SettingsScreen(
     onSystemAuthenticationChange: (Boolean) -> Unit = {},
     onPrivacy: (() -> Unit)? = null,
     onWithdrawPrivacy: (() -> Unit)? = null,
+    onGoogleExport: (() -> Unit)? = null,
 ) {
     val colors = LocalInkColors.current
     val lockLabel = when (state.lockTimeoutSeconds) {
@@ -140,6 +141,11 @@ fun SettingsScreen(
                 title = "上次备份",
                 value = state.lastBackupAt ?: "从未",
             )
+
+            if (onGoogleExport != null) {
+                InkDivider()
+                SettingRow(icon = R.drawable.ic_qr_code_scanner, title = "迁移到 Google Authenticator", onClick = onGoogleExport)
+            }
 
             SectionHeader("帮助")
             SettingRow(

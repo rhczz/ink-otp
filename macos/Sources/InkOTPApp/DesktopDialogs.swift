@@ -1,4 +1,5 @@
 import AppKit
+import GoogleOTPTransfer
 import InkOTPCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -29,11 +30,11 @@ struct DesktopDialog<Content: View, Actions: View>: View {
             if let message = store.errorMessage {
                 DesktopNotice(message: message) { store.errorMessage = nil }
             }
-            HStack {
+            HStack(spacing: 12) {
                 if store.busy {
                     DesktopBusyIndicator()
                 }
-                Spacer()
+                Spacer(minLength: 12)
                 Button(tr("Cancel", "取消"), action: store.busy ? (cancelBusy ?? close) : close)
                     .keyboardShortcut(.cancelAction)
                     .disabled(store.busy && cancelBusy == nil)
@@ -100,8 +101,8 @@ enum AccountSetupInput: LocalizedError {
         case .invalid:
             tr("Enter a valid Base32 setup key or otpauth link.", "请输入有效的 Base32 设置密钥或 otpauth 链接。")
         case .migration:
-            tr("Use a setup link for one account. Google Authenticator migration links are unsupported.",
-               "请使用单个账号的设置链接。暂不支持 Google Authenticator 迁移链接。")
+            tr("Use the Google Authenticator transfer to import these accounts.",
+               "请通过 Google Authenticator 迁移导入这些账号。")
         case .manualHOTP:
             tr("Use a TOTP setup link to add an account. Existing HOTP accounts can be imported from a backup.",
                "添加账号时请使用 TOTP 设置链接。现有 HOTP 账号可以从备份导入。")
@@ -123,6 +124,7 @@ struct AccountEditor: View {
     @ObservedObject var store: VaultStore
     let existing: VaultItem?
     let saved: (String) -> Void
+    let openGoogleImport: (String) -> Void
     let close: () -> Void
     @State private var issuer: String
     @State private var account: String
@@ -137,10 +139,12 @@ struct AccountEditor: View {
     private enum EditorField: Hashable { case account, issuer, setup }
 
     init(store: VaultStore, existing: VaultItem?, draft: OTPDraft?,
-         saved: @escaping (String) -> Void, close: @escaping () -> Void) {
+         saved: @escaping (String) -> Void, close: @escaping () -> Void,
+         openGoogleImport: @escaping (String) -> Void) {
         self.store = store
         self.existing = existing
         self.saved = saved
+        self.openGoogleImport = openGoogleImport
         self.close = close
         _issuer = State(initialValue: existing?.issuer ?? draft?.issuer ?? "")
         _account = State(initialValue: existing?.accountName ?? draft?.accountName ?? "")
@@ -243,6 +247,12 @@ struct AccountEditor: View {
     }
 
     private func previewSetupLink() {
+        if GoogleOTPTransferCodec.isMigrationURI(setupInput) {
+            let uri = setupInput
+            setupInput = ""
+            openGoogleImport(uri)
+            return
+        }
         do {
             let parsed = try AccountSetupInput.parse(setupInput)
             guard parsed.kind == .entry else { throw AccountSetupInput.invalid }
@@ -364,6 +374,49 @@ struct PasswordSheet: View {
     }
 }
 
+enum ImportConflictChoice: Hashable {
+    case keepLocal, overwriteLocal, keepBoth
+
+    var policy: MergePolicy {
+        switch self {
+        case .keepLocal: .keepLocal
+        case .overwriteLocal: .overwriteLocal
+        case .keepBoth: .keepBoth
+        }
+    }
+}
+
+struct ImportConflictPicker: View {
+    @Binding var choice: ImportConflictChoice
+
+    var body: some View {
+        Picker(tr("When an account already exists", "已有相同账号时"), selection: $choice) {
+            Text(tr("Keep Existing", "保留本机")).tag(ImportConflictChoice.keepLocal)
+            Text(tr("Use Imported Entry", "采用导入账号")).tag(ImportConflictChoice.overwriteLocal)
+            Text(tr("Keep Both", "两者都保留")).tag(ImportConflictChoice.keepBoth)
+        }
+    }
+}
+
+struct ImportAccountList: View {
+    let items: [VaultItem]
+
+    var body: some View {
+        if !items.isEmpty {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(items) { item in
+                        Text([item.issuer, item.accountName].compactMap { $0 }.joined(separator: " · "))
+                            .lineLimit(2)
+                    }
+                }
+                .padding(.trailing, 8)
+            }
+            .frame(maxHeight: 150)
+        }
+    }
+}
+
 @MainActor
 struct ImportSheet: View {
     @ObservedObject var store: VaultStore
@@ -377,9 +430,9 @@ struct ImportSheet: View {
     @AppStorage("export.last-success") private var lastBackup = 0.0
     @AppStorage("export.last-revision") private var lastBackupRevision = ""
     @State private var decodeTask: Task<Void, Never>?
-    @State private var overwriteConfirmed = false
+    @State private var confirmingReplacement = false
     @State private var duplicateCount = 0
-    @State private var conflictChoice = 0
+    @State private var conflictChoice = ImportConflictChoice.keepLocal
     @State private var authenticate = false
 
     private var replacing: Bool { store.initialized && store.model == nil }
@@ -391,8 +444,7 @@ struct ImportSheet: View {
         return { cancelDecode() }
     }
     private var cannotCommit: Bool {
-        if replacing && !overwriteConfirmed { return true }
-        return creating && (recoveryPassword.isEmpty || recoveryPassword != confirmation)
+        creating && (recoveryPassword.isEmpty || recoveryPassword != confirmation)
     }
 
     var body: some View {
@@ -400,6 +452,13 @@ struct ImportSheet: View {
             content
         } actions: {
             importActions
+        }
+        .alert(tr("Replace existing accounts?", "替换现有账号？"), isPresented: $confirmingReplacement) {
+            Button(tr("Cancel", "取消"), role: .cancel) {}
+            Button(tr("Replace Accounts", "替换账号"), role: .destructive) { commit(replace: true) }
+        } message: {
+            Text(tr("This removes the existing accounts and replaces them with the accounts in this backup.",
+                    "此操作会移除现有账号，并使用这份备份中的账号替换。"))
         }
         .onDisappear {
             backupPassword = ""
@@ -433,9 +492,19 @@ struct ImportSheet: View {
     @ViewBuilder
     private var importActions: some View {
         if preview != nil {
-            Button(creating ? tr("Restore Vault", "恢复验证码库") : tr("Import Accounts", "导入账号"), action: commit)
+            if store.initialized {
+                Button(tr("Replace Accounts…", "替换账号…"), role: .destructive) { confirmingReplacement = true }
+                    .accessibilityIdentifier("backup-replace-request")
+                    .disabled(cannotCommit)
+            }
+            if !replacing {
+                Button(creating ? tr("Restore Vault", "恢复验证码库") : tr("Merge Accounts", "合并账号")) {
+                    commit(replace: false)
+                }
+                .accessibilityIdentifier("backup-merge-commit")
                 .keyboardShortcut(.defaultAction)
                 .disabled(cannotCommit)
+            }
         } else {
             Button(tr("Preview Backup", "预览备份"), action: decode)
                 .keyboardShortcut(.defaultAction)
@@ -447,24 +516,12 @@ struct ImportSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             Label(tr("\(imported.model.items.count) accounts in backup", "备份包含 \(imported.model.items.count) 个账号"), systemImage: "tray.and.arrow.down")
                 .font(.headline)
-            if !replacing && !imported.model.items.isEmpty {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(imported.model.items, id: \.id) { item in
-                            Text([item.issuer, item.accountName].compactMap { $0 }.joined(separator: " · "))
-                                .lineLimit(2)
-                        }
-                    }
-                    .padding(.trailing, 8)
-                }
-                .frame(maxHeight: 138)
-            }
+            ImportAccountList(items: imported.model.items)
             ForEach(Array(imported.warnings.enumerated()), id: \.offset) { _, warning in
                 Label(warning, systemImage: "exclamationmark.triangle").font(.callout)
             }
             if creating {
                 if replacing {
-                    Toggle(tr("Replace the existing vault after verifying my identity.", "验证身份后替换现有验证码库。"), isOn: $overwriteConfirmed)
                     Text(tr("The previous encrypted vault is retained as a rescue copy.", "此前的加密库会保留为救援副本。"))
                         .font(.callout).foregroundStyle(.secondary)
                 }
@@ -478,11 +535,7 @@ struct ImportSheet: View {
                 Text(tr("\(duplicateCount) matching accounts. Your local settings and password will be kept.",
                         "\(duplicateCount) 个账号重复。合并保留本机设置和恢复口令。"))
                     .font(.callout).foregroundStyle(.secondary)
-                Picker(tr("When an account already exists", "已有相同账号时"), selection: $conflictChoice) {
-                    Text(tr("Keep Existing", "保留本机")).tag(0)
-                    Text(tr("Use Backup Entry", "采用备份")).tag(1)
-                    Text(tr("Keep Both", "两者都保留")).tag(2)
-                }
+                ImportConflictPicker(choice: $conflictChoice)
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -511,15 +564,9 @@ struct ImportSheet: View {
         close()
     }
 
-    private func commit() {
-        guard let preview, !store.busy else { return }
-        let choice: MergePolicy
-        switch conflictChoice {
-        case 1: choice = .overwriteLocal
-        case 2: choice = .keepBoth
-        default: choice = .keepLocal
-        }
-        let replace = replacing
+    private func commit(replace: Bool) {
+        guard let preview, !store.busy, !cannotCommit else { return }
+        let choice = conflictChoice.policy
         let password = recoveryPassword.isEmpty ? nil : recoveryPassword
         let authentication = (authenticate || (replace && store.systemAuthentication)) && password != nil
         let restoresVault = creating
@@ -563,13 +610,10 @@ struct ExportSheet: View {
                               "我了解，任何获得此文件的人都能为导出的账号生成验证码。"),
                            isOn: $plaintextAcknowledged)
                 }
-                if format != .inkotp2fab {
-                    Label(tr("Other authenticator formats preserve verification parameters. App-specific labels, icons, and settings may be omitted.",
-                             "其他验证器格式会保留验证码参数，可能省略应用专用标签、图标和设置。"),
-                          systemImage: "info.circle")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
+                Label(tr("Backup formats preserve verification parameters. App-specific labels, icons, and settings may be omitted.",
+                         "备份格式会保留验证码参数，可能省略应用专用标签、图标和设置。"), systemImage: "info.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
             .textFieldStyle(.roundedBorder)
         } actions: {
@@ -624,7 +668,6 @@ extension InterchangeFormat {
         case .twofasEncrypted: tr("2FAS (encrypted)", "2FAS（加密）")
         case .twofasPlaintext: tr("2FAS (plaintext)", "2FAS（明文）")
         case .otpauthText: tr("Setup links (plaintext)", "设置链接（明文）")
-        case .inkotp2fab: tr("InkOTP .2fab (encrypted)", "InkOTP .2fab（加密）")
         }
     }
 }

@@ -139,10 +139,9 @@ def verify_fixtures(folder: Path) -> None:
     print("[PASS] 10 upstream fixture hashes; Aegis and 2FAS crypto/URI profile cross-checks")
 
 
-def verify_exports(folder: Path, prefix: str, legacy_expected: Path) -> None:
-    from reference_backup import decrypt_to_json
+def verify_exports(folder: Path, prefix: str, expected_vault: Path) -> None:
     expected = native_profiles(json.loads((folder / "expected.json").read_bytes()))
-    golden = native_profiles(json.loads(legacy_expected.read_bytes()))
+    golden = native_profiles(json.loads(expected_vault.read_bytes()))
     golden.append(profile("HOTP", "Public Counter", "sample", b"12345678901234567890", counter=10300))
     if expected != golden:
         raise ValueError("export test model differs from the public reference profile")
@@ -152,18 +151,15 @@ def verify_exports(folder: Path, prefix: str, legacy_expected: Path) -> None:
         "TWOFAS_ENCRYPTED": "2fas",
         "TWOFAS_PLAINTEXT": "2fas",
         "OTPAUTH_TEXT": "txt",
-        "INKOTP_2FAB": "2fab",
     }
     files = {f"{prefix}-{format_id}.{extension}" for format_id, extension in formats.items()}
     if {p.name for p in folder.glob(f"{prefix}-*")} != files:
-        raise ValueError(f"expected exactly six {prefix} export files")
+        raise ValueError(f"expected exactly five {prefix} export files")
     for filename in sorted(files):
         file = folder / filename
         raw = file.read_bytes()
         if "OTPAUTH_TEXT" in file.name:
             actual = uri_profiles(raw)
-        elif "INKOTP_2FAB" in file.name:
-            actual = native_profiles(decrypt_to_json(raw, TEST_PASSWORD))
         elif "AEGIS" in file.name:
             actual = aegis_profiles(json.loads(raw), TEST_PASSWORD)
         elif "TWOFAS" in file.name:

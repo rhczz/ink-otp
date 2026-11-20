@@ -203,6 +203,74 @@ final class DesktopUpgradeTests: XCTestCase {
     }
 
     @MainActor
+    func testGoogleTransferPreviewsEntireBatchBeforeImport() throws {
+        continueAfterFailure = false
+        let app = try launchInkOTP()
+        defer { app.terminate() }
+        XCTAssertTrue(element("vault-lock", in: app).waitForExistence(timeout: timeout))
+        setLockTimeout("After 30 Seconds", in: app)
+        let initialCount = try unfilteredAccountCount(in: app)
+        let nextImage = try stagedFixture("google-page-two.png")
+        let firstPage = try String(contentsOf: stagedFixture("google-page-one.txt"), encoding: .utf8)
+        let progress = element("google-import-progress", in: app)
+        let commit = element("google-import-commit", in: app)
+
+        chooseQRImage(nextImage, expecting: progress, in: app)
+        XCTAssertTrue(staticText("1 of 2 QR codes read", in: app).exists)
+        XCTAssertFalse(commit.exists)
+        click(app.buttons["Cancel"].firstMatch)
+        waitUntilAbsent(progress, "Cancelling the transfer closes the incomplete batch")
+        expectAccountCount(initialCount, in: app)
+
+        chooseQRImage(nextImage, expecting: progress, in: app)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString(firstPage, forType: .string))
+        defer { pasteboard.clearContents() }
+        click(app.buttons["Paste QR Link"].firstMatch)
+        XCTAssertTrue(element("google-import-review", in: app).waitForExistence(timeout: timeout))
+        XCTAssertTrue(staticText("2 accounts ready to import", in: app).exists)
+        click(commit)
+        waitUntilAbsent(commit, "Committing closes the transfer preview")
+        expectAccountCount(initialCount + 2, in: app)
+        XCTAssertTrue(account(app, named: "Standalone").exists)
+        XCTAssertTrue(account(app, named: "帳號").exists)
+        XCTAssertTrue(account(app, named: legacyAccount).exists)
+    }
+
+    @MainActor
+    func testReplacementKeepsOnlyConfirmedBackupAccounts() throws {
+        continueAfterFailure = false
+        let app = try launchInkOTP()
+        defer { app.terminate() }
+        XCTAssertTrue(element("vault-lock", in: app).waitForExistence(timeout: timeout))
+        setLockTimeout("After 30 Seconds", in: app)
+        let initialCount = try unfilteredAccountCount(in: app)
+        XCTAssertGreaterThan(initialCount, 1)
+        try showPublicHOTPPreview(in: app)
+
+        let replace = element("backup-replace-request", in: app)
+        click(replace)
+        XCTAssertTrue(staticText("Replace existing accounts?", in: app).waitForExistence(timeout: timeout))
+        // App-wide button queries include the native alert's Touch Bar proxy.
+        let confirm = app.windows.buttons["Replace Accounts"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: timeout), "The confirmation button is missing from the alert window.\n\(app.debugDescription)")
+        click(confirm)
+        waitUntilAbsent(replace, "The replacement finishes after confirmation")
+        expectAccountCount(1, in: app)
+        XCTAssertTrue(account(app, named: hotpAccount).exists)
+        XCTAssertFalse(account(app, named: legacyAccount).exists)
+
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: timeout))
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: timeout))
+        expectAccountCount(1, in: app)
+        XCTAssertTrue(account(app, named: hotpAccount).exists)
+        XCTAssertFalse(account(app, named: legacyAccount).exists)
+    }
+
+    @MainActor
     private func launchInkOTP() throws -> XCUIApplication {
         let path = try XCTUnwrap(ProcessInfo.processInfo.environment["INKOTP_UI_STAGED_APP"])
         XCTAssertTrue(FileManager.default.fileExists(atPath: path), "The staged app is missing")
@@ -362,7 +430,7 @@ final class DesktopUpgradeTests: XCTestCase {
     }
 
     @MainActor
-    private func importPublicHOTP(in app: XCUIApplication) throws {
+    private func showPublicHOTPPreview(in app: XCUIApplication) throws {
         let file = try stagedFixture("public-hotp.txt")
         app.typeKey("o", modifierFlags: .command)
         let choose = app.buttons["Choose Backup"].firstMatch
@@ -378,8 +446,20 @@ final class DesktopUpgradeTests: XCTestCase {
             return
         }
         click(preview)
-        click(app.buttons["Import Accounts"].firstMatch)
+        XCTAssertTrue(element("backup-replace-request", in: app).waitForExistence(timeout: timeout))
+    }
+
+    @MainActor
+    private func importPublicHOTP(in app: XCUIApplication) throws {
+        try showPublicHOTPPreview(in: app)
+        let replace = element("backup-replace-request", in: app)
+        click(replace)
+        XCTAssertTrue(staticText("Replace existing accounts?", in: app).waitForExistence(timeout: timeout))
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        let merge = element("backup-merge-commit", in: app)
+        click(merge)
         XCTAssertTrue(account(app, named: hotpAccount).waitForExistence(timeout: timeout))
+        XCTAssertTrue(account(app, named: legacyAccount).exists)
     }
 
     @MainActor

@@ -60,9 +60,7 @@ jobs:
         with:
           name: inkotp-android-contract-files
           if-no-files-found: error
-          path: |
-            android/core/build/crosscheck/
-            android/core/build/interoperability/
+          path: android/core/build/interoperability/
       - name: Keep verification evidence even on failure
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -74,7 +72,6 @@ jobs:
             android/build/reports/
             android/core/build/reports/
             android/core/build/test-results/
-            android/core/build/crosscheck/
             android/core/build/interoperability/
             android/app/build/reports/
             android/app/build/test-results/
@@ -110,7 +107,7 @@ jobs:
       - name: Independently decrypt and compare all Swift exchange formats
         run: |
           make setup
-          tools/.venv/bin/python tools/reference_interchange.py --exports "$INKOTP_IOS_CONTRACT_DIR/interoperability" --prefix swift
+          tools/.venv/bin/python tools/reference_interchange.py --exports "$INKOTP_IOS_CONTRACT_DIR" --prefix swift
       - name: Read Swift exports with Android production codecs
         run: android/gradlew -p android :core:test --tests '*SwiftContractTest'
 

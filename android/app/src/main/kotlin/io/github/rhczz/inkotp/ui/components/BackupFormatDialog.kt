@@ -25,13 +25,11 @@ fun InterchangeFormat.displayName(): String = when (this) {
     InterchangeFormat.TWOFAS_ENCRYPTED -> "2FAS 加密备份"
     InterchangeFormat.TWOFAS_PLAINTEXT -> "2FAS 明文 JSON"
     InterchangeFormat.OTPAUTH_TEXT -> "otpauth 迁移文本"
-    InterchangeFormat.INKOTP_2FAB -> "旧版 InkOTP 加密备份（.2fab）"
 }
 
 fun InterchangeFormat.documentMime(): String = when (this) {
     InterchangeFormat.OTPAUTH_TEXT -> "text/plain"
-    InterchangeFormat.TWOFAS_ENCRYPTED, InterchangeFormat.TWOFAS_PLAINTEXT,
-    InterchangeFormat.INKOTP_2FAB -> "application/octet-stream"
+    InterchangeFormat.TWOFAS_ENCRYPTED, InterchangeFormat.TWOFAS_PLAINTEXT -> "application/octet-stream"
     else -> "application/json"
 }
 
@@ -51,7 +49,7 @@ fun BackupFormatDialog(onConfirm: (InterchangeFormat) -> Unit, onDismiss: () -> 
                     RadioButton(selected = selected == format, onClick = { selected = format })
                     Column {
                         Text(format.displayName(), style = AppType.body)
-                        Text(if (format.plaintext) "含明文账号密钥，仅用于主动迁移" else if (format == InterchangeFormat.INKOTP_2FAB) "用于兼容旧版 InkOTP，不是通用格式" else "使用当前应用恢复口令加密",
+                        Text(if (format.plaintext) "含明文账号密钥，仅用于主动迁移" else "使用当前应用恢复口令加密",
                             style = AppType.caption, color = if (format.plaintext) colors.danger else colors.inkSecondary)
                     }
                 }

@@ -4,8 +4,8 @@ aliases:
   - Authenticator Design Doc
   - 两步验证器设计文档
 created: 2026-11-04
-updated: 2026-11-19
-version: 0.11
+updated: 2026-11-20
+version: 0.12
 status: implementation-ready
 platforms:
   - Android 8.0+（Kotlin + Jetpack Compose）
@@ -22,7 +22,7 @@ tags:
 
 # InkOTP · 2FA 验证器技术设计文档（v1.0 Android 首发）
 
-> **状态**：v0.11（三端统一发布）｜ **日期**：2026-11-19 ｜ **仓库**：`/Users/renhc/projects/java/ink-otp` ｜ **文档**：`docs/design/2FA验证器-技术设计文档.md`
+> **状态**：v0.12（三端备份迁移与动效）｜ **日期**：2026-11-20 ｜ **仓库**：`/Users/renhc/projects/java/ink-otp` ｜ **文档**：`docs/design/2FA验证器-技术设计文档.md`
 > **权威性**：本文件是 InkOTP 的**权威规格**；`spec/` 是平台中立数据契约的可执行副本。Obsidian vault 内的同名副本只是**快照**，冲突时以仓库版本为准。
 > **范围**：本文保留 Android 首发的设计。后续 [iOS](../../spec/ios-parity.md) 与 [macOS](../../spec/macos-parity.md) 实施按各自规格验收，并与 Android 共用 [发布契约](../../spec/release.md)。应用名 **InkOTP**，Android applicationId `io.github.rhczz.inkotp`，许可证 **GPL-3.0**。
 > **说明**：本文是设计与规格文档，文中代码片段是接口骨架/示意（不一定可直接编译），不是成品实现。设计与实现同仓管理：文档在 `docs/`，平台中立规格在 `spec/`，工程分别位于 `android/`、`ios/` 和 `macos/`。
@@ -207,6 +207,7 @@ tags:
 | ADR-031 | 增加首启恢复与锁定救援。通过 Android 系统文件选择器读取持有的独立备份，验证后从备份建立本机库。 | 无法解锁时不能走正常合并。救援仅导入备份，不从旧库提取账号。已有库救援须明确确认替换，保留原库密文，继续执行原系统验证策略。复用现有加密格式、Keystore、DataStore 和原子写入机制。 |
 | ADR-029 | 使用 Android 系统安全窗口、最近任务截图控制及悬浮窗保护；剪贴板只按当次复制的所有权标记做尽力清理。 | Android 剪贴板没有按项目设定过期时间或条件删除的公开接口，因此使用随机标记核对最新一次复制，无法确认所有权时跳过。屏幕保护按 API 能力启用，补充后台遮挡和遮挡触摸检查。 |
 | ADR-032 | Android、macOS 和 iOS 共用版本标签和 GitHub Release。 | 各平台在同一标签提交上独立通过门禁，再由一个发布任务统一上传。保留各平台签名和构建号规则，历史标签继续供下载与升级验收。见 [跨平台发布契约](../../spec/release.md)。 |
+| ADR-033 | 下线旧版 InkOTP `.2fab` 备份，三端双向支持 Google Authenticator 迁移二维码。 | 继续以 Aegis 加密备份作为跨设备文件恢复入口。停用 `.2fab` 专用编解码，设备本地加密库、恢复口令及其他交换格式继续沿用既有契约。Google 的批次、字段和保密要求见 [迁移规格](../../spec/google-authenticator-transfer.md)。 |
 
 系统验证策略保留恢复口令作为灾备材料。密钥失效后恢复需标准系统确认与恢复口令；更改口令或导入不得静默关闭策略。手机锁屏凭据与应用恢复口令不是同一个密码。
 
@@ -634,7 +635,9 @@ stateDiagram-v2
 
 ---
 
-## 7. 备份文件格式 v1（`.2fab`）
+## 7. 历史备份文件格式 v1（`.2fab`）
+
+> InkOTP 0.6 退役本节格式。现行交换规则见 [交换规格](../../spec/interoperability.md)，本机库仍使用 [设备本地库格式](../../spec/vault-format.md)。
 
 ### 7.1 设计目标
 
@@ -715,11 +718,11 @@ stateDiagram-v2
 
 | 来源 | 格式 | 优先级 | 工作量 |
 |---|---|---|---|
-| Google Authenticator | `otpauth-migration://offline?data=<base64 protobuf>`；`MigrationPayload{ repeated OtpParameters otp_parameters, version, batch_size, batch_index }` | **P1（v1.1）** | 1~2 天，手写最小 protobuf 解析器即可（勿引入完整 protobuf 依赖） |
+| Google Authenticator | [离线迁移二维码 v1](../../spec/google-authenticator-transfer.md) | **InkOTP 0.6 三端双向** | 支持分批，沿用既有导入确认和本地加密保存 |
 | Aegis | JSON（明文/加密），`entries[]` 含 `type/algo/digits/period/secret` | P1~P2 | 明文先做；加密备份需研究其 KDF 与封装，排 P2 |
 | 2FAS | JSON | P2 | 同上 |
 | FreeOTP+ / 标准备份格式 | [authenticator.cc 标准备份格式](https://authenticator.cc/docs/en/otp-backup) | P2 | 结构简单，可作为"导出兼容"方向 |
-| 通用 | 我们的 `.2fab` | **MVP（v1.0）** | 本格式 |
+| 加密备份 | Aegis 加密 JSON | 三端默认 | 读写范围见 [交换规格](../../spec/interoperability.md) |
 
 > Google 迁移的 protobuf 枚举以官方实现为准，实现后必须用真实导出二维码验证，不要只凭文档。
 
@@ -1865,7 +1868,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 |---|---|---|
 | C-06 | 库 JSON / 备份格式**平台中立**：无 Android/Kotlin 特有字段；枚举用字符串；整数显式位宽 | 断言测试 + 评审 |
 | C-07 | `schemaVersion` 只增不减；新字段向后兼容（旧实现忽略未知字段，新实现给缺省值）；旧版本 App 打开新库必须拒绝并提示 | schema 迁移链单元测试 |
-| C-08 | 备份格式任何字节布局变更 → `formatVersion + 1`，同步更新 §7、`spec/backup-format.md`、Python 参考实现与测试向量 | 评审 + 对拍测试 |
+| C-08 | 备份和迁移遵循来源格式的版本与字段定义。调整支持范围时同步更新 `spec/interoperability.md` 与独立样本。 | 评审 + 对拍测试 |
 | C-09 | 备份文件必须 **AEAD 先验证后解析**；头部参数上限校验（防 DoS）；逐字节篡改必须失败 | 篡改矩阵单元测试 + fuzz |
 | C-10 | 种子内部只以**原始字节**（Base64）存储；对外导出再编码为规范 Base32 | 往返/规范化单元测试 |
 | C-11 | 合并去重键固定为 `(type, issuer.lower, account.lower, SHA256(secret))`；改键需 ADR | 评审 + 单元测试 |
@@ -1904,7 +1907,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 | 编号 | 约束 | 检查方式 |
 |---|---|---|
 | C-26 | 禁止 media3 / OkHttp / Retrofit / Ktor / 任何网络依赖；**合并后的 manifest 不得含 `INTERNET` 或 `ACCESS_NETWORK_STATE`** | `tools/check_no_internet.py` + 合并 manifest 断言 + 依赖树评审 |
-| C-27 | `vault.bin` 或 `.2fab` 任何字节布局变更 → `formatVersion + 1`（库文件头字段名为 `version`），同步更新 `spec/vault-format.md` / `spec/backup-format.md`、两套参考实现与测试向量 | 评审 + 跨实现对拍 + 篡改矩阵 |
+| C-27 | `vault.bin` 字节布局变更时递增头部 `version`，同步更新 `spec/vault-format.md`、参考实现和测试向量。 | 评审 + 跨实现对拍 + 篡改矩阵 |
 | C-28 | **只允许一个恢复口令**（ADR-019）；禁止静默创建第二密钥通道/第二个口令；修改口令不得静默改写已导出的旧备份 | 设计评审 + 代码搜索（KDF/口令入口）+ UI 文案检查 |
 
 ### 18.3 变更流程（"例外"的唯一入口）
@@ -1922,9 +1925,9 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 
 | 对象 | 当前版本 | 规则 |
 |---|---|---|
-| 设计文档 | **v0.11（三端统一发布）** | 每次实质变更 +0.1 并记录附录 G |
+| 设计文档 | **v0.12（三端备份迁移与动效）** | 每次实质变更 +0.1 并记录附录 G |
 | Design Language | **v1.0（冻结）** | 变更走 §11.0.9，升 v1.x；页面不得私自扩展 |
-| 备份格式 | **v1（`.2fab`）** | 布局变更 = `formatVersion + 1` + 迁移 + 双实现测试（C-08、C-27） |
+| 备份与迁移格式 | **[支持矩阵](../../spec/interoperability.md)** | 按来源格式版本和独立样本检查（C-08） |
 | 库文件格式 | **v1（`vault.bin`）** | 布局变更 = `version + 1` + `spec/vault-format.md` + 双实现测试（C-27） |
 | 库 schema | **v1** | 只增不减；兼容规则见 C-07 |
 | 应用标识 | **InkOTP / `io.github.rhczz.inkotp`** | 变更需 ADR；影响 Keystore 别名、备份文件命名与渠道签名 |
@@ -1938,7 +1941,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 | G-1 文档门 | 开工前 | 需求/规格/ADR 已定，任务能映射到 §2/§15；`spec/` 与本文档一致；本文件版本号已更新 | P1、C-01~C-05 |
 | G-2 编译门 | 每次提交 | `make test`（`cd android && ./gradlew :core:test :app:testDebugUnitTest`）与 `make build`（`:app:assembleDebug`）通过 | C-23 |
 | G-3 向量门 | 每次提交 | `make spec` 中 `spec/vectors.json` 全过；Argon2id 与 `argon2-cffi` 对拍 | C-23 |
-| G-4 格式门 | 涉及存储/备份 | `make crosscheck`（Kotlin ↔ Python 读写 `.2fab`/`vault.bin`）+ 往返 + 逐字节篡改矩阵 + 头部参数上限 | C-06~C-11、C-27 |
+| G-4 格式门 | 涉及存储/备份 | `make crosscheck`（Python 独立核对本地库、各端写出的标准交换格式）+ 往返 + 篡改检查 + 参数上限 | C-06~C-11、C-27 |
 | G-5 设计门 | UI 变更 | `python tools/check_design_tokens.py --root android/app/src/main/kotlin` + 契约检查 + 本地 Roborazzi 基线复核（`make screenshots`；CI 不比对） | C-19~C-22 |
 | G-6 安全门 | 涉及权限/存储/依赖 | `make verify`；`python tools/check_no_internet.py --manifest <merged-manifest>`；合并 manifest 无 `INTERNET`/`ACCESS_NETWORK_STATE`；无敏感日志；依赖白名单 | C-02、C-12~C-18、C-26 |
 | G-7 演练门 | 发布前 | §13.5 SOP（**真机**）+ 13.4 真机检查表 + 附录 E DoD + 18.5 全门禁 | C-24 |
@@ -2222,3 +2225,5 @@ ADR-023 技术依据：[Android 官方 unlockedDeviceRequired 兼容性说明](h
 2026-11-17 · v0.10：用户确认继续 M4，追加 ADR-025~027，标准互通、每次进入系统认证及性能/资源验证纳入本轮。
 
 2026-11-19 · v0.11 追加 ADR-032，将 Android、macOS 和 iOS 改为共用版本、源码标签和发布资产。
+
+2026-11-20 · v0.12 追加 ADR-033。第 7 章描述的 `.2fab` 为历史格式。当前的备份及迁移能力以 [交换规格](../../spec/interoperability.md) 和 [Google Authenticator 迁移规格](../../spec/google-authenticator-transfer.md) 为准。

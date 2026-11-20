@@ -6,7 +6,7 @@
 
 - `macos/Sources/InkOTPCore` 负责 OTP、Base32、URI、本机库与交换格式。App 分为状态与仓储、平台适配及桌面视图。Android/iOS/macOS 的实现以同一份公共合约验收。
 - 私有库使用该 App 沙箱内的 Application Support。写入同时校验模型并原子替换。随机设备数据密钥由本机 Keychain 管理，启用每次验证时使用 macOS 系统认证。恢复口令由 App 管理，独立于设备登录口令。导出由用户在系统保存面板中选择位置。
-- 跨端恢复使用既有 Aegis、2FAS、otpauth 和旧版 .2fab。支持矩阵和资源上限沿用 [交换规格](interoperability.md)；本地包装密钥不会通过交换文件传递。
+- 跨端恢复使用Aegis、2FAS、otpauth 和 Google Authenticator 二维码。支持矩阵和资源上限沿用 [交换规格](interoperability.md)；本地包装密钥不会通过交换文件传递。
 
 ## 用户可见行为
 

@@ -1,5 +1,10 @@
 package io.github.rhczz.inkotp.ui.screens
 
+import android.animation.ValueAnimator
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,13 +21,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.SnackbarHostState
 import io.github.rhczz.inkotp.R
@@ -59,12 +66,27 @@ fun VaultListScreen(
     onOpenDiagnostics: () -> Unit,
     onCopy: (VaultItemUi) -> Unit = {},
     onLock: () -> Unit = {},
+    animateEntry: Boolean = false,
+    onEntry: () -> Unit = {},
 ) {
     val colors = LocalInkColors.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var searching by remember { mutableStateOf(false) }
     var copiedId by remember { mutableStateOf<String?>(null) }
+    val entry = remember {
+        if (animateEntry && state.items.isNotEmpty() && state.query.isBlank() && ValueAnimator.areAnimatorsEnabled()) {
+            Animatable(0f)
+        } else null
+    }
+    val cardMotion = AppTokens.Motion
+    val activeEntryDuration = cardMotion.PAGE_MS + (cardMotion.VAULT_ENTRY_CAP - 1) * cardMotion.VAULT_ENTRY_STAGGER_MS
+    val entryActive by remember { derivedStateOf { entry != null && entry.value < activeEntryDuration } }
+
+    LaunchedEffect(Unit) {
+        onEntry()
+        entry?.animateTo(activeEntryDuration.toFloat(), tween(activeEntryDuration, easing = LinearEasing))
+    }
 
     LaunchedEffect(copiedId) {
         if (copiedId != null) {
@@ -161,9 +183,20 @@ fun VaultListScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.m),
                     ) {
-                        items(items = visibleItems, key = { it.id }) { item ->
+                        itemsIndexed(items = visibleItems, key = { _, item -> item.id }) { index, item ->
+                            val entryModifier = if (entryActive && entry != null && state.query.isBlank() &&
+                                index < cardMotion.VAULT_ENTRY_CAP) {
+                                Modifier.graphicsLayer {
+                                    val fraction = ((entry.value - index * cardMotion.VAULT_ENTRY_STAGGER_MS) /
+                                        cardMotion.PAGE_MS).coerceIn(0f, 1f)
+                                    val revealed = FastOutSlowInEasing.transform(fraction)
+                                    alpha = 0.5f + 0.5f * revealed
+                                    translationY = -AppTokens.Spacing.s.toPx() * (1f - revealed)
+                                }
+                            } else Modifier
                             VaultCodeCard(
                                 item = item,
+                                modifier = entryModifier,
                                 copied = copiedId == item.id,
                                 onClick = {
                                     if (item.type != "totp") return@VaultCodeCard

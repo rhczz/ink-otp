@@ -134,7 +134,7 @@ object AppTokens {
         const val pressedOverlay = 0.08f
     }
 
-    /** The only six motion durations allowed by the design contract. */
+    /** Motion timing and limits from the design contract. */
     object Motion {
         const val PRESS_MS = 120
         const val SETTLE_MS = 160
@@ -143,5 +143,7 @@ object AppTokens {
         const val SHEET_OPEN_MS = 260
         const val HIGHLIGHT_MS = 300
         const val SHEET_CLOSE_MS = 240
+        const val VAULT_ENTRY_STAGGER_MS = 16
+        const val VAULT_ENTRY_CAP = 6
     }
 }

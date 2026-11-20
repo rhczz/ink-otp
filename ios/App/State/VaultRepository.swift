@@ -151,14 +151,24 @@ actor VaultRepository {
     }
 
     func export(_ session: VaultSession, format: InterchangeFormat, password: String?) throws -> ExportedVault {
-        let file = try read()
-        guard let password, try openWithPassword(file, password: password).key == session.key else {
-            throw VaultFailure.badPassword
-        }
+        guard let password else { throw VaultFailure.badPassword }
+        try verifyExportPassword(password, session: session)
         return try InterchangeCodec.encode(
             session.model, format: format,
             password: format.requiresPassword ? password.precomposedStringWithCanonicalMapping : nil
         )
+    }
+
+    func exportGoogle(_ session: VaultSession, password: String) throws -> GoogleMigrationExport {
+        try verifyExportPassword(password, session: session)
+        return try GoogleMigrationExport.prepare(session.model.items)
+    }
+
+    private func verifyExportPassword(_ password: String, session: VaultSession) throws {
+        let file = try read()
+        guard try openWithPassword(file, password: password).key == session.key else {
+            throw VaultFailure.badPassword
+        }
     }
 
     func decodeImport(_ data: Data, password: String?) throws -> ImportedVault {

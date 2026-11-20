@@ -1,8 +1,5 @@
 package io.github.rhczz.inkotp.core.interchange
 
-import io.github.rhczz.inkotp.core.backup.BackupCodec
-import io.github.rhczz.inkotp.core.backup.BackupError
-import io.github.rhczz.inkotp.core.backup.BackupException
 import io.github.rhczz.inkotp.core.base32.Base32
 import io.github.rhczz.inkotp.core.crypto.SecretBytes
 import io.github.rhczz.inkotp.core.json.VaultJson
@@ -28,8 +25,6 @@ object InterchangeCodec {
 
     fun detect(bytes: ByteArray): InterchangeFormat = guarded {
         bound(bytes)
-        if (bytes.size >= 4 && bytes[0] == 0x32.toByte() && bytes[1] == 0x46.toByte() &&
-            bytes[2] == 0x41.toByte() && bytes[3] == 0x42.toByte()) return@guarded InterchangeFormat.INKOTP_2FAB
         val text = text(bytes).trim()
         if (text.startsWith("otpauth://", ignoreCase = true)) return@guarded InterchangeFormat.OTPAUTH_TEXT
         val root = parse(text) as? JsonObject ?: fail(InterchangeError.UNKNOWN_FORMAT)
@@ -48,7 +43,6 @@ object InterchangeCodec {
             val warnings = mutableListOf<InterchangeWarning>()
             if (format.requiresPassword && password == null) fail(InterchangeError.PASSWORD_REQUIRED)
             val model = when (format) {
-                InterchangeFormat.INKOTP_2FAB -> BackupCodec.open(bytes, password!!)
                 InterchangeFormat.OTPAUTH_TEXT -> decodeUris(text(bytes), warnings)
                 InterchangeFormat.AEGIS_ENCRYPTED, InterchangeFormat.AEGIS_PLAINTEXT -> {
                     val root = parse(text(bytes)).jsonObject
@@ -80,7 +74,7 @@ object InterchangeCodec {
                 }
             }
             if (format.plaintext) warnings += InterchangeWarning(InterchangeWarningCode.PLAINTEXT_SECRETS)
-            if (format != InterchangeFormat.INKOTP_2FAB) warnings += InterchangeWarning(InterchangeWarningCode.LOCAL_SETTINGS_NOT_TRANSFERRED)
+            warnings += InterchangeWarning(InterchangeWarningCode.LOCAL_SETTINGS_NOT_TRANSFERRED)
             ImportedVault(model, format, warnings.distinctBy { it.code })
         }
     } finally { password?.fill('\u0000') }
@@ -96,13 +90,12 @@ object InterchangeCodec {
                 }
                 if (incompatible.isNotEmpty()) throw InterchangeException(InterchangeError.UNSUPPORTED_ENTRIES, incompatible)
             }
-            val warnings = if (format == InterchangeFormat.INKOTP_2FAB) emptyList() else buildList {
+            val warnings = buildList {
                 add(InterchangeWarning(InterchangeWarningCode.METADATA_NOT_TRANSFERRED, model.items.size))
                 add(InterchangeWarning(InterchangeWarningCode.LOCAL_SETTINGS_NOT_TRANSFERRED))
                 if (format.plaintext) add(InterchangeWarning(InterchangeWarningCode.PLAINTEXT_SECRETS))
             }
             val bytes = when (format) {
-                InterchangeFormat.INKOTP_2FAB -> BackupCodec.seal(model, password!!)
                 InterchangeFormat.OTPAUTH_TEXT -> model.items.sortedBy { it.sortIndex }.joinToString("\n", postfix = if (model.items.isEmpty()) "" else "\n", transform = ::uri).toByteArray(StandardCharsets.UTF_8)
                 InterchangeFormat.AEGIS_ENCRYPTED, InterchangeFormat.AEGIS_PLAINTEXT -> {
                     val db = aegisDb(model)
@@ -301,12 +294,5 @@ object InterchangeCodec {
     }
     private inline fun <T> guarded(block: () -> T): T = try { block() }
     catch (failure: InterchangeException) { throw failure }
-    catch (failure: BackupException) {
-        fail(when (failure.code) {
-            BackupError.BAK_E_AUTH -> InterchangeError.AUTHENTICATION_FAILED
-            BackupError.BAK_E_VERSION -> InterchangeError.UNSUPPORTED_VERSION
-            BackupError.BAK_E_KDF_PARAMS, BackupError.BAK_E_KDF_ALGO -> InterchangeError.UNSUPPORTED_KDF
-            else -> InterchangeError.MALFORMED_FILE
-        })
-    } catch (_: Exception) { fail(InterchangeError.MALFORMED_FILE) }
+    catch (_: Exception) { fail(InterchangeError.MALFORMED_FILE) }
 }

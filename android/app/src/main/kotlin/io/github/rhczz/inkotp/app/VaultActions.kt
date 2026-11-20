@@ -35,7 +35,7 @@ object VaultActions {
         val fields = when (val result = OtpauthParser.parse(input.trim())) {
             is OtpUriResult -> result.fields
             is BareSecretResult -> result.fields
-            else -> throw IllegalArgumentException("暂不支持 Google 迁移二维码，请使用单个账号的二维码")
+            else -> throw SafeInputException("请在 Google Authenticator 迁移流程中核对并合并整批账号")
         }
         var adopted = false
         try {

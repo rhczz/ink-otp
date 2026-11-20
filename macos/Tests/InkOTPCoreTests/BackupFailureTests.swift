@@ -5,34 +5,10 @@ import XCTest
 final class BackupFailureTests: XCTestCase {
     private let testPassword = "correct horse battery staple"
 
-    func testLegacyReadsDataSlicesAndRejectsShortHeaders() throws {
-        let fixture = try readFixture("backup-v1.2fab")
-        let known = try readFixture("backup-v1.expected.json")
-        let sliced = (Data([0xAA]) + fixture).dropFirst()
-        XCTAssertEqual(try LegacyBackup.decode(sliced, password: testPassword), try VaultJSON.decode(known))
-
-        let invalidMagic = Data([0]) + fixture.dropFirst()
-        XCTAssertThrowsError(try LegacyBackup.decode(invalidMagic, password: "invalid")) {
-            XCTAssertEqual($0 as? LegacyBackup.Failure, .magic)
-        }
-        XCTAssertThrowsError(try LegacyBackup.decode(Data(fixture.prefix(49)), password: "invalid")) {
-            XCTAssertEqual($0 as? LegacyBackup.Failure, .truncated)
-        }
-    }
-
-    func testLegacySeparatesInvalidJSONAndIncompatibleSchemasAfterAuthentication() throws {
-        let cases: [(Data, LegacyBackup.Failure)] = [
-            (Data([0xC3, 0x28]), .json),
-            (Data("{".utf8), .json),
-            (Data("[]".utf8), .schema),
-            (Data("{\"schemaVersion\":2}".utf8), .schema)
-        ]
-        for (plaintext, expected) in cases {
-            let bytes = try sealAuthenticatedFixture(plaintext)
-            XCTAssertThrowsError(try LegacyBackup.decode(bytes, password: testPassword)) {
-                XCTAssertEqual($0 as? LegacyBackup.Failure, expected)
-            }
-        }
+    func testImportRejectsFormerBackupHeader() throws {
+        let removedFormat = Data("2FAB".utf8) + Data(repeating: 0, count: 60)
+        XCTAssertThrowsError(try Interchange.detect(removedFormat))
+        XCTAssertThrowsError(try Interchange.decode(removedFormat, password: testPassword))
     }
 
     func testAegisValidatesAllAdvertisedPasswordCosts() throws {
@@ -75,18 +51,6 @@ final class BackupFailureTests: XCTestCase {
         }
         let uri = try Interchange.encode(model, format: .otpauthText)
         XCTAssertEqual(try Interchange.decode(uri.bytes).model.items.first?.counter, Int64(Int32.max) + 1)
-    }
-
-    private func sealAuthenticatedFixture(_ plaintext: Data) throws -> Data {
-        let salt = try BackupCrypto.random(16)
-        let nonce = try BackupCrypto.random(12)
-        let key = try KDF.argon2id(password: Data(testPassword.utf8), salt: salt, memoryKiB: 8192, iterations: 1, parallelism: 1)
-        var header = Data("2FAB".utf8)
-        header.append(contentsOf: [1, 1, 0, 0, 32, 0, 0, 0, 0, 1, 0, 0, 0, 1])
-        header.append(salt)
-        header.append(nonce)
-        header.append(contentsOf: withUnsafeBytes(of: UInt32(plaintext.count).bigEndian) { Array($0) })
-        return header + (try BackupCrypto.seal(plaintext, key: key, nonce: nonce, aad: header))
     }
 
     private func readFixture(_ name: String) throws -> Data {

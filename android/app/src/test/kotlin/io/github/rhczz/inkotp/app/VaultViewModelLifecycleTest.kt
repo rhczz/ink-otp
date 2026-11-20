@@ -11,10 +11,12 @@ import io.github.rhczz.inkotp.core.crypto.Kdf
 import io.github.rhczz.inkotp.core.crypto.KdfParams
 import io.github.rhczz.inkotp.core.crypto.RandomSource
 import io.github.rhczz.inkotp.core.crypto.SecureRandomSource
-import io.github.rhczz.inkotp.core.backup.BackupCodec
+import io.github.rhczz.inkotp.core.interchange.InterchangeCodec
+import io.github.rhczz.inkotp.core.interchange.InterchangeFormat
 import io.github.rhczz.inkotp.core.backup.MergeConflictPolicy
 import io.github.rhczz.inkotp.core.model.VaultItem
 import io.github.rhczz.inkotp.core.otp.OtpType
+import io.github.rhczz.inkotp.core.uri.GoogleMigrationCodec
 import io.github.rhczz.inkotp.data.DeviceEnvelope
 import io.github.rhczz.inkotp.data.DeviceKeys
 import io.github.rhczz.inkotp.data.EnvelopeStore
@@ -149,7 +151,7 @@ class VaultViewModelLifecycleTest {
         val remote = repository.model!!.copy(items = repository.model!!.items.map {
             it.copy(id = UUID.randomUUID().toString(), accountName = "imported", secret = it.secret.copyOf())
         })
-        val backup = BackupCodec.seal(remote, password.toCharArray(), KdfParams(8192, 1, 1))
+        val backup = InterchangeCodec.encode(remote, InterchangeFormat.AEGIS_ENCRYPTED, password.toCharArray()).bytes
         repository.discardModel(remote)
         vm.previewImport(backup, password) { }
         pumpUntil("import preview") { vm.state.importNames != null && !vm.state.busy }
@@ -217,6 +219,124 @@ class VaultViewModelLifecycleTest {
         assertTrue(vm.endPicker(fresh))
     }
 
+    @Test fun completeGoogleBatchIsReviewedBeforeOneMerge() {
+        val vm = unlockedViewModel()
+        val sample = repository.model!!.items.single()
+        val accounts = (1..11).map { sample.copy(accountName = "google-$it", sortIndex = it) }
+        val pages = GoogleMigrationCodec.encode(accounts, 48)
+
+        vm.ingestGoogleImport(pages[1].decodeToString())
+        pumpUntil("waiting for remaining migration pages") { vm.state.googleImportProgress?.received == 1 && !vm.state.busy }
+        assertNull(vm.state.importNames)
+        assertEquals(1, repository.model!!.items.size)
+
+        vm.ingestGoogleImport(pages[0].decodeToString())
+        pumpUntil("all migration pages ready to review") { vm.state.importNames?.size == 11 && !vm.state.busy }
+        assertEquals(GOOGLE_IMPORT_SOURCE, vm.state.importFormat)
+        assertEquals(accounts.map { it.accountName }, vm.state.importNames!!.map { it.substringAfter(" · ") })
+        assertEquals(1, repository.model!!.items.size)
+
+        vm.confirmImport(MergeConflictPolicy.KEEP_LOCAL, replace = false)
+        pumpUntil("migration committed") { vm.state.notice != null && !vm.state.busy }
+        assertEquals(12, repository.model!!.items.size)
+        assertNull(vm.state.importNames)
+        assertNull(vm.state.googleImportProgress)
+    }
+
+    @Test fun googleCancelAndLockDiscardCollectedPages() {
+        val vm = unlockedViewModel()
+        val sample = repository.model!!.items.single()
+        val accounts = (1..11).map { sample.copy(accountName = "google-$it", sortIndex = it) }
+        val pages = GoogleMigrationCodec.encode(accounts, 48)
+
+        vm.ingestGoogleImport(pages[0].decodeToString())
+        pumpUntil("waiting for remaining migration pages") { vm.state.googleImportProgress?.received == 1 && !vm.state.busy }
+        vm.cancelImport()
+        assertNull(vm.state.googleImportProgress)
+        vm.ingestGoogleImport(pages[1].decodeToString())
+        pumpUntil("new scan is still incomplete") { vm.state.googleImportProgress?.received == 1 && !vm.state.busy }
+        assertNull(vm.state.importNames)
+
+        vm.lock()
+        assertNull(vm.state.googleImportProgress)
+        pumpUntil("locked migration cleanup") { repository.model == null }
+    }
+
+    @Test fun googleExportRequiresPasswordAndExplicitPermissionForIncompatibleSubset() {
+        val vm = unlockedViewModel()
+        vm.onForeground()
+        vm.add("Public", "incompatible",
+            "otpauth://totp/incompatible?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256") { }
+        pumpUntil("incompatible account added") { vm.state.items.size == 2 && !vm.state.busy }
+        var pendingReview: GoogleExportReview? = null
+        vm.reviewGoogleExport { pendingReview = it }
+        pumpUntil("migration reviewed") { pendingReview != null && !vm.state.busy }
+        val review = pendingReview!!
+        assertEquals(1, review.supported)
+        assertEquals(2, review.total)
+        assertTrue(review.issues.single().contains("SHA1"))
+
+        vm.exportGoogle("wrong password", review, allowSubset = true) { fail("accepted wrong password") }
+        pumpUntil("incorrect recovery password") { vm.state.error != null && !vm.state.busy }
+        assertNull(vm.googleExportPage(0))
+
+        vm.exportGoogle(password, review, allowSubset = false) { fail("ignored subset opt-in") }
+        pumpUntil("subset needs consent") { vm.state.error != null && !vm.state.busy }
+        assertNull(vm.googleExportPage(0))
+
+        vm.exportGoogle(password, review, allowSubset = true) {}
+        pumpUntil("compatibility-reviewed QR available") { vm.state.googleExportPageCount == 1 && !vm.state.busy }
+        val decoded = GoogleMigrationCodec.decode(vm.googleExportPage(0)!!.decodeToString())
+        assertEquals(1, decoded.entries.size)
+        decoded.clear()
+
+        vm.lock()
+        assertEquals(0, vm.state.googleExportPageCount)
+        assertNull(vm.googleExportPage(0))
+    }
+
+    @Test fun backgroundedGoogleExportClearsPagesAndSuppressesLateResults() {
+        val vm = unlockedViewModel()
+        vm.onForeground()
+        var pendingReview: GoogleExportReview? = null
+        vm.reviewGoogleExport { pendingReview = it }
+        pumpUntil("migration reviewed") { pendingReview != null && !vm.state.busy }
+        val review = pendingReview!!
+        val slow = blockKdf()
+        var callbacks = 0
+        vm.exportGoogle(password, review, allowSubset = false) { callbacks++ }
+        pumpUntil("export verification start") { slow.started.count == 0L }
+        vm.onContentHidden()
+        vm.onForeground()
+        slow.release.countDown()
+        pumpUntil("interrupted export finished") { !vm.state.busy }
+        assertEquals(0, callbacks)
+        assertNull(vm.googleExportPage(0))
+
+        vm.onForeground()
+        vm.exportGoogle(password, review, allowSubset = false) { callbacks++ }
+        pumpUntil("foreground QR export") { vm.state.googleExportPageCount == 1 && !vm.state.busy }
+        assertEquals(1, callbacks)
+        vm.onContentHidden()
+        assertEquals(0, vm.state.googleExportPageCount)
+        assertNull(vm.googleExportPage(0))
+    }
+
+    @Test fun vaultEntryMotionIsConsumedAcrossActivityRecreationAndResetByUnlock() {
+        val vm = unlockedViewModel()
+        val token = vm.sessionToken
+        assertTrue(vm.shouldAnimateVaultEntry(token))
+        vm.markVaultEntryPlayed(token)
+        assertFalse(viewModel().shouldAnimateVaultEntry(token))
+
+        vm.lock()
+        pumpUntil("locked before new entry") { repository.model == null && !vm.state.busy }
+        vm.unlockPassword(password)
+        pumpUntil("unlocked for new entry") { vm.state.unlocked && !vm.state.busy }
+        assertTrue(vm.shouldAnimateVaultEntry(vm.sessionToken))
+        assertFalse(vm.shouldAnimateVaultEntry(token))
+    }
+
     @Test fun pendingExportSurvivesActivityScopeRecreationUntilThePickerReturns() {
         val vm = unlockedViewModel()
         var token: Long? = null
@@ -228,7 +348,7 @@ class VaultViewModelLifecycleTest {
         val ticket = recreatedHostVm.takeExport(token!!)!!
         try {
             assertSame(vm, recreatedHostVm)
-            assertEquals(1, BackupCodec.open(ticket.bytes, password.toCharArray()).items.size)
+            assertEquals(1, InterchangeCodec.decode(ticket.bytes, password.toCharArray()).model.items.size)
             assertNull(recreatedHostVm.takeExport(token!!))
         } finally { ticket.bytes.fill(0) }
     }

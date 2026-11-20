@@ -8,13 +8,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import io.github.rhczz.inkotp.core.backup.BackupException
 import io.github.rhczz.inkotp.core.backup.BackupMerge
 import io.github.rhczz.inkotp.core.backup.MergeConflictPolicy
 import io.github.rhczz.inkotp.core.crypto.SecretBytes
+import io.github.rhczz.inkotp.core.model.VaultItem
 import io.github.rhczz.inkotp.core.model.VaultModel
 import io.github.rhczz.inkotp.core.model.VaultSettings
+import io.github.rhczz.inkotp.core.otp.OtpType
 import io.github.rhczz.inkotp.core.time.DriftDetector
+import io.github.rhczz.inkotp.core.uri.GoogleMigrationBatch
+import io.github.rhczz.inkotp.core.uri.GoogleMigrationCodec
+import io.github.rhczz.inkotp.core.uri.GoogleMigrationException
 import io.github.rhczz.inkotp.core.uri.OtpauthException
 import io.github.rhczz.inkotp.core.vault.VaultException
 import io.github.rhczz.inkotp.data.VaultRepository
@@ -40,6 +44,8 @@ import java.text.Normalizer
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.UUID
+import java.security.SecureRandom
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +59,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+const val GOOGLE_IMPORT_SOURCE = "Google Authenticator 二维码"
+
+data class GoogleExportReview(val revision: String, val supported: Int, val total: Int, val issues: List<String>)
 
 data class SessionUiState(
     val ready: Boolean = false,
@@ -72,6 +82,8 @@ data class SessionUiState(
     val notice: String? = null,
     val importNames: List<String>? = null,
     val importConflicts: Int = 0,
+    val googleImportProgress: GoogleMigrationBatch.Progress? = null,
+    val googleExportPageCount: Int = 0,
     val clearClipboardOnLock: Boolean = true,
     val systemAuthenticationRequired: Boolean = false,
     val systemRecoveryRequired: Boolean = false,
@@ -88,7 +100,7 @@ data class SessionUiState(
 
 /** Export bytes owned by one unlocked session and one vault revision; may be explicitly selected plaintext. */
 class ExportTicket internal constructor(val sessionToken: Long, val revision: String, val bytes: ByteArray,
-    val format: InterchangeFormat = InterchangeFormat.INKOTP_2FAB, val warnings: List<String> = emptyList())
+    val format: InterchangeFormat, val warnings: List<String> = emptyList())
 
 data class ExportDescription(val format: InterchangeFormat, val warnings: List<String>)
 
@@ -105,6 +117,9 @@ class VaultViewModel internal constructor(application: Application, private val 
     private var activeOperation: Job? = null
     private var pendingImport: VaultModel? = null
     private var pendingExport: ExportTicket? = null
+    private val googleImportBatch = GoogleMigrationBatch()
+    private var googleExportPages = emptyList<ByteArray>()
+    private var googleExportVisibility = 0L
     private var backgroundJob: Job? = null
     private var backgroundAt: Long? = null
     private var pickerInFlight = false
@@ -116,6 +131,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     private var codeRecalculationJob: Job? = null
     private var resourceJob: Job? = null
     private var foreground = false
+    private var vaultEntryPlayedFor: Long? = null
     private var privacySuspended = false
     private var systemAuthenticationDeadline: Long? = null
     private var automaticAuthenticationGeneration: Long? = null
@@ -126,6 +142,12 @@ class VaultViewModel internal constructor(application: Application, private val 
         private set
     val sessionToken: Long get() = generation
     fun isCurrentSession(token: Long): Boolean = token == generation && state.unlocked
+
+    fun shouldAnimateVaultEntry(token: Long): Boolean = isCurrentSession(token) && vaultEntryPlayedFor != token
+
+    fun markVaultEntryPlayed(token: Long) {
+        if (isCurrentSession(token)) vaultEntryPlayedFor = token
+    }
 
     init {
         openSession()
@@ -212,9 +234,11 @@ class VaultViewModel internal constructor(application: Application, private val 
                                     (e is VaultAccessException && e.code == VaultAccessError.SYSTEM_AUTH_RECOVERY_REQUIRED)))
                         }
                     } finally {
+                        if (token == generation && state.importCancelling) googleImportBatch.clear()
                         if (token != generation) withContext(NonCancellable + Dispatchers.IO) {
                             pendingImport?.let(repository::discardModel)
                             pendingImport = null
+                            googleImportBatch.clear()
                             projection.clear()
                             repository.lock()
                         }
@@ -223,8 +247,10 @@ class VaultViewModel internal constructor(application: Application, private val 
             } finally {
                 if (token == generation) {
                     lastOperation = OperationTiming(kind, (SystemClock.elapsedRealtime() - started).coerceAtLeast(0))
+                    val cancellingImport = state.importCancelling
                     state = state.copy(busy = false, importDecoding = false, importCancelling = false,
-                        backupRestoreActive = state.backupRestoreActive && !state.importCancelling)
+                        googleImportProgress = state.googleImportProgress.takeUnless { cancellingImport },
+                        backupRestoreActive = state.backupRestoreActive && !cancellingImport)
                     if (systemAuthenticationDeadline != null && foreground) {
                         systemAuthenticationDeadline = null
                         backgroundJob?.cancel()
@@ -374,7 +400,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     }
 
     /** One bounded in-memory export; plaintext formats require explicit UI confirmation. */
-    fun export(password: String, ready: (Long) -> Unit) = export(password, InterchangeFormat.INKOTP_2FAB, ready)
+    fun export(password: String, ready: (Long) -> Unit) = export(password, InterchangeFormat.AEGIS_ENCRYPTED, ready)
 
     fun export(password: String, format: InterchangeFormat, ready: (Long) -> Unit) {
         val chars = password.toCharArray()
@@ -427,6 +453,107 @@ class VaultViewModel internal constructor(application: Application, private val 
         return true
     }
 
+    fun reviewGoogleExport(done: (GoogleExportReview) -> Unit) = perform(kind = OperationKind.EXPORT, refreshAfter = false) { token ->
+        val model = repository.model ?: throw IllegalStateException()
+        var incompatible = 0
+        val issues = buildList {
+            for (item in model.items) {
+                val issue = GoogleMigrationCodec.exportIssue(item) ?: continue
+                incompatible++
+                if (size < 50) add("${accountLabel(item)} · $issue")
+            }
+        }
+        withContext(Dispatchers.Main) {
+            checkGeneration(token)
+            done(GoogleExportReview(model.updatedAt, model.items.size - incompatible, model.items.size, issues))
+        }
+    }
+
+    fun exportGoogle(password: String, review: GoogleExportReview, allowSubset: Boolean, done: () -> Unit) {
+        val visibility = googleExportVisibility
+        val chars = password.toCharArray()
+        perform(kind = OperationKind.EXPORT, cleanup = { chars.fill('\u0000') }, refreshAfter = false) { token ->
+            val model = repository.model ?: throw IllegalStateException()
+            if (model.updatedAt != review.revision) throw SafeInputException("账号已变更，请重新检查要迁移的账号。")
+            if (!repository.verifyPassword(chars)) throw SafeInputException("恢复口令不正确，未生成二维码。")
+            val compatible = model.items.filter { GoogleMigrationCodec.exportIssue(it) == null }
+            if (compatible.size != review.supported || (!allowSubset && compatible.size != model.items.size)) {
+                throw SafeInputException("请先核对无法迁移的账号，再明确选择仅导出兼容账号。")
+            }
+            val pages = GoogleMigrationCodec.encode(compatible, SecureRandom().nextInt())
+            var retained = false
+            try {
+                withContext(Dispatchers.Main) {
+                    checkGeneration(token)
+                    if (!foreground || googleExportVisibility != visibility) return@withContext
+                    discardGoogleExport()
+                    googleExportPages = pages
+                    state = state.copy(googleExportPageCount = pages.size)
+                    retained = true
+                    done()
+                }
+            } finally {
+                if (!retained) pages.forEach { SecretBytes.wipe(it) }
+            }
+        }
+    }
+
+    fun googleExportPage(index: Int): ByteArray? = googleExportPages.getOrNull(index)?.copyOf()
+
+    fun discardGoogleExport() {
+        googleExportPages.forEach { SecretBytes.wipe(it) }
+        googleExportPages = emptyList()
+        if (state.googleExportPageCount != 0) state = state.copy(googleExportPageCount = 0)
+    }
+
+    fun ingestGoogleImport(input: String) {
+        if (!state.passwordSet) {
+            report("请先设置恢复口令，再合并迁移账号。")
+            return
+        }
+        if (state.importNames != null) {
+            report("请先完成或取消当前导入预览。")
+            return
+        }
+        perform(kind = OperationKind.IMPORT, refreshAfter = false, decodingImport = true) { token ->
+            val page = GoogleMigrationCodec.decode(input)
+            if (token != generation) {
+                page.clear()
+                checkGeneration(token)
+            }
+            val progress = googleImportBatch.accept(page)
+            if (!progress.complete) {
+                withContext(Dispatchers.Main) {
+                    checkGeneration(token)
+                    state = state.copy(googleImportProgress = progress)
+                }
+                return@perform
+            }
+            val entries = googleImportBatch.takeEntries()
+            var retained = false
+            try {
+                val now = Instant.now().toString()
+                val items = entries.mapIndexed { index, entry ->
+                    VaultItem(
+                        id = UUID.randomUUID().toString(), type = entry.type, issuer = entry.issuer,
+                        accountName = requireNotNull(entry.accountName), secret = entry.secret,
+                        algorithm = entry.algorithm, digits = entry.digits, period = entry.period ?: 30,
+                        counter = entry.counter, sortIndex = (index + 1) * 1000, origin = "import",
+                        createdAt = now, updatedAt = now,
+                    )
+                }
+                val remote = VaultModel(vaultId = UUID.randomUUID().toString(), createdAt = now, updatedAt = now, items = items)
+                val warnings = buildList {
+                    add("二维码包含明文账号密钥。这里只迁移账号和验证码参数。")
+                    if (entries.any { it.warnings.isNotEmpty() }) add("部分名称已规范化，请核对预览中的服务名和账号。")
+                }
+                stageImport(remote, GOOGLE_IMPORT_SOURCE, warnings, forRestore = false, token) { retained = true }
+            } finally {
+                if (!retained) entries.forEach { SecretBytes.wipe(it.secret) }
+            }
+        }
+    }
+
     fun previewImport(bytes: ByteArray, password: String, forRestore: Boolean = false, done: () -> Unit) {
         val chars = password.toCharArray()
         if (state.busy || !isCurrentBackupRequest(generation, forRestore)) {
@@ -437,19 +564,9 @@ class VaultViewModel internal constructor(application: Application, private val 
             var decoded: VaultModel? = null
             try {
                 val imported = decodeImport(bytes, chars.takeIf { it.isNotEmpty() })
-                val remote = imported.model
-                decoded = remote
-                checkGeneration(token)
-                val existingKeys = repository.model?.items.orEmpty().map(BackupMerge::keyOf).toSet()
-                val importNames = if (forRestore) null else remote.items.map { "${it.issuer ?: "账号"} · ${it.accountName}" }
-                withContext(Dispatchers.Main) {
-                    checkGeneration(token)
-                    pendingImport?.let(repository::discardModel)
-                    pendingImport = remote
+                decoded = imported.model
+                stageImport(imported.model, imported.format.name, imported.warnings.map { it.message }, forRestore, token) {
                     decoded = null
-                    state = state.copy(importFormat = imported.format.name, importWarnings = imported.warnings.map { it.message },
-                        importNames = importNames, restoreAccountCount = remote.items.size.takeIf { forRestore },
-                        importConflicts = remote.items.count { BackupMerge.keyOf(it) in existingKeys }, importDecoding = false)
                     done()
                 }
             } finally {
@@ -458,6 +575,29 @@ class VaultViewModel internal constructor(application: Application, private val 
             }
         }
     }
+
+    private suspend fun stageImport(remote: VaultModel, format: String, warnings: List<String>, forRestore: Boolean,
+        token: Long, staged: () -> Unit,
+    ) {
+        checkGeneration(token)
+        val existingKeys = repository.model?.items.orEmpty().map(BackupMerge::keyOf).toSet()
+        val names = if (forRestore) null else remote.items.map(::accountLabel)
+        val conflicts = remote.items.count { BackupMerge.keyOf(it) in existingKeys }
+        val previewWarnings = if (remote.items.any { it.type == OtpType.HOTP }) {
+            warnings + "HOTP 计数器会随账号保留，也可再次导出。当前 InkOTP 为 TOTP 账号生成验证码。"
+        } else warnings
+        withContext(Dispatchers.Main) {
+            checkGeneration(token)
+            pendingImport?.let(repository::discardModel)
+            pendingImport = remote
+            state = state.copy(importFormat = format, importWarnings = previewWarnings, importNames = names,
+                googleImportProgress = null, restoreAccountCount = remote.items.size.takeIf { forRestore },
+                importConflicts = conflicts, importDecoding = false)
+            staged()
+        }
+    }
+
+    private fun accountLabel(item: VaultItem): String = "${item.issuer ?: "账号"} · ${item.accountName}"
 
     fun confirmBackupRestore(password: String, security: DeviceSecurity?) {
         if (state.busy || state.unlocked || !state.backupRestoreActive || state.restoreAccountCount == null) return
@@ -486,13 +626,21 @@ class VaultViewModel internal constructor(application: Application, private val 
         }
     }
 
-    fun confirmImport(policy: MergeConflictPolicy, replace: Boolean, security: DeviceSecurity? = null) = perform(kind = OperationKind.IMPORT) { token ->
+    fun confirmImport(
+        policy: MergeConflictPolicy, replace: Boolean, security: DeviceSecurity? = null, done: () -> Unit = {},
+    ) = perform(kind = OperationKind.IMPORT) { token ->
         val remote = pendingImport ?: throw IllegalStateException()
+        if (replace && state.importFormat == GOOGLE_IMPORT_SOURCE) throw SafeInputException("迁移二维码只能合并账号。")
         val proof = authorizeRebind(token, security)
         repository.importBackup(remote, policy, replace, proof)
         repository.discardModel(remote)
         pendingImport = null
-        withContext(Dispatchers.Main) { checkGeneration(token); state = state.copy(importNames = null, importWarnings = emptyList(), importFormat = null, notice = "导入完成。本机恢复口令仍可用于备份和恢复。") }
+        withContext(Dispatchers.Main) {
+            checkGeneration(token)
+            state = state.copy(importNames = null, importWarnings = emptyList(), importFormat = null,
+                notice = "导入完成。本机恢复口令仍可用于备份和恢复。")
+            done()
+        }
     }
 
     private suspend fun authorizeRebind(token: Long, security: DeviceSecurity?): SystemAuthProof? {
@@ -513,8 +661,14 @@ class VaultViewModel internal constructor(application: Application, private val 
         }
         if (state.busy) return
         state = state.copy(importNames = null, importWarnings = emptyList(), importFormat = null,
-            backupRestoreActive = false, restoreAccountCount = null)
-        viewModelScope.launch { gate.withLock { pendingImport?.let(repository::discardModel); pendingImport = null } }
+            googleImportProgress = null, backupRestoreActive = false, restoreAccountCount = null)
+        viewModelScope.launch {
+            gate.withLock {
+                googleImportBatch.clear()
+                pendingImport?.let(repository::discardModel)
+                pendingImport = null
+            }
+        }
     }
 
     fun lock(clearClipboard: Boolean = true) = lock(clearClipboard, refreshMetadata = true)
@@ -548,17 +702,20 @@ class VaultViewModel internal constructor(application: Application, private val 
         systemAuthenticationDeadline = null
         pendingExport?.bytes?.fill(0)
         pendingExport = null
+        discardGoogleExport()
         state = state.copy(ready = state.ready && clearClipboard, unlocked = false, busy = false,
             items = emptyList(), importNames = null, error = null,
             recoveryPasswordRequested = false, systemRecoveryRequired = false,
             clearClipboardOnLock = clearClipboard, samplingResources = false, resources = null, importWarnings = emptyList(), importFormat = null,
-            restoreAccountCount = null, backupRestoreActive = false, importDecoding = false, importCancelling = false)
+            restoreAccountCount = null, backupRestoreActive = false, importDecoding = false, importCancelling = false,
+            googleImportProgress = null)
         viewModelScope.launch {
             gate.withLock {
                 if (token != generation) return@withLock
                 withContext(Dispatchers.IO) {
                     pendingImport?.let(repository::discardModel)
                     pendingImport = null
+                    googleImportBatch.clear()
                     projection.clear()
                     repository.lock()
                 }
@@ -628,9 +785,15 @@ class VaultViewModel internal constructor(application: Application, private val 
         return true
     }
 
-    fun onSystemAuthenticationBackground() {
+    internal fun onContentHidden() {
         foreground = false
+        googleExportVisibility++
         reconcileTicker()
+        discardGoogleExport()
+    }
+
+    fun onSystemAuthenticationBackground() {
+        onContentHidden()
         codeRecalculationJob?.cancel()
         resourceJob?.cancel()
         val now = SystemClock.elapsedRealtime()
@@ -642,8 +805,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     }
 
     fun onBackground() {
-        foreground = false
-        reconcileTicker()
+        onContentHidden()
         codeRecalculationJob?.cancel()
         resourceJob?.cancel()
         if (!state.unlocked && !pickerInFlight) {
@@ -750,20 +912,27 @@ class VaultViewModel internal constructor(application: Application, private val 
         generation++
         pendingExport?.bytes?.fill(0)
         pendingExport = null
+        discardGoogleExport()
         activeOperation?.cancel()
         codeRecalculationJob?.cancel()
         tickerJob?.cancel(); resourceJob?.cancel()
         backgroundJob?.cancel()
-        CoroutineScope(Dispatchers.IO).launch { gate.withLock { pendingImport?.let(repository::discardModel); pendingImport = null; projection.clear(); repository.lock() } }
+        CoroutineScope(Dispatchers.IO).launch { gate.withLock {
+            pendingImport?.let(repository::discardModel)
+            pendingImport = null
+            googleImportBatch.clear()
+            projection.clear()
+            repository.lock()
+        } }
         super.onCleared()
     }
 
     private fun safeMessage(error: Exception): String = when (error) {
         is SafeInputException -> error.message ?: "输入无效，请检查后重试"
         is VaultAccessException -> error.message ?: "无法打开加密库，请重试"
+        is GoogleMigrationException -> error.message ?: "这张迁移二维码无法读取"
         is OtpauthException -> "密钥或 otpauth 链接无效，请检查算法、位数、周期和密钥内容"
         is InterchangeException -> error.message ?: "不支持或损坏的备份文件，未修改现有数据"
-        is BackupException -> "备份无法打开：口令不正确、文件损坏或格式不受支持。现有库未被替换。"
         is VaultException -> "加密库无法打开：口令不正确、文件损坏或格式不受支持。不会自动重建或清空。"
         is BiometricAuthenticationException -> error.message ?: "生物识别未完成，请重试或使用恢复口令"
         else -> "操作未完成，请检查输入、文件访问权限或设备状态后重试"

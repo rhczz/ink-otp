@@ -58,6 +58,8 @@ struct InkSettingsView: View {
                     Divider()
                     row("Import backup", symbol: "square.and.arrow.down") { backup(.importBackup) }
                     Divider()
+                    row("Transfer to Google Authenticator", symbol: "qrcode") { backup(.exportGoogle) }
+                    Divider()
                     LabeledContent("Last backup") {
                         if let lastBackupAt = state.lastBackupAt { Text(lastBackupAt) }
                         else { Text("Never") }

@@ -1,6 +1,8 @@
 package io.github.rhczz.inkotp.data
 
-import io.github.rhczz.inkotp.core.backup.BackupCodec
+import io.github.rhczz.inkotp.core.interchange.InterchangeCodec
+import io.github.rhczz.inkotp.core.interchange.InterchangeException
+import io.github.rhczz.inkotp.core.interchange.InterchangeFormat
 import io.github.rhczz.inkotp.core.backup.MergeConflictPolicy
 import io.github.rhczz.inkotp.core.crypto.KdfParams
 import io.github.rhczz.inkotp.core.crypto.Kdf
@@ -123,9 +125,9 @@ class VaultRepositoryTest {
         val repo = repository()
         repo.initialize(password())
         val committed = files.bytes!!.copyOf()
-        val backup = BackupCodec.seal(repo.model!!, password(), params)
-        try { repo.decodeBackup(backup, "wrong".toCharArray()); fail("decoded") }
-        catch (_: Exception) { }
+        val backup = InterchangeCodec.encode(repo.model!!, InterchangeFormat.AEGIS_ENCRYPTED, password()).bytes
+        try { InterchangeCodec.decode(backup, "wrong".toCharArray()); fail("decoded") }
+        catch (_: InterchangeException) { }
         assertArrayEquals(committed, files.bytes)
     }
 

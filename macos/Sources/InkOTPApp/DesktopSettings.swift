@@ -104,6 +104,11 @@ struct DesktopSettings: View {
                 Button(tr("Import Backup…", "导入备份…")) { send(.importBackup) }
                     .disabled(!store.consent || store.busy)
             }
+            Section("Google Authenticator") {
+                Button(tr("Import Transfer QR Codes…", "导入迁移二维码…")) { send(.importGoogle) }
+                Button(tr("Export Transfer QR Codes…", "导出迁移二维码…")) { send(.exportGoogle) }
+            }
+            .disabled(store.model == nil || store.busy)
             Section {
                 LabeledContent(tr("Last export", "上次导出"), value: lastBackup == 0
                                ? tr("Never", "从未") : Date(timeIntervalSince1970: lastBackup).formatted(date: .abbreviated, time: .shortened))

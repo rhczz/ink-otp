@@ -10,14 +10,15 @@ let package = Package(
     name: "InkOTP",
     platforms: [.macOS(.v14)],
     products: [.executable(name: "InkOTP", targets: ["InkOTPApp"])],
+    dependencies: [.package(path: "../apple/GoogleOTPTransfer")],
     targets: [
         .target(
             name: "CInkOTPCrypto",
             cSettings: [.unsafeFlags(["-I" + argon2Prefix + "/include", "-I" + opensslPrefix + "/include"])],
             linkerSettings: [.unsafeFlags([argon2Prefix + "/lib/libargon2.a", opensslPrefix + "/lib/libcrypto.a"])]
         ),
-        .target(name: "InkOTPCore", dependencies: ["CInkOTPCrypto"]),
-        .executableTarget(name: "InkOTPApp", dependencies: ["InkOTPCore"]),
-        .testTarget(name: "InkOTPCoreTests", dependencies: ["InkOTPCore"]),
+        .target(name: "InkOTPCore", dependencies: ["CInkOTPCrypto", .product(name: "GoogleOTPTransfer", package: "GoogleOTPTransfer")]),
+        .executableTarget(name: "InkOTPApp", dependencies: ["InkOTPCore", .product(name: "GoogleOTPTransfer", package: "GoogleOTPTransfer")]),
+        .testTarget(name: "InkOTPCoreTests", dependencies: ["InkOTPCore", .product(name: "GoogleOTPTransfer", package: "GoogleOTPTransfer")]),
     ]
 )

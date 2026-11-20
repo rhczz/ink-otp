@@ -8,46 +8,6 @@ final class InterchangeTests: XCTestCase {
         url.deletingLastPathComponent()
     }
 
-    func testIndependentBackupDecryptsWithFullMetadata() throws {
-        let expected = try VaultJson.decode(nativeFixture("backup-v1.expected.json"))
-        let bytes = try nativeFixture("backup-v1.2fab")
-        let header = try BackupCodec.inspect(bytes)
-        XCTAssertEqual(1410, header.ciphertextLength)
-        XCTAssertEqual(1476, bytes.count)
-        XCTAssertEqual(expected, try BackupCodec.open(bytes, password: fixturePassword))
-    }
-
-    func testBackupRejectsWrongPasswordTamperingAndInvalidHeader() throws {
-        let bytes = try nativeFixture("backup-v1.2fab")
-        XCTAssertThrowsError(try BackupCodec.open(bytes, password: "wrong")) {
-            XCTAssertEqual(.authentication, $0 as? BackupFailure)
-        }
-        var corrupted = bytes
-        corrupted[50] ^= 1
-        XCTAssertThrowsError(try BackupCodec.open(corrupted, password: fixturePassword)) {
-            XCTAssertEqual(.authentication, $0 as? BackupFailure)
-        }
-        for (offset, replacement, failure) in [
-            (0, 0, BackupFailure.magic),
-            (4, 2, .version),
-            (5, 2, .kdfAlgorithm),
-            (6, 255, .kdfParameters),
-            (46, 255, .ciphertextLength)
-        ] {
-            var modified = bytes
-            modified[offset] = UInt8(replacement)
-            XCTAssertThrowsError(try BackupCodec.inspect(modified)) {
-                XCTAssertEqual(failure, $0 as? BackupFailure)
-            }
-        }
-        XCTAssertThrowsError(try BackupCodec.inspect(bytes.dropLast())) {
-            XCTAssertEqual(.truncated, $0 as? BackupFailure)
-        }
-        XCTAssertThrowsError(try BackupCodec.inspect(bytes + Data([0]))) {
-            XCTAssertEqual(.trailingData, $0 as? BackupFailure)
-        }
-    }
-
     func testAegisAndTwoFasRejectAllUnsupportedProfilesWithOriginalPositions() throws {
         let pairs: [(String, InterchangeFormat, [Int])] = [
             ("aegis_plain.json", .aegisPlaintext, [2, 5, 7]),
@@ -142,23 +102,15 @@ final class InterchangeTests: XCTestCase {
     #if os(macOS)
     func testExportsForAndroidAndPythonAndRoundTrips() throws {
         let model = try publicInterchangeModel()
-        let directory = repo.appendingPathComponent("ios/Core/.contract-exports")
-        let crosscheck = directory.appendingPathComponent("crosscheck")
-        let interoperability = directory.appendingPathComponent("interoperability")
-        for folder in [crosscheck, interoperability] {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        }
+        let interoperability = repo.appendingPathComponent("ios/Core/.contract-exports/interoperability")
+        try FileManager.default.createDirectory(at: interoperability, withIntermediateDirectories: true)
         let expected = try VaultJson.encode(model)
-        try expected.write(to: crosscheck.appendingPathComponent("swift-backup.expected.json"), options: .atomic)
         try expected.write(to: interoperability.appendingPathComponent("expected.json"), options: .atomic)
         for format in InterchangeFormat.allCases {
             let password = format.requiresPassword ? fixturePassword : nil
             let result = try InterchangeCodec.encode(model, format: format, password: password)
             try assertInterchange(result.bytes, format: format, expected: model)
             try result.bytes.write(to: interoperability.appendingPathComponent(format.filename(prefix: "swift")), options: .atomic)
-            if format == .inkotp2fab {
-                try result.bytes.write(to: crosscheck.appendingPathComponent("swift-backup.2fab"), options: .atomic)
-            }
         }
     }
 
@@ -168,30 +120,16 @@ final class InterchangeTests: XCTestCase {
             ProcessInfo.processInfo.environment["INKOTP_REQUIRE_ANDROID_CONTRACT"] != "1" {
             throw XCTSkip("Android exports are supplied by the cross-platform Actions workflow")
         }
-        // The independent Kotlin backup cross-check uses the original two accounts
-        // with their timestamps set to the library timestamps.
-        var legacy = try VaultJson.decode(nativeFixture("backup-v1.expected.json"))
-        for index in legacy.items.indices {
-            legacy.items[index].createdAt = legacy.createdAt
-            legacy.items[index].updatedAt = legacy.updatedAt
-        }
-        let crosscheck = directory.appendingPathComponent("crosscheck")
-        let nativeSource = try VaultJson.decode(Data(contentsOf: crosscheck.appendingPathComponent("kotlin-backup.expected.json")))
-        let backup = try Data(contentsOf: crosscheck.appendingPathComponent("kotlin-backup.2fab"))
-        XCTAssertTrue(nativeSource == legacy, "The Android native backup input differs from the independent example")
-        XCTAssertTrue(try BackupCodec.open(backup, password: fixturePassword) == legacy, "Android native backup changed the vault")
-
-        let interchange = directory.appendingPathComponent("interoperability")
         let expected = try publicInterchangeModel()
         let filenames = InterchangeFormat.allCases.map { $0.filename(prefix: "kotlin") }
-        let files = try FileManager.default.contentsOfDirectory(atPath: interchange.path)
+        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         XCTAssertEqual(Set(files), Set(filenames + ["expected.json"]), "Android interchange inventory")
 
-        let reported = try VaultJson.decode(Data(contentsOf: interchange.appendingPathComponent("expected.json")))
+        let reported = try VaultJson.decode(Data(contentsOf: directory.appendingPathComponent("expected.json")))
         XCTAssertTrue(reported == expected, "The Android interchange input differs from the independent example")
         for format in InterchangeFormat.allCases {
             let filename = format.filename(prefix: "kotlin")
-            let data = try Data(contentsOf: interchange.appendingPathComponent(filename))
+            let data = try Data(contentsOf: directory.appendingPathComponent(filename))
             try assertInterchange(data, format: format, expected: expected)
         }
     }
@@ -215,11 +153,7 @@ final class InterchangeTests: XCTestCase {
         XCTAssertEqual(try InterchangeCodec.detect(data), format, format.rawValue)
         let imported = try InterchangeCodec.decode(data, password: format.requiresPassword ? fixturePassword : nil)
         XCTAssertEqual(imported.format, format)
-        if format == .inkotp2fab {
-            XCTAssertTrue(imported.model == expected, "\(format.rawValue): complete vault changed")
-        } else {
-            XCTAssertTrue(profiles(imported.model) == profiles(expected), "\(format.rawValue): OTP fields or order changed")
-        }
+        XCTAssertTrue(profiles(imported.model) == profiles(expected), "\(format.rawValue): OTP fields or order changed")
     }
     #endif
 

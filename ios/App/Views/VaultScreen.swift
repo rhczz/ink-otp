@@ -11,9 +11,12 @@ struct VaultScreen: View {
     @Binding var alert: LocalizedStringKey?
     @Binding var completingSetup: Bool
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var entered = false
     @State private var searching = false
     @State private var query = ""
     @State private var sheet: AddSheet?
+    @State private var recoveryAfterAdd = false
     @State private var copied: CopyFeedback?
     @State private var refreshTime = UUID()
     @FocusState private var searchFocused: Bool
@@ -32,17 +35,34 @@ struct VaultScreen: View {
 
     var body: some View {
         content
-        .sheet(item: $sheet) { route in
+        .sheet(item: $sheet, onDismiss: openRecoveryAfterAdd) { route in
             NavigationStack {
                 switch route {
                 case .options:
-                    AddOptions(onScan: { sheet = .scan }, onManual: { sheet = .editor($0) },
+                    AddOptions(onScan: { sheet = .scan }, onManual: receiveAddInput,
                                onCancel: { sheet = nil }, state: state)
                 case .scan:
-                    ScannerView(onFound: { sheet = .editor($0) }, onCancel: { sheet = .options },
+                    ScannerView(onFound: receiveAddInput, onCancel: { sheet = .options },
                                 onManual: { sheet = .editor("") }, state: state)
                 case .editor(let input):
-                    AddAccountView(state: state, input: input) { sheet = nil }
+                    AddAccountView(state: state, input: input, onMigration: receiveAddInput) { sheet = nil }
+                case .google(let input):
+                    GoogleImportView(initial: input, state: state) { sheet = nil }
+                case .googleRecoveryRequired:
+                    InkPage {
+                        InkHeading(title: "Set a recovery password first",
+                                   message: "A recovery password is required to import Google Authenticator accounts. Set it, then scan the transfer again.",
+                                   symbol: "key")
+                        Button("Set recovery password") {
+                            recoveryAfterAdd = true
+                            sheet = nil
+                        }
+                        .buttonStyle(InkButtonStyle())
+                        Button("Cancel") { sheet = nil }
+                            .buttonStyle(InkButtonStyle(prominent: false))
+                    }
+                    .navigationTitle("Google Authenticator")
+                    .navigationBarTitleDisplayMode(.inline)
                 }
             }
             .tint(Ink.accent)
@@ -53,7 +73,10 @@ struct VaultScreen: View {
             if !Task.isCancelled { copied = nil }
         }
         .onChange(of: canShowCodes) { _, canShow in
-            if !canShow { copied = nil }
+            if !canShow {
+                entered = true
+                copied = nil
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
             refreshTime = UUID()
@@ -75,7 +98,9 @@ struct VaultScreen: View {
     }
 
     private var listContent: some View {
-        ScrollView {
+        let rows = items
+        let entryIDs = rows.prefix(6).map(\.id)
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: Ink.m) {
                 if searching {
                     InkField(title: "Search accounts", value: $query, identifier: "vault.search")
@@ -105,7 +130,7 @@ struct VaultScreen: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if items.isEmpty {
+                if rows.isEmpty {
                     InkHeading(
                         title: query.isEmpty ? "No accounts yet" : "No matching accounts",
                         message: query.isEmpty ? "Scan a QR code from your service or enter its key manually." : "Try another search or clear the search field.",
@@ -119,10 +144,15 @@ struct VaultScreen: View {
                         Button("Clear search") { query = "" }.buttonStyle(InkButtonStyle(prominent: false))
                     }
                 } else {
-                    ForEach(items, id: \.id) { item in
+                    ForEach(rows) { item in
+                        let initialIndex = entryIDs.firstIndex(of: item.id)
+                        let showEntry = canShowCodes && !reduceMotion && !entered && initialIndex != nil
                         OtpClock(enabled: canShowCodes, refresh: refreshTime) { now in
                             accountRow(item, date: now)
                         }
+                        .opacity(showEntry ? 0.5 : 1)
+                        .offset(y: showEntry ? -Ink.s : 0)
+                        .animation(entryMotion(initialIndex), value: entered)
                     }
                 }
             }
@@ -130,6 +160,11 @@ struct VaultScreen: View {
             .padding(Ink.l)
             .padding(.bottom, Ink.touch + Ink.xl)
             .frame(maxWidth: .infinity)
+        }
+        .task(id: canShowCodes) {
+            guard canShowCodes, !entered else { return }
+            await Task.yield()
+            if !Task.isCancelled { entered = true }
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Ink.background)
@@ -184,6 +219,25 @@ struct VaultScreen: View {
 
     private var diagnostics: some View {
         DiagnosticsView(state: state, refresh: resetClock)
+    }
+
+    private func entryMotion(_ index: Int?) -> Animation? {
+        guard let index, canShowCodes, !reduceMotion else { return nil }
+        return .easeOut(duration: 0.22).delay(Double(index) * 0.016)
+    }
+
+    private func receiveAddInput(_ input: String) {
+        if isGoogleMigrationURI(input) {
+            sheet = state.recoveryConfigured ? .google(input) : .googleRecoveryRequired
+        } else {
+            sheet = .editor(input)
+        }
+    }
+
+    private func openRecoveryAfterAdd() {
+        guard recoveryAfterAdd else { return }
+        recoveryAfterAdd = false
+        if state.phase == .unlocked { transfer = .recoveryPassword }
     }
 
     private func finishSetup() {
@@ -280,13 +334,15 @@ struct VaultScreen: View {
     }
 
     private enum AddSheet: Identifiable {
-        case options, scan, editor(String)
+        case options, scan, editor(String), google(String), googleRecoveryRequired
 
         var id: Int {
             switch self {
             case .options: 1
             case .scan: 2
             case .editor: 3
+            case .google: 4
+            case .googleRecoveryRequired: 5
             }
         }
     }

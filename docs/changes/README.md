@@ -4,6 +4,7 @@
 
 | 日期 | 记录 | 状态 |
 |---|---|---|
+| 2026-11-20 | [三端迁移与交互改进](2026-11-20-transfer-and-motion.md) | 范围已定，待验证 |
 | 2026-11-19 | [Android、macOS 和 iOS 共用一个发布页](2026-11-19-unified-platform-release.md) | 范围已定，待验证 |
 | 2026-11-19 | [Mac 从图片添加二维码账号](2026-11-19-macos-qr-image-import.md) | 已发布 Beta 2 图片导入、取消和重启复验通过 |
 | 2026-11-19 | [iOS 录屏与后台遮挡](2026-11-19-ios-screen-capture-curtain.md) | 3 项模拟器测试通过，录屏与镜像真机待测 |
