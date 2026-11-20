@@ -1,14 +1,14 @@
 # InkOTP 规格与测试向量
 
-Android、iOS 和 macOS 的公共数据契约在本目录维护。独立参考实现和生产代码使用同一组公共向量与夹具。
+Android 实现所用的数据契约在本目录维护。独立参考实现和生产代码使用同一组公共向量与夹具。
 
 | 主题 | 规格与样本 |
 | --- | --- |
 | TOTP、HOTP 与 Base32 | [算法测试向量](vectors.json)、[TOTP 原理](../docs/totp.md) |
 | 账号设置链接 | [URI 验收用例](otpauth-cases.json)、[字段与错误码](#3-otpauth-casesjson-结构) |
 | 备份和迁移 | [交换格式与兼容矩阵](interoperability.md)、[Google Authenticator 二维码](google-authenticator-transfer.md) |
-| 本地加密库 | [`2FAV` 格式](vault-format.md)、[跨平台边界](../docs/platform-neutrality.md) |
-| 平台行为 | [Android](android-interaction.md)、[iOS/iPadOS](ios-parity.md)、[macOS](macos-parity.md) |
+| 本地加密库 | [`2FAV` 格式](vault-format.md)、[设备与交换边界](../docs/platform-neutrality.md) |
+| Android 行为 | [交互规格](android-interaction.md) |
 | 验收与发布 | [公共验收](conformance.md)、[发布契约](release.md) |
 | 历史格式 | [旧版 `.2fab`](backup-format.md) |
 
@@ -308,9 +308,9 @@ Warning 枚举：
 ## 7. 平台中立性
 
 - JSON 字段、枚举字面量和整数范围按各自格式定义。`2FAV` 的整数为大端序，库 JSON 使用 UTF-8。
-- 公共格式只包含规格定义的字段。设备包装和认证状态由各平台在应用私有存储中维护。
+- 公共格式只包含规格定义的字段。Android 在应用私有存储和 Keystore 中维护设备包装和认证状态。
 - 库格式发生不兼容变化时，更新对应版本并验证既有样本和升级路径。
 
 ## 8. 验收范围
 
-三端消费同一份 OTP、URI 和 Google 迁移样本，并使用 [公共验收契约](conformance.md) 检查实际备份。系统身份验证、安装和覆盖升级见各平台规格及对应[变更记录](../docs/changes/README.md)。
+Android 核心用 OTP、URI 和 Google 迁移样本验收。CI 按 [公共验收契约](conformance.md) 检查真实导出的备份，系统身份验证、安装和覆盖升级按[发布检查表](../docs/release-checklist.md)核对。

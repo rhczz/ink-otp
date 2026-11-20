@@ -2,7 +2,7 @@ package io.github.rhczz.inkotp.ui.screens
 
 import android.animation.ValueAnimator
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.SnackbarHostState
@@ -56,6 +57,8 @@ import io.github.rhczz.inkotp.ui.theme.LocalInkColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private val VaultCardSettle = CubicBezierEasing(0.2f, 0f, 0.2f, 1f)
+
 @Composable
 fun VaultListScreen(
     state: VaultListUiState,
@@ -74,18 +77,24 @@ fun VaultListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var searching by remember { mutableStateOf(false) }
     var copiedId by remember { mutableStateOf<String?>(null) }
+    val cardMotion = AppTokens.Motion
+    val entryCardCount = remember { minOf(state.items.size, cardMotion.VAULT_ENTRY_CAP) }
     val entry = remember {
-        if (animateEntry && state.items.isNotEmpty() && state.query.isBlank() && ValueAnimator.areAnimatorsEnabled()) {
+        if (animateEntry && entryCardCount > 0 && state.query.isBlank() && ValueAnimator.areAnimatorsEnabled()) {
             Animatable(0f)
         } else null
     }
-    val cardMotion = AppTokens.Motion
-    val activeEntryDuration = cardMotion.PAGE_MS + (cardMotion.VAULT_ENTRY_CAP - 1) * cardMotion.VAULT_ENTRY_STAGGER_MS
-    val entryActive by remember { derivedStateOf { entry != null && entry.value < activeEntryDuration } }
+    val entryDuration = cardMotion.VAULT_ENTRY_CARD_MS +
+        (entryCardCount - 1).coerceAtLeast(0) * cardMotion.VAULT_ENTRY_STAGGER_MS
+    val entryActive by remember { derivedStateOf { entry != null && entry.value < entryDuration } }
+    val filtering = state.query.isNotBlank()
 
     LaunchedEffect(Unit) {
         onEntry()
-        entry?.animateTo(activeEntryDuration.toFloat(), tween(activeEntryDuration, easing = LinearEasing))
+        entry?.animateTo(entryDuration.toFloat(), tween(entryDuration, easing = LinearEasing))
+    }
+    LaunchedEffect(filtering) {
+        if (filtering && entryActive) entry?.snapTo(entryDuration.toFloat())
     }
 
     LaunchedEffect(copiedId) {
@@ -176,7 +185,7 @@ fun VaultListScreen(
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().clipToBounds(),
                         contentPadding = PaddingValues(
                             top = AppTokens.Spacing.l,
                             bottom = AppTokens.Size.bottomContentPadding,
@@ -184,14 +193,13 @@ fun VaultListScreen(
                         verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.m),
                     ) {
                         itemsIndexed(items = visibleItems, key = { _, item -> item.id }) { index, item ->
-                            val entryModifier = if (entryActive && entry != null && state.query.isBlank() &&
-                                index < cardMotion.VAULT_ENTRY_CAP) {
+                            val entryModifier = if (entryActive && entry != null && !filtering && index < entryCardCount) {
                                 Modifier.graphicsLayer {
-                                    val fraction = ((entry.value - index * cardMotion.VAULT_ENTRY_STAGGER_MS) /
-                                        cardMotion.PAGE_MS).coerceIn(0f, 1f)
-                                    val revealed = FastOutSlowInEasing.transform(fraction)
-                                    alpha = 0.5f + 0.5f * revealed
-                                    translationY = -AppTokens.Spacing.s.toPx() * (1f - revealed)
+                                    val elapsed = entry.value - index * cardMotion.VAULT_ENTRY_STAGGER_MS
+                                    val progress = (elapsed / cardMotion.VAULT_ENTRY_CARD_MS).coerceIn(0f, 1f)
+                                    alpha = (progress * 4f).coerceAtMost(1f)
+                                    translationY = -cardMotion.vaultEntryDrop.toPx() *
+                                        (1f - VaultCardSettle.transform(progress))
                                 }
                             } else Modifier
                             VaultCodeCard(

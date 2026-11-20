@@ -67,7 +67,25 @@ class BackupFormatDialogTest {
         }
     }
 
-    private fun showDialog(onConfirm: (InterchangeFormat) -> Unit = {}, onDismiss: () -> Unit = {}) {
-        compose.setContent { InkTheme(darkTheme = false) { BackupFormatDialog(onConfirm, onDismiss) } }
+    @Test fun selectingQrUsesTheSameBackupExportDialogWithoutSelectingAFileBackupFormat() {
+        var fileExports = 0
+        var qrExports = 0
+        showDialog(onConfirm = { fileExports++ }, onQrExport = { qrExports++ })
+
+        compose.onNodeWithText("迁移二维码（图片）").performScrollTo().performClick()
+        compose.onNodeWithText("下一步").performClick()
+
+        compose.runOnIdle {
+            assertEquals(0, fileExports)
+            assertEquals(1, qrExports)
+        }
+    }
+
+    private fun showDialog(
+        onConfirm: (InterchangeFormat) -> Unit = {},
+        onDismiss: () -> Unit = {},
+        onQrExport: () -> Unit = {},
+    ) {
+        compose.setContent { InkTheme(darkTheme = false) { BackupFormatDialog(onConfirm, onDismiss, onQrExport) } }
     }
 }

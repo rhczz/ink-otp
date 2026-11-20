@@ -1,18 +1,12 @@
 # InkOTP
 
-InkOTP 是一款离线两步验证器，适用于 Android、iPhone、iPad 和 Mac。它把账号密钥加密保存在设备上，用设备时间计算登录所需的一次性验证码。
+InkOTP 是一款适用于 Android 的离线两步验证器。它把账号密钥加密保存在设备上，用设备时间计算登录所需的一次性验证码。
 
 [官网](https://inkotp.renhongchang.top/) · [隐私声明](https://inkotp.renhongchang.top/privacy/) · [下载](https://github.com/rhczz/ink-otp/releases)
 
 ## 安装与使用
 
-三端共用一个版本号。在同一个 [GitHub Release](https://github.com/rhczz/ink-otp/releases) 的 **Assets** 里选对应文件。
-
-| 平台 | 下载与安装 |
-| --- | --- |
-| Android 8.0+ | 下载签名 APK。 |
-| macOS 14+ | 下载通用 DMG，支持 Apple Silicon 和 Intel。首次打开见 [Mac 安装说明](macos/README.md)。 |
-| iOS / iPadOS 17+ | iPhone、iPad 使用 IPA，未签名包需自行签名后安装。Xcode 模拟器使用 ZIP。 [iOS 安装说明](ios/README.md) |
+InkOTP 支持 Android 8.0 及以上。在 [GitHub Release](https://github.com/rhczz/ink-otp/releases) 的 **Assets** 下载签名 APK。已有用户可以先导出一份加密备份，再覆盖安装。
 
 在网站的账号安全设置启用验证器，用 InkOTP 扫描网站提供的二维码，再把显示的验证码填回网站完成绑定。之后登录时，打开该账号对应的卡片取码。
 

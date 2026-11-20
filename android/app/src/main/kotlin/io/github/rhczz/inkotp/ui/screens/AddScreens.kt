@@ -49,7 +49,6 @@ fun AddSheetContent(
     onScan: () -> Unit,
     onGallery: () -> Unit,
     onManual: () -> Unit,
-    onGoogleImport: (() -> Unit)? = null,
 ) {
     SheetContent(
         title = "添加验证码",
@@ -58,7 +57,7 @@ fun AddSheetContent(
         SheetActionRow(
             icon = R.drawable.ic_qr_code_scanner,
             title = "扫码添加",
-            subtitle = "对准服务提供的二维码",
+            subtitle = "读取账号设置或迁移二维码",
             onClick = onScan,
         )
         SheetActionRow(
@@ -70,14 +69,8 @@ fun AddSheetContent(
         SheetActionRow(
             icon = R.drawable.ic_keyboard,
             title = "手动输入",
-            subtitle = "输入 Base32 密钥或 otpauth:// 链接",
+            subtitle = "输入 Base32 密钥，或粘贴设置或迁移链接",
             onClick = onManual,
-        )
-        if (onGoogleImport != null) SheetActionRow(
-            icon = R.drawable.ic_qr_code_scanner,
-            title = "从 Google Authenticator 导入",
-            subtitle = "扫描一张或多张迁移二维码",
-            onClick = onGoogleImport,
         )
     }
 }

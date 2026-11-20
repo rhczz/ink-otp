@@ -2,7 +2,7 @@
 
 Android v0.5.3 已发布。iOS 目录此前只有 Phase 2 计划。本次以该 Android 版本为行为基线，用 iOS 原生技术栈落地同一产品，并在 GitHub Actions 上建立构建、验证、打包和发布入口。
 
-范围与验收见 [iOS 互通与验收规格](../../spec/ios-parity.md)。开发机仅用于代码与仓库操作。两个平台使用同一份公共向量及独立格式夹具。iOS 模拟器结果和真机签名、硬件验收分别记录。
+范围与验收见 [iOS 互通与验收规格](https://github.com/rhczz/ink-otp/blob/2227cb28b3043fe30564196008fd1ef37e119abe/spec/ios-parity.md)。开发机仅用于代码与仓库操作。两个平台使用同一份公共向量及独立格式夹具。iOS 模拟器结果和真机签名、硬件验收分别记录。
 
 ## 实际结果
 

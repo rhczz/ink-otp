@@ -92,6 +92,26 @@ class GoogleMigrationCodecTest {
         assertEquals(null, batch.progress)
     }
 
+    @Test fun aRejectedFileDoesNotRetainAnyOfItsPages() {
+        val items = (1..21).map { index -> TestVault.item(accountName = "sample-$index", sortIndex = index) }
+        val primary = GoogleMigrationCodec.encode(items, batchId = 7)
+        val other = GoogleMigrationCodec.encode(items, batchId = 9)
+        val batch = GoogleMigrationBatch()
+        batch.accept(GoogleMigrationCodec.decode(primary[0].decodeToString()))
+        val validPage = GoogleMigrationCodec.decode(primary[1].decodeToString())
+        val invalidPage = GoogleMigrationCodec.decode(other[2].decodeToString())
+
+        assertThrows<GoogleMigrationException> { batch.acceptAll(listOf(validPage, invalidPage)) }
+        assertEquals(1, batch.progress?.received)
+        assertTrue(listOf(validPage, invalidPage).flatMap { it.entries }.all { entry ->
+            entry.secret.all { it == 0.toByte() }
+        })
+
+        val progress = batch.acceptAll(listOf(2, 1).map { GoogleMigrationCodec.decode(primary[it].decodeToString()) })
+        assertTrue(progress.complete)
+        assertEquals(items.map { it.accountName }, batch.takeEntries().map { it.accountName })
+    }
+
     @Test fun exportRequiresExactGoogleCompatibleParameters() {
         val compatible = TestVault.item(accountName = "counter", type = OtpType.HOTP, counter = 0L)
         val incompatible = TestVault.item(accountName = "eight", algorithm = OtpAlgorithm.SHA256, digits = 8)

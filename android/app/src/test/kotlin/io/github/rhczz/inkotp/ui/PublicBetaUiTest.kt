@@ -70,8 +70,9 @@ class PublicBetaUiTest {
             }
         }
 
+        compose.onNodeWithText("从 Google Authenticator 导入").assertDoesNotExist()
         val layout = mutableListOf<TextLayoutResult>()
-        compose.onNodeWithText("输入 Base32 密钥或 otpauth:// 链接", useUnmergedTree = true)
+        compose.onNodeWithText("输入 Base32 密钥，或粘贴设置或迁移链接", useUnmergedTree = true)
             .performScrollTo()
             .assertIsDisplayed()
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layout) }

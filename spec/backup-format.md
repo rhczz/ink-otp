@@ -1,7 +1,7 @@
 # 备份文件格式 v1（`.2fab`）
 
 > 状态：**历史归档**。自 InkOTP 0.6 起移除 `.2fab` 读写。当前支持的备份见 [交换规格](interoperability.md)，旧工具可从 [历史发布源码](https://github.com/rhczz/ink-otp/tree/v0.5.4-beta.1/tools) 查阅。
-> 适用范围：Android v1.0 导出/导入；**Phase 2 iOS 必须按本文件读取 v1 备份**，不得扩展字段含义。
+> 适用范围：历史 InkOTP 版本生成的 `.2fab` v1 备份。
 > 设计依据：`docs/design/2FA验证器-技术设计文档.md` §7.2 / §7.3，并做出一处明确修正（见下）。
 
 ## 1. 目标与边界
@@ -10,7 +10,7 @@
 
 设计约束：
 
-1. **可移植**：备份中不含 Android/iOS 特有字段、设备 ID、账号 ID 或任何用户标识。
+1. **可移植**：备份中不含 平台特有字段、设备 ID、账号 ID 或任何用户标识。
 2. **可演进**：版本、KDF 算法与参数、AEAD 参数都显式写在文件头。
 3. **抗篡改**：文件头是 AEAD 的 AAD；任何头部字节被改动都会在解密时失败。
 4. **可审计**：固定 50 字节头部 + 密文 + 16 字节标签，没有嵌套容器。
@@ -195,7 +195,6 @@ fileLen = 50 + ctLen + 16
 ## 7. 互操作与平台中立性
 
 - 本规范**平台中立**：字段、整数编码、KDF、AEAD 均不依赖 Android。
-- **Phase 2 iOS 必须实现本文件的读取**；写入也应遵循同一布局。iOS 可用 libsodium 的 `crypto_pwhash` / `crypto_aead_aes256gcm` 或等价实现；若使用 CryptoKit，需自行确认 Argon2id 支持情况。
 - 不允许在头部追加"仅 Android 可用"的字段。新增字段必须提升 `formatVersion`，且旧实现必须拒绝而不是忽略未知版本。
 - `.2fab` 与 `vault.bin` 是两种不同格式：前者是口令可移植备份，后者是设备本地加密库；不要把设备包装混入备份。
 
@@ -203,7 +202,7 @@ fileLen = 50 + ctLen + 16
 
 ## 8. 已提交的测试 fixture
 
-`spec/fixtures/` 中的文件由 `tools/reference_backup.py --create-fixture` 生成，固定盐/nonce，任何机器重建都应逐字节一致：
+`spec/fixtures/` 中的历史文件由旧版 `tools/reference_backup.py --create-fixture` 生成，使用固定盐和 nonce。重建时须逐字节一致。[历史生成器](https://github.com/rhczz/ink-otp/blob/v0.5.4-beta.1/tools/reference_backup.py)
 
 | 文件 | 说明 | SHA-256 |
 |---|---|---|

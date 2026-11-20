@@ -243,6 +243,25 @@ class VaultViewModelLifecycleTest {
         assertNull(vm.state.googleImportProgress)
     }
 
+    @Test fun migrationFileWithAnInvalidPageDoesNotAdvanceOrStageTheBatch() {
+        val vm = unlockedViewModel()
+        val sample = repository.model!!.items.single()
+        val accounts = (1..21).map { sample.copy(accountName = "google-$it", sortIndex = it) }
+        val pages = GoogleMigrationCodec.encode(accounts, 48).map { it.decodeToString() }
+        vm.ingestGoogleImport(pages[0])
+        pumpUntil("first migration page") { vm.state.googleImportProgress?.received == 1 && !vm.state.busy }
+
+        vm.ingestGoogleImport(listOf(pages[1], "otpauth-migration://offline?data=CA"))
+        pumpUntil("file validation failure") { vm.state.error != null && !vm.state.busy }
+        assertEquals(1, vm.state.googleImportProgress?.received)
+        assertNull(vm.state.importNames)
+        assertEquals(1, repository.model!!.items.size)
+
+        vm.ingestGoogleImport(listOf(pages[2], pages[1]))
+        pumpUntil("all migration pages ready to review") { vm.state.importNames?.size == 21 && !vm.state.busy }
+        assertEquals(1, repository.model!!.items.size)
+    }
+
     @Test fun googleCancelAndLockDiscardCollectedPages() {
         val vm = unlockedViewModel()
         val sample = repository.model!!.items.single()
@@ -317,6 +336,15 @@ class VaultViewModelLifecycleTest {
         vm.exportGoogle(password, review, allowSubset = false) { callbacks++ }
         pumpUntil("foreground QR export") { vm.state.googleExportPageCount == 1 && !vm.state.busy }
         assertEquals(1, callbacks)
+
+        val picker = vm.beginPicker(forQrImage = true)
+        vm.onContentHidden()
+        vm.onBackground()
+        assertEquals(1, vm.state.googleExportPageCount)
+        vm.onForeground()
+        assertTrue(vm.endPicker(picker))
+        assertEquals(1, vm.state.googleExportPageCount)
+
         vm.onContentHidden()
         assertEquals(0, vm.state.googleExportPageCount)
         assertNull(vm.googleExportPage(0))

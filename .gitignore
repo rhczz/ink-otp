@@ -19,7 +19,7 @@ captures/
 *.iml
 .vscode/
 
-# macOS
+# OS metadata
 .DS_Store
 
 # Python
@@ -31,13 +31,3 @@ __pycache__/
 *.p12
 *.pem
 *.bak
-
-# Apple platform build products and signing
-.build/
-.swiftpm/
-DerivedData/
-ios/InkOTP.xcodeproj/
-*.xcarchive/
-*.xcresult/
-*.ipa
-*.mobileprovision

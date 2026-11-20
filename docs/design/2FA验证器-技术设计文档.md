@@ -5,12 +5,10 @@ aliases:
   - 两步验证器设计文档
 created: 2026-11-04
 updated: 2026-11-20
-version: 0.12
+version: 0.14
 status: implementation-ready
 platforms:
   - Android 8.0+（Kotlin + Jetpack Compose）
-  - iOS / iPadOS 17+（SwiftUI）
-  - macOS 14+（SwiftUI）
 tags:
   - project/authenticator
   - design-doc
@@ -22,21 +20,21 @@ tags:
 
 # InkOTP · 两步验证器技术设计
 
-本文是 InkOTP 架构、安全设计和工程约束的权威文档，保留 Android 首发规划及后续 ADR。原计划里的实施范围、版本和里程碑按当时的语境阅读。三端当前的交互和数据契约集中在[规格索引](../../spec/README.md)。
+本文是 InkOTP Android 架构、安全设计和工程约束的权威文档。原计划里的实施范围、版本和里程碑按当时的语境阅读，当前维护范围见 ADR-034。交互和数据契约集中在[规格索引](../../spec/README.md)。
 
 | 查阅内容 | 规格 |
 | --- | --- |
-| 平台行为 | [Android](../../spec/android-interaction.md)、[iOS/iPadOS](../../spec/ios-parity.md)、[macOS](../../spec/macos-parity.md) |
-| 本地存储 | [本地库布局](../../spec/vault-format.md)、[跨平台边界](../platform-neutrality.md) |
+| 应用行为 | [Android 交互规格](../../spec/android-interaction.md) |
+| 本地存储 | [本地库布局](../../spec/vault-format.md)、[本地库与可移植格式](../platform-neutrality.md) |
 | 备份与迁移 | [交换兼容矩阵](../../spec/interoperability.md)、[Google Authenticator 二维码](../../spec/google-authenticator-transfer.md) |
-| 构建与分发 | [开发指南](../development.md)、[三端发布契约](../../spec/release.md) |
+| 构建与分发 | [开发指南](../development.md)、[Android 发布契约](../../spec/release.md) |
 
 ## 0. 摘要
 
 - InkOTP 在设备上生成一次性验证码。账号种子存入本地加密库，用户可通过加密备份和有效口令恢复账号。验证码的时间步长和算法见 [TOTP 原理](../totp.md)与[公共向量](../../spec/vectors.json)。
-- Android、iOS 和 macOS 使用各自的原生系统接口，共用适用的数据和测试契约。平台密钥保存在系统安全存储，各端应用均支持离线使用。
+- 当前只维护 Android 版。应用使用原生系统认证与文件选择接口，以 Android Keystore 保护设备密钥，离线生成验证码。
 - 应用名称为 **InkOTP**，Android applicationId 为 `io.github.rhczz.inkotp`，许可证为 **GPL-3.0**。相关决定见 §3。
-- 工程约束、变更流程和验收门禁见 §18。Android 首发规划见 §2、ADR-013 和 §15。三端统一发布及当前交换格式见 ADR-032 和 ADR-033。
+- 工程约束、变更流程和验收门禁见 §18。Android 首发规划见 §2、ADR-013 和 §15。当前维护范围与交换格式见 ADR-034 和 ADR-033。
 
 ---
 
@@ -57,17 +55,17 @@ tags:
 | G3 | 本机库加密保存种子。明文迁移须经用户确认，日志与诊断排除种子 | 代码评审、静态检查与真机验证 |
 | G4 | 快：解锁到出码在 1 秒内 | 性能指标见 14 |
 | G5 | 正确：与 RFC 测试向量、参考实现逐位一致 | 单元测试 100% 通过（见 8.2） |
-| G6 | Android、iOS 和 macOS 按公共契约处理本地库与交换数据 | 公共向量、跨端互读和独立参考实现（见 [验收规格](../../spec/conformance.md)） |
+| G6 | Android 按公共契约处理本地库与交换数据 | 公共向量、验证器公开样本和独立 Python 对拍（见 [验收规格](../../spec/conformance.md)） |
 | G7 | 可审计：开源、依赖最小、构建可复现（尽力） | 依赖清单与审计记录 |
 
 ### 1.3 Android 首发方案的范围边界
 
-以下条目保留首发方案的决策背景。后续的 iOS、macOS 和迁移能力参阅页首规格及相关 ADR。
+以下条目保留首发方案的决策背景。当前迁移与发布能力见页首规格和 ADR。
 
 - ❌ 不做密码管理器，不存密码、不自动登录。
 - ❌ 不处理短信验证码、邮件验证码。
 - ❌ v1 不做云同步、不做账号体系、不做服务端。
-- ❌ v1.0 不做 iOS（Phase 2 再启动）；不做浏览器扩展、桌面端、团队共享、推送确认。
+- ❌ 首发范围为 Android 应用，浏览器扩展、团队共享与推送确认在原范围之外。
 - ❌ v1.0 不含 AutoFill、Google 迁移导入、HOTP 完整 UI、显示种子、issuer 分组（全部后置到 P1/v1.1）。
 - ❌ 不做验证码"校验"——验证器只负责生成，无法校验（这是产品叙事里必须讲清楚的一点）。
 - ❌ 不做基于云端的密钥托管/找回（与"离线、E2EE"的承诺冲突）。
@@ -76,7 +74,7 @@ tags:
 
 | 指标 | 目标值 |
 |---|---|
-| RFC 6238/4226 向量通过率 | 三端公共用例 100% |
+| RFC 6238/4226 向量通过率 | 公共用例 100% |
 | 备份导入导出往返一致率 | 100% |
 | 崩溃率 | < 0.1% 会话 |
 | 数据丢失事故 | 0（发布硬门槛） |
@@ -103,18 +101,16 @@ tags:
 | 详情 | 查看种子（需二次认证） | P1 | v1.0 不提供，迁移场景再评估（见 11.7.3） |
 | 安全 | 本地加密存储（AES-256-GCM） | **MVP** | |
 | 安全 | 生物识别解锁 + 口令回退 + 进后台自动锁定 | **MVP** | |
-| 安全 | 防截屏（Android）/截屏提示（iOS）/后台快照遮挡 | **MVP** | |
-| 安全 | 复制后剪贴板清理（尽力而为） | **MVP** | 平台限制见 9.7/10.7 |
+| 安全 | 限制截屏和后台快照遮挡 | **MVP** | |
+| 安全 | 复制后剪贴板清理（尽力而为） | **MVP** | 系统限制见 §10.7 |
 | 备份 | 加密备份导出/导入（口令保护） | **MVP** | 保命功能，不能延后 |
 | 诊断 | 时钟偏差提示、验证码"对不上"自查页 | **MVP** | |
 | 迁移 | Google Authenticator 迁移导入（`otpauth-migration://`） | P1 | 换用户的必经之路 |
 | 迁移 | Aegis / 2FAS / FreeOTP / 标准备份格式导入 | P1~P2 | 格式调研后分级 |
 | 集成 | Android AutoFillService | P1（首发期 3 天 spike，不达标则降级） | 体验分水岭；全局仅一个自动填充服务，必须可选项 |
-| 集成 | iOS AutoFill（Credential Provider Extension） | Phase 2 | 规格见 9.6，v1.0 不实施 |
 | 体验 | 多语言（zh-Hans/en）、无障碍、深色模式 | MVP（基本）/ P1（完善） | |
 | 体验 | 常驻通知 / 快捷设置磁贴复制（Android，默认关闭） | P1（AutoFill 的降级方案） | 默认关闭；锁屏预览有泄露风险 |
 | 同步 | E2EE 云同步、多设备 | P2 | 不在 v1 承诺里 |
-| 扩展 | 桌面端、浏览器扩展、passkeys 管理 | P2 | |
 
 ### 2.2 用户故事（节选，附验收标准）
 
@@ -125,26 +121,27 @@ tags:
 | US-03 | 服务只给了 Base32 密钥让我手动填 | 支持粘贴 `otpauth://` 整串或裸 secret；大小写/空格容错；错误输入有可读提示 |
 | US-04 | 我每天要登录十几个服务 | 列表 1 秒内出码、点击即复制、复制有触觉+视觉反馈 |
 | US-05 | 手机被同事拿去，不想让他看到我的码 | 默认进后台立即锁定；解锁后才显示；可选"隐藏验证码直到点击" |
-| US-06 | 我换手机了，要把所有账号迁过去 | 旧机导出 `.2fab` 备份（设口令）→ 新机导入 → 全部账号可用；全程有引导 |
-| US-07 | 我把 App 删了（或手机丢了），只有备份文件 | 重装 → 导入备份 → 输入口令 → 恢复全部账号，含排序与图标 |
+| US-06 | 我换手机了，要把所有账号迁过去 | 旧机导出 Aegis 加密备份 → 新机用备份口令导入 → 验证账号出码；全程有引导 |
+| US-07 | 我把 App 删了（或手机丢了），只有备份文件 | 重装 → 导入备份 → 输入口令 → 恢复备份支持的账号字段和验证码参数 |
 | US-08 | 我重录了指纹/人脸，解锁突然失败 | 明确提示"生物识别已变更，请用恢复口令解锁"，而不是报错崩溃 |
 | US-09 | 验证码一直提示错误，我不知道为什么 | 诊断页显示设备时间、"是否被手动修改过"提示、常见原因清单 |
 | US-10 | 我在别的 App 里登录，想直接填入验证码（P1） | 键盘上方出现我的验证码建议；点击后自动填入，不需切 App |
 | US-11 | 我想从 Google Authenticator 迁移过来（P1） | 扫描其导出二维码，批量导入并按 issuer 分组 |
 | US-12 | 我要确认这个 App 没有偷偷联网/上传（信任） | 开源代码可审计；应用无网络权限；权限声明只有相机/生物识别 |
 
-### 2.3 交付版本建议
+### 2.3 原 Android 交付计划
 
-- **v1.0（Android 首发）**：US-01 ~ US-09 + 备份恢复演练通过；只发布 Android 单端。**明确不含**：AutoFill、Google 迁移导入、HOTP 完整 UI、显示种子、issuer 分组、云同步、iOS。
+- **v1.0（Android 首发）**：US-01 ~ US-09 + 备份恢复演练通过；只发布 Android 单端。**明确不含**：AutoFill、Google 迁移导入、HOTP 完整 UI、显示种子、issuer 分组、云同步。
 - **v1.1（Android P1）**：AutoFill（spike 达标才做）、Google 迁移导入、显示种子、issuer 分组、完整多语言、快捷入口。
 - **v1.2+（P2）**：更多迁移格式、同步探索、体验打磨。
-- **Phase 2**：iOS 版。启动第一步是用同一份 spec 复跑向量 + 与 Android 备份互读（见 4.4、13.3）。
 
 > **已确认（2026-11-05）**：应用名 **InkOTP**；applicationId `io.github.rhczz.inkotp`；许可证 **GPL-3.0**。三项写入 ADR-010 / ADR-016 与 §18.4，后续变更需走 ADR。
 
 ---
 
 ## 3. 关键决策（ADR）
+
+既有 ADR 按原决策记录。现行维护及发布范围见 ADR-034，迁移入口及卡片入场见 ADR-035。
 
 | 编号 | 决策 | 备选方案 | 理由 | 后果 |
 |---|---|---|---|---|
@@ -200,8 +197,10 @@ tags:
 | ADR-030 | Android 以「每次进入时验证身份」统一控制进门验证。关闭时使用本机 Keystore 包装解锁；开启时使用认证绑定包装与 Android 系统验证。 | 系统认证用于进门、授权改变进入策略和更新系统绑定。恢复口令保留为可移植备份和包装恢复的独立凭据，旧库首次有效解锁时迁移本机包装。此项取代 ADR-020/021/026 中有恢复口令库只能使用生物识别或口令打开的旧约定。`vault.bin` 和备份格式不变。设备包装细节见 `spec/vault-format.md` §7。 |
 | ADR-031 | 增加首启恢复与锁定救援。通过 Android 系统文件选择器读取持有的独立备份，验证后从备份建立本机库。 | 无法解锁时不能走正常合并。救援仅导入备份，不从旧库提取账号。已有库救援须明确确认替换，保留原库密文，继续执行原系统验证策略。复用现有加密格式、Keystore、DataStore 和原子写入机制。 |
 | ADR-029 | 使用 Android 系统安全窗口、最近任务截图控制及悬浮窗保护；剪贴板只按当次复制的所有权标记做尽力清理。 | Android 剪贴板没有按项目设定过期时间或条件删除的公开接口，因此使用随机标记核对最新一次复制，无法确认所有权时跳过。屏幕保护按 API 能力启用，补充后台遮挡和遮挡触摸检查。 |
-| ADR-032 | Android、macOS 和 iOS 共用版本标签和 GitHub Release。 | 各平台在同一标签提交上独立通过门禁，再由一个发布任务统一上传。保留各平台签名和构建号规则，历史标签继续供下载与升级验收。见 [跨平台发布契约](../../spec/release.md)。 |
+| ADR-032 | Android、macOS 和 iOS 共用版本标签和 GitHub Release。 | 各平台在同一标签提交上独立通过门禁，再由一个发布任务统一上传。保留各平台签名和构建号规则，历史标签继续供下载与升级验收。见 [历史统一发布契约](https://github.com/rhczz/ink-otp/blob/2227cb28b3043fe30564196008fd1ef37e119abe/spec/release.md)。 |
 | ADR-033 | 下线旧版 InkOTP `.2fab` 备份，三端双向支持 Google Authenticator 迁移二维码。 | 继续以 Aegis 加密备份作为跨设备文件恢复入口。停用 `.2fab` 专用编解码，设备本地加密库、恢复口令及其他交换格式继续沿用既有契约。Google 的批次、字段和保密要求见 [迁移规格](../../spec/google-authenticator-transfer.md)。 |
+| ADR-034 | 收口为 Android 单平台维护和发布。 | 当前源码、CI 和新发行包均面向 Android。沿用包名、发布证书、`v{版本}` 标签与递增的 `versionCode`。现有 Android 库与可移植备份格式继续适用。历史源码、标签与已发布资产保留。见 [Android 发布契约](../../spec/release.md)。 |
+| ADR-035 | 将 Google Authenticator 双向迁移纳入已有添加账号和备份流程，并加强解锁时的卡片落位。 | 支持二维码图片、迁移链接文本和同批多页；导入完成后使用原预览合并，既有锁定库须先解锁。二维码导出沿用恢复口令、明确确认与系统保存面板。卡片单次从上方 48dp 落位，尊重系统减少动画。 [迁移规格](../../spec/google-authenticator-transfer.md) · [Android 交互规格](../../spec/android-interaction.md) |
 
 系统验证策略保留恢复口令作为灾备材料。密钥失效后恢复需标准系统确认与恢复口令；更改口令或导入不得静默关闭策略。手机锁屏凭据与应用恢复口令不是同一个密码。
 
@@ -214,10 +213,9 @@ tags:
 ```mermaid
 flowchart TB
   subgraph UI["表现层"]
-    IOSUI["SwiftUI Views（Phase 2）"]
-    ANDUI["Compose Screens（v1.0 首发）"]
+    ANDUI["Compose Screens"]
   end
-  subgraph APP["应用层（各平台实现，行为规格一致；v1.0 仅 Android）"]
+  subgraph APP["应用层"]
     VM["ViewState / ViewModel"]
     UC["UseCases：添加 / 复制 / 解锁 / 导入 / 导出 / 迁移"]
   end
@@ -225,25 +223,24 @@ flowchart TB
     OTP["OTP 引擎（RFC 4226/6238）"]
     URIP["otpauth URI 解析"]
     MODEL["Vault 模型与 JSON 编解码"]
-    BAK["备份格式 v1 编解码"]
+    BAK["可移植备份与迁移编解码"]
     CRY["对称加密封装（AES-GCM / Argon2 调用接口）"]
   end
-  subgraph PLAT["平台服务（各平台实现，通过协议注入；v1.0 仅 Android）"]
-    SS["SecretStore：Keychain / Keystore"]
+  subgraph PLAT["Android 平台服务"]
+    SS["SecretStore：Android Keystore"]
     BIO["BiometricGate"]
     CLK["Clock：wall clock + monotonic"]
     QR["扫码 / 相册识别"]
     CLIP["剪贴板"]
     FIO["原子文件读写 + 文件保护"]
   end
-  IOSUI --> VM
   ANDUI --> VM
   VM --> UC
   UC --> CORE
   UC --> PLAT
 ```
 
-**依赖方向规则**：`UI → App → Core`，`App → Platform 接口`；**Core 不得 import UIKit/Android SDK**。所有加密/文件/生物识别能力通过协议/接口注入，Core 只处理字节与 JSON。
+**依赖方向规则**：`UI → App → Core`，`App → Platform 接口`；**Core 保持纯 Kotlin/JVM**。所有加密/文件/生物识别能力通过协议/接口注入，Core 只处理字节与 JSON。
 
 ### 4.2 模块职责
 
@@ -252,10 +249,10 @@ flowchart TB
 | `OTP` | 由 secret + 时间/计数器算出验证码、剩余秒数；参数校验 | 不读时钟（时间由调用方传入） |
 | `URIParser` | 解析 `otpauth://`、`otpauth-migration://`、裸 Base32；规范化 | 不写库、不弹 UI |
 | `VaultModel` | 实体定义、JSON 编解码、schema 版本迁移 | 不做加密、不做 IO |
-| `BackupCodec` | 备份文件字节布局的编解码、KDF 参数校验 | 不做用户口令强度校验（那是 App 层） |
+| `InterchangeCodec` | 可移植备份编解码、KDF 参数校验 | 不做用户口令强度校验（那是 App 层） |
 | `Crypto` | AES-256-GCM、Argon2id、随机数、常量时间比较 | 不决定密钥存哪里 |
 | `VaultStore`（App 层） | 解锁状态、去抖落盘、原子替换、加解密编排 | 不渲染 UI |
-| `SecretStore`（平台层） | DEK 的设备包装（Keychain/Keystore） | 不接触 vault 内容 |
+| `SecretStore`（平台层） | DEK 的设备包装（Android Keystore） | 不接触 vault 内容 |
 | `Clock`（平台层） | 提供 wall clock 与 monotonic，诊断时间跳变 | 不做网络对时 |
 
 ### 4.3 仓库结构（实际布局，Gradle 根为 `android/`）
@@ -268,13 +265,13 @@ ink-otp/
 │   └── toolchain.md
 ├── spec/                       # 平台中立契约（唯一事实来源，不绑定任何平台）
 │   ├── vault-format.md         # 库文件字节布局（与 §6.2.1 一致）
-│   ├── backup-format.md        # .2fab 备份布局（与 §7 一致）
+│   ├── backup-format.md        # .2fab 历史布局（参见 §7）
 │   ├── vectors.json            # RFC 4226/6238 + 边界用例
 │   ├── otpauth-cases.json      # URI 解析用例
 │   └── fixtures/               # 跨实现测试用固定文件
 ├── tools/                      # Python 参考实现与检查脚本（不随 App 发布）
 │   ├── reference_totp.py
-│   ├── reference_backup.py
+│   ├── reference_interchange.py
 │   ├── crosscheck.py
 │   ├── check_no_internet.py
 │   └── check_design_tokens.py
@@ -282,22 +279,18 @@ ink-otp/
 │   ├── settings.gradle.kts / build.gradle.kts / gradle/libs.versions.toml
 │   ├── core/                   # 纯 Kotlin/JVM：otp / uri / model / backup / crypto
 │   └── app/                    # Compose UI + platform services + autofill（P1）
-├── ios/                        # Phase 2 占位；v1.0 只有 README.md
 └── Makefile / README.md / SECURITY.md / LICENSE
 ```
 
 - **`spec/` 是权威且平台中立的契约**：实现只能"按 spec 实现"，不能用实现反向定义规范；格式变更先改 spec 再改代码（C-08、C-27）。
 - **Gradle 根是 `android/`**：`./gradlew` 在 `android/` 下执行，不是仓库根；CI 与 Makefile 均从该目录调用。
-- **`ios/` v1.0 只有一份 README**：Phase 2 才创建 SwiftUI 工程，v1.0 不产生任何 Swift 代码。
 - **文档与代码同仓**：`docs/` 是权威文档目录；Obsidian 副本只是快照。
 
-### 4.4 平台中立性与 Phase 2 预备策略
+### 4.4 平台中立的数据契约
 
-1. **规范先行**：`spec/vault-format.md`、`spec/backup-format.md`、`spec/vectors.json`、`spec/otpauth-cases.json` 是唯一事实来源；Android 实现只能"按 spec 实现"，不能用实现反向定义规范。
-2. **用独立参考实现做互操作**：`tools/reference_totp.py`、`tools/reference_backup.py` 与 `tools/crosscheck.py` 作为"第二实现"，在 CI 里与 Android 互相读写 `.2fab` 与库文件，替代双端对拍。
-3. **存档格式平台中立（硬性）**：库 JSON 与备份头里不得出现 Android/Kotlin 特有概念（`Uri` 序列化、Java 类名、资源 id、`Int` 溢出语义等）；枚举一律大写字符串，整数显式位宽。
-4. **Phase 2 移植检查清单**（iOS Step 0）：同一份 spec 复跑全部向量；iOS 读 Android 备份、反之；10 个账号验证码逐位对比；库 JSON 字段兼容性断言。
-5. **不采用 Kotlin Multiplatform**：真正难的部分（Keystore/AutoFill/文件保护）都在平台侧；v1.0 的 core 只实现一次（Android/Kotlin），Phase 2 按同一份 spec 用 Swift 重写（约 1k 行），成本可控，不共享代码。
+1. 文件布局、参数和互通行为以 [公共规格](../../spec/README.md) 为准。格式变更先更新规格，再更新实现。
+2. CI 用独立 Python 实现核对 OTP、URI、本地库示例和 Kotlin 写出的标准交换文件。详见 [公共验收](../../spec/conformance.md)。
+3. 库 JSON 与 `2FAV` 头只保存规范定义的字段。各交换格式按自身规格编码，系统对象、资源索引、密钥绑定和认证状态由本机适配层处理。
 
 ---
 
@@ -430,7 +423,7 @@ flowchart LR
 ```
 
 - **DEK**：首次启动由 CSPRNG 生成 32 字节，全生命周期只在内存中存在明文。
-- **设备包装（通道 A）**：iOS 用 Keychain 条目保管 DEK；Android 用 Keystore 密钥包装后存 DataStore。按 ADR-020 分两种模式：`biometric`（需用户认证，推荐）与 `device-bound`（无口令降级，不要求用户认证）。**不离开设备**。
+- **设备包装（通道 A）**：Android 用 Keystore 密钥包装后存入应用私有 DataStore。按 ADR-020 分两种模式：`biometric`（需用户认证，推荐）与 `device-bound`（无口令降级，不要求用户认证）。**不离开设备**。
 - **口令包装（通道 B）**：`Argon2id(口令, salt) → KEK`，用 AES-256-GCM 包装 DEK，结果写入库文件头（可移植）。口令可跳过，但跳过即进入设备绑定降级模式。
 - **vault.bin**：`AES-256-GCM(DEK, vaultNonce, plaintext JSON)`，AAD = 库文件头（见 6.2.1）。
 
@@ -484,37 +477,7 @@ flowchart LR
 
 ### 6.3 设备包装实现要点
 
-> **Android 首发**：v1.0 先实现下面的 Android 部分（Keystore + BiometricPrompt）；iOS 部分（Keychain）留作 Phase 2 参考。
-
-**iOS（Keychain）**
-
-```swift
-// 示意：创建受「当前生物识别集合」保护、仅本机可用的 DEK 条目
-var error: Unmanaged<CFError>?
-guard let acl = SecAccessControlCreateWithFlags(
-    nil,
-    kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-    .biometryCurrentSet,
-    &error
-) else { throw KeychainError.aclCreationFailed }
-
-let attrs: [String: Any] = [
-    kSecClass as String: kSecClassGenericPassword,
-    kSecAttrService as String: "io.github.rhczz.inkotp.dek",
-    kSecAttrAccount as String: "vault-dek",
-    kSecAttrAccessControl as String: acl,
-    kSecValueData as String: dek32Bytes
-]
-let status = SecItemAdd(attrs as CFDictionary, nil)
-```
-
-要点：
-
-- Secure Enclave **只保管 P-256 私钥，不能直接存 32 字节对称密钥**；因此对称密钥靠 Keychain + ACL（ACL 由 SEP 守护）保护。
-- `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`：不随 iCloud/加密备份迁移到新设备。
-- `.biometryCurrentSet`：**用户新增/删除生物识别会立即使该条目失效**——这是安全特性，但必须配合通道 B 的降级提示，否则用户会以为数据丢了。
-- 读取时用 `kSecUseAuthenticationContext`（预先 `LAContext.evaluatePolicy` 或让系统弹窗），并处理用户取消/锁定/未录入等错误码。
-- 与 ADR-020 一致：**必须先设恢复口令才能开启生物识别**；无口令时只允许设备绑定降级模式。
+当前设备包装模式和迁移行为按[本地库规格 §7](../../spec/vault-format.md#7-设备包装)执行。下文保留早期 Keystore 调用示例。
 
 **Android（Keystore，两种模式）**
 
@@ -605,7 +568,7 @@ stateDiagram-v2
 - [ ] 不集成第三方崩溃上报/分析 SDK；如必须，先做脱敏评审（默认不做）。
 - [ ] 不在 `UserDefaults`/`SharedPreferences` 存任何敏感数据；仅存非敏感设置。
 - [ ] 视图层（SwiftUI/Compose）只持有"验证码字符串 + 剩余秒数"，不持有 secret。
-- [ ] 手动输入 secret 的输入框使用安全输入（iOS `secureTextEntry`），避免第三方键盘/截屏获取。
+- [ ] 手动输入 secret 的输入框使用安全输入，避免第三方键盘/截屏获取。
 - [ ] 崩溃/异常路径不把库内容写进错误信息（如 `try?` 后的 `description`）。
 
 ### 6.6 威胁模型（简版）
@@ -616,8 +579,8 @@ stateDiagram-v2
 |---|---|---|
 | 设备丢失/被拿走 | 捡到者打开 App | 生物识别/口令锁；进后台即锁；库文件全量加密；可选"隐藏验证码直到点击" |
 | 恶意 App 读剪贴板 | 复制验证码后其他 App 读取 | 复制后定时清理（尽力）+ 复制提示；引导用户用 AutoFill 而非复制 |
-| 恶意输入法/无障碍记录 | 手动输入 secret 时被记录 | iOS 安全输入框；Android 无法完全防御 → 文档明示威胁模型 |
-| 肩窥/截屏 | 旁人看到验证码 | Android `FLAG_SECURE`；iOS 仅能检测并提示（系统不允许阻止）；默认不显示数字直到解锁 |
+| 恶意输入法/无障碍记录 | 手动输入 secret 时被记录 | 使用 Android 安全输入组件，并在威胁模型说明系统服务的权限边界 |
+| 肩窥/截屏 | 旁人看到验证码 | Android `FLAG_SECURE` 限制截图；锁定时隐藏验证码 |
 | 备份文件泄露 | 备份发到聊天工具/网盘 | Argon2id 高参数 + 口令强度门槛；导出时提示"备份等同于钥匙，请放可信位置" |
 | 备份文件被弱口令爆破 | 攻击者拿到文件离线爆破 | Argon2id 内存硬 + 参数随文件；口令最少 8 位（推荐 ≥ 12）+ 强度提示 |
 | 恶意备份文件 | 畸形/超大文件触发崩溃或注入 | AEAD 先验证后解析；schema 校验；上限（条数、字段长度）；fuzz 测试 |
@@ -712,13 +675,13 @@ stateDiagram-v2
 
 | 来源 | 格式 | 优先级 | 工作量 |
 |---|---|---|---|
-| Google Authenticator | [离线迁移二维码 v1](../../spec/google-authenticator-transfer.md) | **InkOTP 0.6 三端双向** | 支持分批，沿用既有导入确认和本地加密保存 |
+| Google Authenticator | [离线迁移二维码 v1](../../spec/google-authenticator-transfer.md) | **Android 支持双向迁移** | 支持分批，沿用既有导入确认和本地加密保存 |
 | Aegis | JSON（明文/加密），`entries[]` 含 `type/algo/digits/period/secret` | P1~P2 | 明文先做；加密备份需研究其 KDF 与封装，排 P2 |
 | 2FAS | JSON | P2 | 同上 |
 | FreeOTP+ / 标准备份格式 | [authenticator.cc 标准备份格式](https://authenticator.cc/docs/en/otp-backup) | P2 | 结构简单，可作为"导出兼容"方向 |
-| 加密备份 | Aegis 加密 JSON | 三端默认 | 读写范围见 [交换规格](../../spec/interoperability.md) |
+| 加密备份 | Aegis 加密 JSON | 默认 | 读写范围见 [交换规格](../../spec/interoperability.md) |
 
-> Google 迁移的 protobuf 枚举以官方实现为准，实现后必须用真实导出二维码验证，不要只凭文档。
+> Google 迁移使用固定的公开互通样本验证。Android 与 Google Authenticator 的实际设备互扫单独记录。 [迁移规格](../../spec/google-authenticator-transfer.md)
 
 ---
 
@@ -775,7 +738,7 @@ TOTP(secret, unixSeconds, digits=6, period=30, hashAlg=SHA1):
 |---|---|---|---|---|---|---|---|---|---|---|
 | HOTP | `755224` | `287082` | `359152` | `969429` | `338314` | `254676` | `287922` | `162583` | `399871` | `520489` |
 
-> 这两张表是**发布门槛**：Android 单元测试必须逐行通过（Phase 2 起双端）。若某项不通过，常见原因：secret 用了字符串而非字节、counter 用了 32 位、Base32 解码错误、把 8 位向量当 6 位用。
+> 这两张表是**发布门槛**：Android 单元测试必须逐行通过。若某项不通过，常见原因：secret 用了字符串而非字节、counter 用了 32 位、Base32 解码错误、把 8 位向量当 6 位用。
 
 ### 8.3 边界条件
 
@@ -792,16 +755,15 @@ TOTP(secret, unixSeconds, digits=6, period=30, hashAlg=SHA1):
 
 ### 8.4 时间源与时钟漂移
 
-- TOTP 必须用 **wall clock**（`Date().timeIntervalSince1970` / `System.currentTimeMillis()`）。
-- 同时读取 **monotonic clock**（iOS `ProcessInfo.systemUptime` / Android `SystemClock.elapsedRealtime()`），每 60 秒对比两者增量；若 wall clock 增量与 monotonic 偏差 > 2 秒，判定为"系统时间被修改"，在列表页显示可关闭的警告条。
+- TOTP 必须用 **wall clock**（`System.currentTimeMillis()`）。
+- 同时读取 **monotonic clock**（Android `SystemClock.elapsedRealtime()`），每 60 秒对比两者增量；若 wall clock 增量与 monotonic 偏差 > 2 秒，判定为"系统时间被修改"，在列表页显示可关闭的警告条。
 - 设置页显示：当前设备时间、「自动设置时间」是否开启的指引、以及"验证码对不上怎么办"自查清单（时间不对、码过期、secret 填错、服务端时区）。
 - **不联网对时**（与 ADR-002 一致）。
 - 不为用户自动校正时间（需要系统权限，且会掩盖问题）。
 
-### 8.5 HOTP 计数器持久化
+### 8.5 HOTP 计数器交换
 
-- 展示码之前必须先把 `counter + 1` 持久化（原子写）；写失败则不展示新码（宁可不给，也不给可能被重放的码）。
-- 多实例（未来 iOS/同步场景）对同一 HOTP 条目**不能同时使用**；文档中说明 HOTP 属于低频功能。
+Android 界面生成 TOTP。导入 HOTP 时保留账号密钥和来源计数器，导出按目标格式的范围校验。 [交换规格](../../spec/interoperability.md)
 
 ### 8.6 性能预算
 
@@ -813,118 +775,9 @@ TOTP(secret, unixSeconds, digits=6, period=30, hashAlg=SHA1):
 
 ---
 
-## 9. iOS 实现规格（Phase 2 参考，v1.0 不实施）
+## 9. 历史平台资料
 
-> ⚠️ **本节在 v1.0 不实施**。保留目的：① 保证库/备份格式不绑定 Android；② Phase 2 启动时直接有规格可依。Android 首发不需要触碰任何 iOS 代码。
-> 2026-11-18 启动 iOS 原生实现。与已发布 Android v0.5.3 的行为对照、平台差异及验收以 [iOS 互通与验收规格](../../spec/ios-parity.md) 为准。本章早期 Phase 2 描述保留为历史设计背景。
->
-> 2026-11-19 补充 iPhoneOS 归档、已发布版本覆盖安装，以及剪贴板、离线图像扫码与诊断的验收方式。[变更记录](../changes/2026-11-19-ios-device-verification.md)
-
-### 9.1 能力映射
-
-| 能力 | 方案 | 备注 |
-|---|---|---|
-| 加密 | CryptoKit（`AES.GCM`、`HMAC`、`SHA256`） | 无 Argon2 |
-| KDF | Argon2id（Phase 2 评估 swift-sodium 或纯 Swift 实现） | 算法/参数与 Android、`spec/` 一致；M0 已有 Python `argon2-cffi` 对拍基线 |
-| 密钥存储 | Keychain + `SecAccessControl`（`.biometryCurrentSet`） | Secure Enclave 不能存对称密钥 |
-| 生物识别 | LocalAuthentication（`LAContext`） | 错误码区分：取消/回退/锁定/未录入/不可用 |
-| 扫码 | `DataScannerViewController`（A12+） | 回退方案：AVFoundation + Vision `VNDetectBarcodesRequest` |
-| 相册导入 | `PhotosPicker` + Vision 条码识别 | 注意图片方向与低分辨率 |
-| AutoFill（P1） | AuthenticationServices 的 Credential Provider Extension | 见 9.6 |
-| 文件保护 | `NSFileProtectionComplete` + App Group 容器 | 排除 iCloud/iTunes 备份 |
-| 后台遮挡 | `scenePhase` 监听 + 覆盖层 | 防多任务快照泄露 |
-| 剪贴板 | `UIPasteboard.setItems(_:options:)` 带 `.expirationDate` | 尽力而为，见 9.7 |
-| 日志 | `OSLog`，不含敏感信息 | 不引入第三方 SDK |
-
-### 9.2 工程与结构
-
-```
-ios/
-├── App/
-│   ├── AppEntry.swift              # @main，注入依赖
-│   ├── AppSession.swift            # @MainActor @Observable：解锁状态/自动锁定
-│   ├── Features/
-│   │   ├── Onboarding/             # 首启引导（建库、口令、备份强提示）
-│   │   ├── Unlock/                 # 生物识别 + 口令回退
-│   │   ├── VaultList/              # 列表、搜索、倒计时
-│   │   ├── ItemDetail/             # 编辑/删除/查看种子（需二次认证）
-│   │   ├── AddItem/                # 扫码 / 相册 / 手动
-│   │   ├── Backup/                 # 导出、导入、预览合并
-│   │   └── Settings/               # 锁定策略、剪贴板、诊断、关于
-│   ├── Platform/
-│   │   ├── KeychainSecretStore.swift
-│   │   ├── BiometricGate.swift
-│   │   ├── CameraScanner.swift
-│   │   ├── PhotoImportScanner.swift
-│   │   ├── ClipboardService.swift
-│   │   └── VaultFileStore.swift    # App Group + 原子写 + 文件保护
-│   └── AutoFillExtension/          # P1
-├── Core/ (Swift Package，纯逻辑)
-└── CoreTests/
-```
-
-- 状态管理：iOS 17 `@Observable` + `@MainActor`；所有依赖通过初始化注入，**不要单例**（便于测试与扩展复用）。
-- 视图只消费 `VaultItemViewData`（issuer/account/icon/code/remaining），不接触 secret。
-- 自动锁定：`scenePhase != .active` 时按设置立即锁定（默认 0 秒宽限）；生物识别弹窗期间不触发锁定。
-
-### 9.3 存储位置与文件保护
-
-- 库文件放在 **App Group 共享容器**（`FileManager.containerURL(forSecurityApplicationGroupIdentifier:)`），路径如 `.../vault.bin`；目的：为 AutoFill 扩展预留访问路径。
-- 文件属性：`NSFileProtectionComplete`；`URLResourceValues.isExcludedFromBackup = true`。
-- 写：临时文件 → `fsync` → `replaceItemAt` 原子替换；用 `NSFileCoordinator` 做协调（扩展与主 App 可能并发读）。
-- 库文件头（明文）**只含**格式版本 + nonce + 口令包装的 DEK；其余全在密文里。
-
-### 9.4 Keychain 细节
-
-- service：`io.github.rhczz.inkotp.dek`；access group 与 AutoFill 扩展共享（扩展需要能读到同一 DEK 才能出码）。
-- 创建：`SecItemAdd` + `kSecAttrAccessControl`（`.biometryCurrentSet` + `WhenUnlockedThisDeviceOnly`）。
-- 读取：`SecItemCopyMatching` 配合 `kSecUseAuthenticationContext`；在 `LAContext` 中先 `evaluatePolicy`，让系统复用同一次认证。
-- 首次写入后**不要**再更新（`SecItemUpdate` 会重置 ACL 语义，容易踩坑）；DEK 变化（如从备份恢复）→ 删除旧条目后重建。
-- 处理 `errSecItemNotFound`、`errSecUserCanceled`、`errSecAuthFailed`、`errSecInteractionNotAllowed`（锁屏状态）等错误码，映射到用户可读提示。
-
-### 9.5 扫码与相册导入
-
-- 相机：`DataScannerViewController` 只识别 `.barcode`（QR）；限制扫描区域、显示引导框、手电筒按钮；识别到后立即停止相机并解析。
-- 解析失败（非 otpauth/迁移 URI）→ 展示原文摘要（**截断且转义**，最多 64 字符）并说明"无法识别"。
-- 相册：`PhotosPicker` 取 `UIImage` → `VNDetectBarcodesRequest`；失败给出"图片中未找到二维码/二维码不清晰"。
-- 权限：相机权限文案提前写好（"用于扫描两步验证二维码"），被拒绝时给设置深链。
-
-### 9.6 AutoFill 扩展（P1，iOS 17+）
-
-**系统能力**（Apple 官方文档已确认）：
-
-- 新建 **Credential Provider Extension** target，子类化 `ASCredentialProviderViewController`。
-- Info.plist：`NSExtension → NSExtensionAttributes → ASCredentialProviderExtensionCapabilities` 字典中设置 `ProvidesOneTimeCodes = true`。
-- Entitlement：`com.apple.developer.authentication-services.autofill-credential-provider`（**App 与扩展都要加**）。
-- 无 UI 路径：系统调用 `provideCredentialWithoutUserInteraction(for:)`，请求类型为 `ASOneTimeCodeCredentialRequest`；成功则 `extensionContext.completeOneTimeCodeRequest(using: ASOneTimeCodeCredential(code:...), completionHandler:)`（初始化签名以 SDK 头文件为准）。
-- 需要 UI 时：返回 `ASExtensionErrorDomain` + `userInteractionRequired`，系统再调用 `prepareInterfaceToProvideCredential(for:)` 展示解锁/选择界面。
-- 列表：`prepareOneTimeCodeCredentialList(for:)` 收到 `[ASCredentialServiceIdentifier]`（通常是域名），展示应提供的验证码列表。
-
-**实现要点与坑**：
-
-- 扩展进程内存/CPU 预算紧张：不做图标图片解码、不加载大资源、解密后只保留必要条目。
-- 扩展**不能**无感使用生物识别保护的 Keychain 条目（会要求用户交互）→ 体验设计为"选账号 → 生物识别 → 填入"，这是系统约束，不是缺陷。
-- 扩展与主 App 共享容器和 Keychain access group；并发写库需要文件协调 + 版本字段，避免互相覆盖。
-- 域名 ↔ 账号映射：v1 没有可靠的自动映射，按 service identifier 模糊匹配（issuer 包含域名主词）排序，其余按最近使用排序；**不要假装能精准匹配**。
-- 主 App 内提供"如何启用自动填充"引导（`ASSettingsHelper` 打开设置深链），因为用户必须在系统设置里手动启用扩展。
-- 扩展的解锁**不改变**主 App 的锁定状态；若要共享"最近已解锁"，必须显式设计并评估风险（默认不共享）。
-
-### 9.7 剪贴板、截屏与后台快照
-
-| 项 | 做法 | 局限（必须写进文档/文案） |
-|---|---|---|
-| 复制验证码 | `UIPasteboard.general.setItems([...], options: [.expirationDate: Date().addingTimeInterval(30)])` | 只能保证 30 秒后条目失效；App 被杀/后台时不保证清理；iOS 16+ 用户粘贴时仍可能看到系统提示 |
-| 截屏 | 监听 `UIScreen.isCaptured`，检测到录屏/镜像时显示警告条 | iOS 不允许阻止截屏 |
-| 后台快照 | `scenePhase` 变为非 active 时立即覆盖模糊层，回到 active 再刷新 | 需在 `willResignActive` 时机完成 |
-| 手动输入种子 | 使用 `SecureField` 等安全输入 | 第三方键盘在安全输入框中不可用（这正是保护） |
-
-### 9.8 工程配置清单
-
-- Deployment target：**iOS 17.0**；Swift 5.9+；Xcode 版本固定并记录在 `docs/toolchain.md`。
-- Capabilities：App Groups、Keychain Sharing、AutoFill Credential Provider（P1）。
-- `PrivacyInfo.xcprivacy`：声明 Required Reason API（UserDefaults、文件时间戳、磁盘空间等）与数据收集为"无"。
-- 无网络权限（不链接任何网络库）；确认 `Info.plist` 无多余权限描述。
-- 出口合规：使用系统/标准加密，上架时按 App Store Connect 问卷如实申报（一般可走豁免，需核实当年规则）。
+以前的 iOS 和 macOS 实现资料保存在历史提交。目前只维护 Android，早期版本记录仍可查阅。 [历史 iOS 规格](https://github.com/rhczz/ink-otp/blob/2227cb28b3043fe30564196008fd1ef37e119abe/spec/ios-parity.md) · [历史 macOS 规格](https://github.com/rhczz/ink-otp/blob/2227cb28b3043fe30564196008fd1ef37e119abe/spec/macos-parity.md)
 
 ---
 
@@ -1109,7 +962,7 @@ android/                          # Gradle 工程根（./gradlew 在此执行）
 
 | 关键词 | 含义 | 落地为可检查的规则 |
 |---|---|---|
-| **静（Calm）** | 不打扰：低噪声、无装饰、无循环动画 | 强调色面积 ≤5%（每屏 ≤2 处）；无插画/渐变/玻璃拟态；动效 ≤300ms 且每屏 ≤2 处 |
+| **静（Calm）** | 不打扰：低噪声、无装饰、无循环动画 | 强调色面积 ≤5%（每屏 ≤2 处）；无插画/渐变/玻璃拟态；常规动效 ≤300ms 且每屏 ≤2 处；卡片落位见 §11.8 |
 | **准（Precise）** | 一眼可读：数字对齐、层级少、对齐精确 | 验证码 tnum + 3+3 分组；全页 4dp 栅格；每屏文字 ≤3 个层级；字号只能取 7 档阶梯 |
 | **稳（Grounded）** | 耐看、不追潮流：中性色、边框而非阴影 | 中性色只用 11.3 token；层次用 1dp 边框 + tonal surface；阴影只允许 0/1dp；深浅双主题独立校验 |
 
@@ -1129,7 +982,7 @@ android/                          # Gradle 工程根（./gradlew 在此执行）
 | 间距 | 4 的倍数；页面常用 **12 / 16 / 20 / 24 / 32**；4/8 仅图标内间距 | 出现 6/10/14/18/26 等非栅格值 |
 | 图标 | Material Symbols Rounded，weight 400；尺寸 **20 / 24 / 28 / 48** | 混用其他图标库、emoji、随机尺寸 |
 | 阴影 | 0（常态）/ 1dp（按压、拖拽）；弹层用 scrim | 2dp 以上投影 |
-| 动效 | **6 个 token**：120（按压）/ 160（拖拽归位）/ 220（页面、Snackbar）/ 250（倒计时步进）/ 260（弹层打开）/ 300（高亮）；弹层关闭 240ms | 自创时长（如 350/500ms） |
+| 动效 | 120（按压）/ 160（拖拽归位）/ 220（页面、Snackbar）/ 250（倒计时步进）/ 260（弹层打开）/ 300（高亮）/ 320（卡片落位）；弹层关闭 240ms | 自创时长（如 350/500ms） |
 | 按钮高度 | 主 52 / 次 52 / 文本 48 / 图标 48 | 39/44/56 混用 |
 | 卡片 | **只有一种**：`surface` + 1dp `border` + 圆角 18 + 内边距 16 | 第二种卡片样式、卡片嵌套卡片 |
 | 列表行 | 无底色，仅 inset 1dp 分隔线；行高 56（设置）/ 72（单行）/ 88（带副标题与环） | 行内再加边框或色块 |
@@ -1255,7 +1108,7 @@ Design Language **v1.0** 于 2026-11-04 锁定。变更流程：提出（问题 
 | 数字 | **等宽数字（tabular）+ 3+3 分组** | 验证码是核心信息，必须对齐、可扫读 |
 | 圆角 | 中等：卡片 18 / 控件 14 / 弹层 28 | "现代"而非"可爱"，也非锐利到冷硬 |
 | 层次 | 1dp 边框 + 极浅 tonal surface | 比阴影更干净，深色模式更稳 |
-| 动效 | 120–300ms，ease-out；无循环装饰动画 | 高频工具，动效越少越像"专业工具" |
+| 动效 | 常规 120–300ms。解锁后的卡片落位见 §11.8 | 高频工具，动效越少越像"专业工具" |
 | 图标 | Material Symbols Rounded（线性、400 权重） | Android 原生、矢量、可主题化；不引入跨端图标库 |
 | 插画 | **不使用**装饰插画；空态=线性图标+文案 | 保持纯净，减少资源与视觉噪音 |
 | 品牌感 | 靠排版、留白、精确对齐与一处强调色建立 | 而非 logo/插画/大面积色块 |
@@ -1527,6 +1380,7 @@ flowchart TD
 |---|---|---|
 | 按压反馈（tonal 叠加） | 120ms | `LinearEasing`（透明度） |
 | 图标/按钮状态切换 | 120ms | `FastOutSlowInEasing` |
+| 验证码卡片落位 | 每张 320ms，错开 56ms，最多 6 张 | 从上方 48dp 单向缓动，保持最终布局与落点 |
 | 页面进入/返回 | 220ms | `FastOutSlowInEasing`（淡入 + 8dp 上移） |
 | 底部弹层打开/关闭 | 260 / 240ms | `LinearOutSlowInEasing` |
 | 卡片高亮（复制成功） | 300ms 渐出 | `LinearEasing` |
@@ -1660,7 +1514,6 @@ flowchart TD
 
 | 项 | 说明 |
 |---|---|
-| iOS 隐私清单（Phase 2） | `PrivacyInfo.xcprivacy`：Required Reason API + 不收集数据；v1.0 不涉及 |
 | 出口合规 | 使用标准加密，按年如实申报（通常可豁免，需核实当年规则） |
 | Google Play 数据安全 | 不收集、不共享；相机仅本地使用 |
 | 权限最小化 | 仅相机 + 生物识别；**无 `INTERNET` / `ACCESS_NETWORK_STATE`** |
@@ -1671,13 +1524,13 @@ flowchart TD
 
 - 许可证定为 **GPL-3.0**（2026-11-05 确认，Q2 关闭；防止闭源分叉滥用）。若未来希望被企业/闭源生态采用，需重新评估 Apache-2.0 并走 ADR。
 - 仓库必须包含：`SECURITY.md`（漏洞披露流程）、`docs/threat-model.md`、构建说明（含可复现构建的尽力说明）。
-- 发布采用语义化版本。Android、macOS 和 iOS 的产物来自同一个 `v{版本}` 标签，在同一 Release 提供下载，附 SHA-256 校验和、变更和安全说明。各平台签名与构建号遵守 [发布契约](../../spec/release.md)。
+- 发布采用语义化版本标签 `v{版本}`。GitHub Release 提供签名 APK、SHA-256 校验和、构建来源和变更说明。签名和构建号遵守 [发布契约](../../spec/release.md)。
 
 ---
 
 ## 13. 测试策略
 
-### 13.1 单元测试（Android v1.0 必须；Phase 2 同理）
+### 13.1 单元测试
 
 - 测试框架：`:core` 用 **JUnit 5**（纯 JVM，不依赖 Robolectric）；`:app` 用 **JUnit 4 + Robolectric 4.17**（Compose/Keystore 边界）与 Roborazzi 截图。
 - 所有测试向量来自 `spec/vectors.json`（C-23），不在测试代码里另抄一份。
@@ -1700,41 +1553,37 @@ flowchart TD
 
 - 随机生成 `(secret, digits, period, counter)`，与 Python 参考实现比对（生成固定随机种子，Android 与 Python 同一批）。
 - Argon2id 对拍：同一口令/盐/参数下，Kotlin（BouncyCastle）与 Python `argon2-cffi` 的 KEK 必须逐字节一致。
-- `.2fab` 跨实现：Kotlin 导出 → Python 解密导入 → Python 导出 → Kotlin 解密导入，字段与验证码一致（`tools/crosscheck.py`）。
+- 标准备份：Android 读取第三方公开样本，独立 Python 实现核对 Kotlin 实际导出的账号字段、顺序与验证码参数。 [公共验收](../../spec/conformance.md)
 - URI parser、迁移 protobuf parser、备份 parser 做"半随机字节"fuzz：10 万输入不崩溃、不 OOM、不无限循环。
 - AEAD 解密前**绝不解析**：先验 GCM 再 JSON 解析（评审硬性要求）。
 
-### 13.3 平台中立性验证矩阵（v1.0 发布门槛）
+### 13.3 独立验收矩阵
 
-Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
+| 场景 | 验收方式 |
+| --- | --- |
+| `vault.bin` 数据布局、密码包装和认证 | Android 与 Python 使用[公共库示例](../../spec/vault-format.md)验证 |
+| OTP、URI 与 Google Authenticator 迁移 | 使用固定向量、有效输入和失败样本断言结果 |
+| 五种标准交换文件 | Android 读取公开样本，Python 对拍 Android 写出的文件、账号顺序和验证码参数 |
+| 密码失败、损坏文件和超限参数 | Android 核心核对明确拒绝原因 |
 
-| 场景 | Android ↔ Python 参考实现 | Phase 2 补充（iOS） |
-|---|---|---|
-| `.2fab` 备份互相读写 | ✅ 必须 | 届时补 iOS 方向 |
-| `vault.bin` 布局与 `spec/vault-format.md` 一致 | ✅ 必须 | 届时补 |
-| 同一账号同一时刻验证码一致 | ✅ 必须 | 届时补 |
-| 预览信息（数量 / issuer / 排序 / 图标 / 标签）保留 | ✅ 必须 | 届时补 |
-| 错误口令 / 损坏文件 / 超限参数的提示语义一致 | ✅ 必须 | 届时补 |
-| 库 JSON 不含平台特有字段（断言测试 + 人工评审） | ✅ 必须 | — |
+Python 实现独立于 Kotlin，仅用于验收和生成向量，详见 [公共测试集](../../spec/conformance.md)。
 
-**说明**：Python 参考实现只用于测试与生成向量，不随 App 发布；必须独立编写（不能照抄 Kotlin 实现，否则失去对拍意义）。
 ### 13.4 UI 自动化
 
 - JVM 侧（无设备）：`:core` JUnit 5 + `:app` JUnit 4/Robolectric + **Roborazzi** 截图（light/dark × fontScale），作为主要自动化门槛。
 - Android 真机（v1.0 必跑，**不依赖模拟器**）：Compose UI Test + UIAutomator 覆盖关键路径；仪器化测试只在真机执行。
 - **真机人工检查表**（无模拟器兜底）：生物识别解锁/失效回退、Keystore StrongBox 回退、相机扫码与相册导入、剪贴板清理、后台锁定与快照遮挡、时钟诊断、导出/导入/合并。
-- iOS（Phase 2）：XCUITest 覆盖首启 → 添加 → 复制 → 锁定 → 解锁 → 导出 → 导入。
 
 ### 13.5 灾备演练 SOP（每次发布前必跑）
 
 1. 设备 A 添加 5 个不同服务账号（含 8 位、SHA256、自定义 period）。
-2. 导出 `.2fab`（设置口令 X）。
-3. **删除 App**（Android 清除数据；iOS 为 Phase 2）→ 重装。
+2. 导出 Aegis 加密备份（使用恢复口令 X）。
+3. 删除 App 或清除应用数据后重装并重新设置。
 4. 导入备份，口令 X → 5 个账号全部可用，验证码与实际服务一致。
 5. 换设备 B 重复导入 → 一致。
 6. 故意输错口令 → 明确报错、不产生半成品库。
 7. 把备份文件截断 10 字节 → 报错不崩溃。
-8. 新增/删除指纹（Face ID 为 Phase 2）→ App 提示用口令解锁，口令成功后可重新绑定。
+8. 新增或删除指纹→ App 提示用口令解锁，口令成功后可重新绑定。
 9. 时钟改快 5 分钟 → 生成码与服务端不一致（预期），诊断页给出一致解释。
 10. 后台切换 → 立即锁定、多任务快照无验证码。
 
@@ -1767,17 +1616,16 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 
 ---
 
-## 15. 里程碑与排期（单人全职口径）
+## 15. Android 首发里程碑（原计划）
 
 | 里程碑 | 周期 | 交付物 | 退出标准 |
 |---|---|---|---|
-| **M0 基础与规格** | 1 周 | 仓库骨架（`docs/`/`spec/`/`tools/`/`android/`/`ios/`）、Gradle wrapper 9.8.2、spec 四件套、Python 参考实现、CI | `./gradlew :core:test` 空壳通过；Python 能读写 `.2fab`；无网络权限检查通过 |
+| **M0 基础与规格** | 1 周 | 仓库骨架（`docs/`/`spec/`/`tools/`/`android/`）、Gradle wrapper 9.8.2、spec 四件套、Python 参考实现、CI | `./gradlew :core:test` 空壳通过；Python 能读写 `.2fab`；无网络权限检查通过 |
 | **M1 内核** | 1.5 周 | `:core`（OTP/URI/Model/Backup/Crypto）+ JUnit 5 单测 | 覆盖率 ≥90%；RFC 向量全通过；Argon2id 与 `argon2-cffi` 对拍；`.2fab` 跨实现 |
 | **M2 设计与只读 UI** | 2 周 | `AppTokens.kt`、锁屏/列表/详情/添加/设置静态 UI、Roborazzi 本地基线 | 设计门 G-5；关键页 light/dark 基线；无真实密钥接线的只读流程 |
 | **M3 持久化与集成**（**需要真机**） | 1.5 周 | `vault.bin` 读写、Keystore 两种模式、BiometricPrompt、备份导入导出、相机扫码、自动锁定 | 真机跑通：解锁→添加→复制→导出→清除数据→导入；灾备 SOP 全通过 |
 | **M4 硬化与发布** | 1 周 | 安全加固、R8/资源压缩、性能与体积门禁、签名产物、合规材料 | 附录 E DoD + 18.5 G-6/G-7/G-8；release APK <15MB；合并 manifest 无 `INTERNET` |
 | **P1 AutoFill（v1.1，可并行）** | 3 天 spike + 约 2 周 | AutofillService Demo + 兼容性报告 | 达标才排 v1.1；不达标用快捷磁贴/通知降级 |
-| **Phase 2 iOS** | v1.0 稳定后立项 | 按 §9 规格 + `spec/` 重新实现 | 数据契约与 Android 互通 |
 
 总计：**v1.0 约 7~9 周**（M0–M4 合计 7 周 + 1~2 周缓冲；人类工程师单人全职基线，不含商店审核与备案周期）。AutoFill 属 P1/v1.1，不计入 v1.0。原"双端 10~12 周"计划作废。
 
@@ -1791,15 +1639,13 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 | R2 | 用户遗忘备份口令 | 中 | 高 | 强度门槛 + 二次输入 + 明确不可恢复声明；引导抄写/存密码管理器 |
 | R3 | 备份文件被弱口令爆破 | 中 | 高 | Argon2id 高参数 + 参数入文件 + 口令门槛 |
 | R4 | Android AutoFill 单槽位冲突（与密码管理器互斥）导致体验差 | 高 | 中 | 可选功能、默认关闭、文案讲清；用快捷磁贴/通知做降级；先 spike |
-| R5 | iOS AutoFill 扩展内存/超时限制（Phase 2） | 中 | 中 | 轻量实现、性能预算、纯代码 UI |
 | R6 | 系统备份恢复后密文不可用（假恢复） | 中 | 高 | 排除系统备份 + 应用内备份强引导 |
 | R7 | 时钟漂移/用户改时间导致"码不对" | 中 | 中 | 漂移检测 + 诊断页 + 帮助文案 |
-| R8 | 平台中立性被破坏：存档格式混入 Android 特有字段，Phase 2 返工 | 中 | 高 | spec 驱动 + 断言测试 + Python 参考实现对拍 |
+| R8 | 平台中立性被破坏：存档格式混入 Android 特有字段并破坏互通 | 中 | 高 | spec 驱动 + 断言测试 + Python 参考实现对拍 |
 | R9 | 供应链投毒（BouncyCastle 等） | 低 | 高 | 锁定版本 + 校验和 + 最小依赖 + 发布可复现（尽力） |
 | R10 | 国内渠道分发/备案周期长 | 高（若上架国内） | 中 | 立项即启动软著与备案；先内测分发不阻塞开发 |
 | R11 | 单人维护疲劳、范围膨胀 | 中 | 中 | v1.0 只做生成/保管/恢复；M0–M4 门禁控制范围；AutoFill、迁移、分组、种子显示全部后置 |
 | R12 | Android 碎片化：Keystore / 生物识别 / 相机在部分 ROM 行为异常 | 中 | 中 | 真机矩阵 + 能力探测 + 所有失败路径回退口令；**无模拟器兜底**，见附录 F |
-| R13 | 单平台覆盖有限，后续 iOS 移植成本被低估 | 中 | 中 | 平台中立格式 + Phase 2 Step 0 检查清单 + 现在不写平台耦合代码 |
 | R14 | 部分老设备无强生物识别 | 中 | 低 | 口令模式可用；无口令时设备绑定降级；首启检测并说明安全等级 |
 | R15 | AGP 9.5 内置 Kotlin 2.2.10 锁死生态：部分库要求更高 Kotlin 或独立插件 | 中 | 中 | 版本目录锁定；新增依赖先验证 Kotlin 兼容；升级需 ADR + 全量回归 |
 | R16 | compileSdk 37.2 属 minor API level，CI/IDE 与部分工具链支持滞后 | 中 | 中 | 固定 AGP 9.5.0；CI 显式安装 `platforms/android-37.2`；不跟随预览版 |
@@ -1810,7 +1656,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 
 ---
 
-## 17. 待决问题（Open Questions）
+## 17. 立项问题记录
 
 | # | 问题 | 选项 | 建议默认 | 影响 |
 |---|---|---|---|---|
@@ -1883,7 +1729,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 
 | 编号 | 约束 | 检查方式 |
 |---|---|---|
-| C-19 | 必须执行 §11.0 契约：字号 7 档、圆角 5 档、间距 4 的倍数、图标尺寸 4 档、动效 6 个 token | Lint/脚本检查 + 评审 |
+| C-19 | 必须执行 §11.0 契约：字号 7 档、圆角 5 档、间距 4 的倍数、图标尺寸 4 档、动效遵循 §11.8 的 token | Lint/脚本检查 + 评审 |
 | C-20 | 禁止页面级视觉特例；新组件必须先归入 §11.0.6 的 6 种原型 | 设计评审 + 截图基线 |
 | C-21 | `AppTokens.kt` 是唯一 token 源；组件内禁止硬编码色值/字号/圆角/时长 | Lint 规则/脚本 |
 | C-22 | 截图基线（**Roborazzi**）变更必须随 PR 说明原因；不得为了过门直接覆盖基线；v1.0 CI 不比对基线（ADR-018） | 评审 |
@@ -1919,7 +1765,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 
 | 对象 | 当前版本 | 规则 |
 |---|---|---|
-| 设计文档 | **v0.12（三端备份迁移与动效）** | 每次实质变更 +0.1 并记录附录 G |
+| 设计文档 | **v0.14（迁移入口与卡片落位）** | 每次实质变更 +0.1 并记录附录 G |
 | Design Language | **v1.0（冻结）** | 变更走 §11.0.9，升 v1.x；页面不得私自扩展 |
 | 备份与迁移格式 | **[支持矩阵](../../spec/interoperability.md)** | 按来源格式版本和独立样本检查（C-08） |
 | 库文件格式 | **v1（`vault.bin`）** | 布局变更 = `version + 1` + `spec/vault-format.md` + 双实现测试（C-27） |
@@ -1935,11 +1781,11 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 | G-1 文档门 | 开工前 | 需求/规格/ADR 已定，任务能映射到 §2/§15；`spec/` 与本文档一致；本文件版本号已更新 | P1、C-01~C-05 |
 | G-2 编译门 | 每次提交 | `make test`（`cd android && ./gradlew :core:test :app:testDebugUnitTest`）与 `make build`（`:app:assembleDebug`）通过 | C-23 |
 | G-3 向量门 | 每次提交 | `make spec` 中 `spec/vectors.json` 全过；Argon2id 与 `argon2-cffi` 对拍 | C-23 |
-| G-4 格式门 | 涉及存储/备份 | `make crosscheck`（Python 独立核对本地库、各端写出的标准交换格式）+ 往返 + 篡改检查 + 参数上限 | C-06~C-11、C-27 |
+| G-4 格式门 | 涉及存储/备份 | `make crosscheck`（Python 独立核对本地库和 Android 写出的标准交换格式）+ 往返 + 篡改检查 + 参数上限 | C-06~C-11、C-27 |
 | G-5 设计门 | UI 变更 | `python tools/check_design_tokens.py --root android/app/src/main/kotlin` + 契约检查 + 本地 Roborazzi 基线复核（`make screenshots`；CI 不比对） | C-19~C-22 |
 | G-6 安全门 | 涉及权限/存储/依赖 | `make verify`；`python tools/check_no_internet.py --manifest <merged-manifest>`；合并 manifest 无 `INTERNET`/`ACCESS_NETWORK_STATE`；无敏感日志；依赖白名单 | C-02、C-12~C-18、C-26 |
 | G-7 演练门 | 发布前 | §13.5 SOP（**真机**）+ 13.4 真机检查表 + 附录 E DoD + 18.5 全门禁 | C-24 |
-| G-8 发布门 | 发布前 | 三端通过各自质量及签名检查；Android APK <15MB；同一 Release 归档全部产物、SHA-256 和变更/安全说明 | C-25 |
+| G-8 发布门 | 发布前 | 通过 Android 质量及签名检查，APK 小于 15 MiB，Release 归档 APK、校验和、构建来源与变更说明 | C-25 |
 
 ### 18.6 违规处理与"临时方案"规则
 
@@ -2002,7 +1848,7 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 | AEAD / GCM | 认证加密，解密时同时校验完整性 |
 | 设备包装 | 用设备安全硬件（Keychain/Keystore）保护的 DEK 副本 |
 | 设备绑定降级模式 | 未设恢复口令时，用 Keystore 包装 DEK 但不要求用户认证的模式（ADR-020）；换机/重装不可恢复 |
-| AutoFill | 系统级自动填充；iOS 用 Credential Provider Extension，Android 用 AutofillService |
+| AutoFill | Android 系统级自动填充，规划使用 AutofillService |
 | 迁移负载 | Google Authenticator 导出的 `otpauth-migration://` protobuf |
 
 ### B. 参考标准与官方文档
@@ -2012,9 +1858,6 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 - RFC 4648（Base16/32/64 编码）：<https://www.rfc-editor.org/rfc/rfc4648>
 - **RFC 9106（Argon2）**：<https://www.rfc-editor.org/rfc/rfc9106>
 - Key Uri Format（Google Authenticator）：<https://github.com/google/google-authenticator/wiki/Key-Uri-Format>
-- Apple：Providing one-time passcodes to AutoFill：<https://developer.apple.com/documentation/authenticationservices/providing-one-time-passcodes-to-autofill>
-- Apple：ASCredentialProviderViewController：<https://developer.apple.com/documentation/authenticationservices/ascredentialproviderviewcontroller>
-- Apple：AutoFill Credential Provider Entitlement：<https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.authentication-services.autofill-credential-provider>
 - Android Autofill 框架：<https://developer.android.com/guide/topics/text/autofill>
 - Android Keystore：<https://developer.android.com/privacy-and-security/keystore>
 - Android BiometricPrompt：<https://developer.android.com/identity/sign-in/biometric-auth>
@@ -2023,7 +1866,6 @@ Android 单端阶段用"独立参考实现（Python）"替代"双端对拍"：
 - **ZXing（二维码识别）**：<https://github.com/zxing/zxing>
 - **CameraX（camera-compose）**：<https://developer.android.com/media/camera/camerax>
 - Argon2Kt（备选 JNI 实现，ADR-015 回退）：<https://github.com/lambdapioneer/argon2kt>
-- swift-sodium（Phase 2 可选）：<https://github.com/jedisct1/swift-sodium>
 - 标准备份格式（跨 App 互操作）：<https://authenticator.cc/docs/en/otp-backup>
 - AndroidX security-crypto 弃用说明（2025-04）：<https://github.com/ed-george/encrypted-shared-preferences>
 - Material Design 3：<https://m3.material.io/>
@@ -2120,7 +1962,7 @@ interface VaultRepository {
 
 > 注：Kotlin `data class` 里的 `ByteArray` 使用引用相等，比较时要显式用 `contentEquals`；这是常见 bug 点。
 
-### D. 备份文件头示例（示意，实际值随机）
+### D. 历史 `.2fab` 文件头示例
 
 ```
 00000000  32 46 41 42 01 01 00 01  00 00 00 03 00 00 00 02   |2FAB............|
@@ -2132,9 +1974,9 @@ interface VaultRepository {
 
 ### E. 验收清单（Definition of Done）
 
-- [ ] RFC 6238 18 组 + RFC 4226 10 组向量通过（v1.0 Android；Phase 2 起双端）
+- [ ] Android 通过 RFC 6238 的 18 组与 RFC 4226 的 10 组向量
 - [ ] 灾备演练 SOP 10 步真机全部通过（13.5）
-- [ ] 跨实现互操作矩阵全部通过（Android ↔ Python，13.3）；备份**不含 DEK**、导入生成新 DEK
+- [ ] 独立验收矩阵通过（§13.3）。导入账号由目标库凭据加密
 - [ ] 合并 manifest 无 `INTERNET` / `ACCESS_NETWORK_STATE`；抓包为空
 - [ ] 日志、崩溃信息、错误提示中无 secret/验证码
 - [ ] 备份文件逐字节篡改测试全部失败（安全）；头部参数超限被拒绝
@@ -2221,3 +2063,7 @@ ADR-023 技术依据：[Android 官方 unlockedDeviceRequired 兼容性说明](h
 2026-11-19 · v0.11 追加 ADR-032，将 Android、macOS 和 iOS 改为共用版本、源码标签和发布资产。
 
 2026-11-20 · v0.12 追加 ADR-033。第 7 章描述的 `.2fab` 为历史格式。当前的备份及迁移能力以 [交换规格](../../spec/interoperability.md) 和 [Google Authenticator 迁移规格](../../spec/google-authenticator-transfer.md) 为准。
+
+2026-11-20 · v0.13 追加 ADR-034。维护与发布范围收口为 Android，独立验证和历史发布记录继续保留。
+
+2026-11-20 · v0.14 追加 ADR-035，将二维码迁移与已有添加账号和备份流程合并，明确 Android 列表的卡片入场。

@@ -98,10 +98,24 @@ internal fun imageSampleSize(width: Int, height: Int): Int {
     return sample
 }
 
-internal fun decodeQrImage(encoded: ByteArray): String {
+internal fun decodeQrImage(encoded: ByteArray): String = decodeQrImage(encoded, qrImageBounds(encoded))
+
+/** Sniffs the selected document by content, including providers that omit its MIME type. */
+internal fun decodeQrImageIfImage(encoded: ByteArray): String? = try {
+    val bounds = qrImageBounds(encoded)
+    if (bounds.outMimeType == null) null else decodeQrImage(encoded, bounds)
+} catch (_: OutOfMemoryError) {
+    throw QrImageReadException("图片过大，请裁剪二维码后重试")
+}
+
+private fun qrImageBounds(encoded: ByteArray): BitmapFactory.Options {
     if (encoded.size > MAX_QR_IMAGE_BYTES) throw QrImageReadException("图片超过 16 MB，请裁剪后重试")
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(encoded, 0, encoded.size, bounds)
+    return bounds
+}
+
+private fun decodeQrImage(encoded: ByteArray, bounds: BitmapFactory.Options): String {
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw QrImageReadException("图片无法读取或格式不支持")
     val options = BitmapFactory.Options().apply {
         inSampleSize = imageSampleSize(bounds.outWidth, bounds.outHeight)
