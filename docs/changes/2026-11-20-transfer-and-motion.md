@@ -18,6 +18,14 @@ macOS 之前在已解锁的导入流程中始终走合并。今后在第二次�
 
 ## 验证结果
 
-独立生成的 14 项 Google 二维码用例覆盖版本 1 和 2、公开密钥、缺省字段、多页和错误输入。Swift 共用编解码器和 macOS 生产适配器的本机探针通过。原有 10 项上游交换文件、OTP 向量、库示例的独立 Argon2id/AES-GCM 检查与 46 项 Python 测试通过。Android 320dp 窄屏和 200% 字号的导入确认按钮检查通过。macOS 本机源码构建通过，正式签名产物由 Actions 生成。iOS 本机仅运行源代码语法检查。
+独立生成的 14 项 Google 二维码用例覆盖版本 1 和 2、公开密钥、缺省字段、多页和错误输入。Swift 共用编解码器和 macOS 生产适配器的本机探针通过。原有 10 项上游交换文件、OTP 向量、库示例的独立 Argon2id/AES-GCM 检查与 46 项 Python 测试通过。Android 320dp 窄屏、320dp 高的深色横屏和 200% 字号的导入确认检查通过，提交中禁止重复点击。Android 本机 `make ci` 通过，核心 121 项、App 191 项测试。核心行覆盖率 95.79%、分支 71.75%，App 行覆盖率 82.75%、分支 59.64%。安装包权限、对齐、Lint 和五种文件的独立对拍通过。macOS 本机源码构建通过，正式签名产物由 Actions 生成。iOS 本机仅运行源代码语法检查。
 
-三端标签运行、公开资产与真机专项待补验收结果。
+[Android/iOS 分支运行](https://github.com/rhczz/ink-otp/actions/runs/44670411672) 通过 iPhone XCTest、iPad 覆盖升级和 Android/iOS 互读。macOS 初次打包测试通过 Google 多页导入、取消和保留旧账号。最后一项确认替换测试匹配到了 Touch Bar 同名按钮，已把目标限定到原生对话框窗口，[标签运行](https://github.com/rhczz/ink-otp/actions/runs/44672838156) 将复验。
+
+标签运行的 Android 核心和 App 测试分别为 121 和 191 项，核心行覆盖率 95.79%、分支 71.75%，App 行覆盖率 82.75%、分支 59.93%。未签名 APK 为 3,177,165 字节，较前版的 3,144,397 字节增加约 32 KiB。iPhone 模拟器的 20 项 XCTest 通过，iOS 核心行覆盖率 91.19%，App 行覆盖率 49.43%。macOS 核心在两种架构上的行覆盖率均为 89.9%（1481/1648）。本次 Apple 覆盖率报告未提供分支数据。
+
+标签运行的 9 项 macOS 安装包 XCTest 全部通过，其中包括多页 Google QR 导入、取消、替换后重启。iPad 以历史预览版源码重建旧包，覆盖安装正式 ZIP 后读回原密文与账号，卸载重装后可创建并重新打开新库。Android 与 iOS、macOS 的五种交换文件双向互读通过。
+
+[InkOTP 0.6.0-beta.1](https://github.com/rhczz/ink-otp/releases/tag/v0.6.0-beta.1) 已公开。重新下载 7 项资产，6 条 SHA-256 校验全部通过。Android 签名 APK 为 3,182,893 字节，构建号 12，证书与前版一致。macOS DMG 只读挂载后核对构建号 112、两种原生架构和临时签名。两个 iOS 下载件的构建号都是 4，设备 IPA 为未签名归档。三个平台都写入完整发布版本 `0.6.0-beta.1`。
+
+Google Authenticator 真机互扫、Android 和 iPhone 真机的系统认证、相机和动效仍未验证。测试使用独立生成的公开二维码与模拟器、托管桌面。
