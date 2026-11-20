@@ -34,7 +34,9 @@ final class GoogleMigrationTests: XCTestCase {
     }
 
     func testGoogleAuthenticatorPublicTransferFixture() throws {
-        let repository = (0..<5).reduce(URL(fileURLWithPath: #filePath)) { $0.deletingLastPathComponent() }
+        let repository = (0..<5).reduce(URL(fileURLWithPath: #filePath)) { url, _ in
+            url.deletingLastPathComponent()
+        }
         let file = repository.appendingPathComponent("spec/fixtures/google-authenticator-v1.json")
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: file))
         XCTAssertFalse(fixture.cases.isEmpty)
@@ -56,7 +58,8 @@ final class GoogleMigrationTests: XCTestCase {
                 XCTAssertEqual(String(describing: entry.algorithm).uppercased(), reference.algorithm.uppercased(), row.name)
                 XCTAssertEqual(entry.digits, reference.digits, row.name)
                 XCTAssertEqual(String(describing: entry.type).lowercased(), reference.type.lowercased(), row.name)
-                XCTAssertEqual(entry.type == .hotp ? nil : entry.period, reference.period, row.name)
+                let period: Int? = entry.type == GoogleOTPType.hotp ? nil : entry.period
+                XCTAssertEqual(period, reference.period, row.name)
                 XCTAssertEqual(entry.counter, reference.counter, row.name)
             }
         }
