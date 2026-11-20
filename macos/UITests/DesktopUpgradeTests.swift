@@ -252,7 +252,10 @@ final class DesktopUpgradeTests: XCTestCase {
         let replace = element("backup-replace-request", in: app)
         click(replace)
         XCTAssertTrue(staticText("Replace existing accounts?", in: app).waitForExistence(timeout: timeout))
-        click(app.buttons["Replace Accounts"].firstMatch)
+        // App-wide button queries include the native alert's Touch Bar proxy.
+        let confirm = app.windows.buttons["Replace Accounts"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: timeout), "The confirmation button is missing from the alert window.\n\(app.debugDescription)")
+        click(confirm)
         waitUntilAbsent(replace, "The replacement finishes after confirmation")
         expectAccountCount(1, in: app)
         XCTAssertTrue(account(app, named: hotpAccount).exists)
