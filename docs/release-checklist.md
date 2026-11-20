@@ -4,41 +4,42 @@
 
 ## 1. 构建与质量
 
-- [ ] `make verify` 全绿（单测 + 构建 + lint + 无网络权限 + 设计 token 扫描 + Python 自测）。
-- [ ] `:core` 覆盖率 ≥90%（JaCoCo 报告归档）。
-- [ ] release 构建通过（R8 + shrink），APK <15MB。
+- [ ] Android 的 JUnit、JaCoCo、Lint、独立格式对拍及权限和存储检查通过，报告已归档。 [CI 门禁](testing/github-ci.md)
+- [ ] Android Release 启用 R8 和资源压缩，APK 小于 15 MiB，ZIP 和 ELF 均通过 16 KiB 对齐检查。
 - [ ] 同一个 `v{版本}` 标签匹配三端的发布版本与已合入 `master` 的源码，构建号按平台规则递增。
 - [ ] iOS 与 macOS 工作流、三端互通和各自的安装包升级检查通过。
-- [ ] Gradle 依赖 verification metadata 已生成/更新（M4）。
+- [ ] 依赖变更已按设计文档 C-17 核对版本、校验和与许可证。
 
 ## 2. 安全
 
 - [ ] 合并 manifest 无 `INTERNET`/`ACCESS_NETWORK_STATE`/存储权限。
 - [ ] 运行时依赖无 media3/OkHttp/Retrofit/分析 SDK。
 - [ ] 日志/错误/崩溃信息中无 secret/DEK/验证码；代码搜索 + 评审。
-- [ ] FLAG_SECURE 仅 release；debug 可截图。
+- [ ] Android Release 默认启用屏幕保护，Debug 在恢复口令、密钥或迁移二维码等敏感界面启用屏幕保护。
 - [ ] 剪贴板清理、后台锁定、最近任务快照无码。
-- [ ] 库文件/DataStore 排除系统备份（allowBackup=false + rules）。
+- [ ] Android 库文件与 DataStore 由备份规则排除。
 - [ ] 备份 AEAD 先验后解析；篡改/截断/错误口令矩阵全过。
 - [ ] 生物识别变更后可用口令解锁并重新绑定。
 
 ## 3. 设计
 
 - [ ] AppTokens 为唯一 token 源；token 扫描零命中。
-- [ ] Roborazzi 基线通过（light/dark × fontScale 1.0/1.3/2.0）。
+- [ ] 界面改动已核对浅色、深色及放大字体，Android 可用 Roborazzi 记录截图。
 - [ ] 字号/圆角/图标/动效均在 §11.0 契约档位内。
 - [ ] 200% 字号无截断；TalkBack 读法符合 11.7.2；触控目标 ≥48dp。
 - [ ] 空/加载/错误/成功四态齐全；无 emoji 图标/渐变/大投影。
 
-## 4. 真机（必须）
+## 4. 真机验收
+
+按版本记录实际设备和系统、验证结果及未验证项。以下是 Android 核对项，Apple 端见 [iOS](../ios/README.md) 和 [macOS](../macos/README.md)。
 
 - [ ] 首启 → 设口令 → 开生物识别 → 添加 5 个账号（含 8 位/SHA256/自定义 period）。
 - [ ] 扫码、相册导入、手动输入各成功一次；权限拒绝有引导。
 - [ ] 复制反馈（触觉 + Snackbar），剪贴板 30s 清理。
-- [ ] 后台切换立即锁定；多任务预览无验证码。
+- [ ] 后台遮挡立即生效，按设置锁定，多任务预览无验证码。
 - [ ] 导出 Aegis 加密备份 → 清除数据/重装 → 导入 → 5 个账号可用。
-- [ ] 换第二台设备导入一致。
-- [ ] 错误口令、截断 10 字节、头部篡改均明确报错、不崩溃、不产生半成品库。
+- [ ] 在第二台设备核对备份恢复与验证码参数。Google Authenticator 的多页双向扫码记录真机互通结果。
+- [ ] 错误口令、截断和篡改给出明确报错，原有账号库仍可打开。
 - [ ] 新增/删除指纹 → 提示用口令解锁 → 成功后重新绑定。
 - [ ] 时钟改快 5 分钟 → 诊断页解释正确。
 - [ ] 降级 device 模式（跳过口令与生物识别）有常驻警告，可升级口令。
@@ -49,7 +50,7 @@
 - [ ] Apple 端签名状态符合发布类型并在说明中标明。
 - [ ] 重新下载发布资产，使用 `SHA256SUMS` 逐个复核。
 - [ ] 隐私政策/权限文案/开源许可 notices（BC/AndroidX/ZXing/Inter/Material Symbols）。
-- [ ] README 构建说明、SECURITY.md、威胁模型、备份格式公开。
+- [ ] 开发指南、安全政策、威胁模型和交换格式与本次发布一致。
 - [ ] 国内渠道（若上架）：软著/备案材料已启动（见设计文档 10.9/12.4）。
 - [ ] 回滚方案：保留上一版 APK 与数据格式兼容性说明。
 
@@ -57,4 +58,4 @@
 
 - [ ] 监控（本地）崩溃/错误类别，不含敏感内容。
 - [ ] 记录已知问题与例外（`docs/exceptions.md`）。
-- [ ] 下一版 backlog 更新（AutoFill spike、迁移导入等 P1）。
+- [ ] 更新下一版待办。

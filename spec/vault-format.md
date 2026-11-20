@@ -1,20 +1,12 @@
-# 库文件格式 v1（`vault.bin`）
+# 本地加密库格式 v1（`2FAV`）
 
-> 状态：**已冻结（v1）**。本文件是设备本地加密库 `vault.bin` 的唯一事实来源。
-> 适用范围：Android v1.0 读写；Phase 2 iOS 读写同一布局。
-> 相关：[可移植备份和迁移](interoperability.md)。
+本规范定义 Android、iOS 和 macOS 共用的设备本地加密库 `2FAV` v1 字节布局。换机、重装和跨平台迁移使用[可移植备份与迁移格式](interoperability.md)。
 
 ## 1. 目标与范围
 
-`vault.bin` 是**设备本地的加密库**：库 JSON（设计文档 §5.2）用 DEK 经 AES-256-GCM 加密后写入应用私有目录，文件名固定为 `vault.bin`。
+三端用数据密钥（DEK）经 AES-256-GCM 加密库 JSON。Android 和 macOS 将 `2FAV` 负载写入应用私有的 `vault.bin`，iOS 将同一布局的负载封装在私有的 `vault-v1.json` 中。
 
-本规范只定义**文件本身的字节布局**。以下内容**不在** `vault.bin` 内：
-
-- Android Keystore 的设备包装（包装后的 DEK、IV、密钥别名）→ 存在 **DataStore**；
-- iOS Keychain 的对应物（Phase 2）；
-- 生物识别 ACL、解锁状态、当前验证码、UI 设置。
-
-`vault.bin` 是平台中立容器：Android 与 iOS 必须能互相读取同一份文件；差异只在"设备包装"这一层。
+本规范约束加密负载。设备密钥包装、系统身份验证访问控制和当前会话由平台管理，见 [§7](#7-设备包装)。[跨平台数据契约](../docs/platform-neutrality.md)说明共用负载与平台文件的边界。
 
 ---
 
@@ -280,7 +272,7 @@ ea01b95a7fd1538f74e04456df360f65a71eeebab91d2271d1ac78fd62e743a645527f
 
 ---
 
-## 7. 设备包装（不在本文件中）
+## 7. 设备包装
 
 Android 使用应用私有 DataStore 保存包装模式、12 B IV、16 B salt、AES-256-GCM 密文及标签；各模式对应独立的不可导出 Android Keystore 密钥。AAD 为 UTF-8 `InkOTP/session/v1/<mode>`、一个零字节及当前头部 salt 拼接。
 
@@ -296,17 +288,16 @@ Android 使用应用私有 DataStore 保存包装模式、12 B IV、16 B salt、
 每次进入验证的布尔策略独立于包装读取，启用和停用时与新包装通过同一 DataStore 事务提交。策略开启时，缺失、无效或过期的系统包装不能触发本机免验证解锁；重新绑定须验证 Android 系统身份及应用恢复口令。修改口令和导入备份时使用新的包装，开启策略时须先获得新的 Android 系统授权。若库文件已成功提交但包装写入中断，旧包装无法通过当前头部和 DEK 验证；恢复口令仍可从已提交的库中恢复数据。
 
 - 无口令通道时，设备包装丢失且没有备份将无法恢复数据。导出备份前须先设置恢复口令。
-- `vault.bin` 和平台包装必须排除系统自动备份与云同步。iOS（Phase 2）使用 Keychain 实现本地包装。
-- 锁定救援替换已有库前，原始加密文件的字节保存在应用私有目录的单一 `vault.pre-restore.bin` 副本中。此副本采用原密文格式、同属应用私有生命周期，不纳入系统备份。原库无法保全时终止替换。
+- 本地库文件和平台包装必须排除系统自动备份与云同步。iOS 和 macOS 使用各自的本机 Keychain 管理设备凭据。
+- Android 锁定救援替换已有库前，原始加密文件的字节保存在应用私有目录的单一 `vault.pre-restore.bin` 副本中。此副本采用原密文格式、同属应用私有生命周期，不纳入系统备份。原库无法保全时终止替换。
 
 ---
 
 ## 8. 平台中立性
 
-- 本布局不包含 Android 特有字段；字节序、KDF、AEAD、AAD 均明确。
-- **Phase 2 iOS 必须能读取并写入 v1 `vault.bin`**；Argon2id 与 AES-256-GCM 可用 libsodium/CryptoKit 等等价实现，但参数与 AAD 必须完全一致。
-- 新增字段必须提升 `formatVersion`；旧实现必须拒绝未知版本，不得猜测布局。
-- 设备包装格式是**平台本地契约**，不属于跨平台文件格式；iOS 的 Keychain 包装不需要与 Android DataStore 兼容。
+- Android、iOS 和 macOS 读写同一 `2FAV` v1 布局并验证公共样本。等价的 Argon2id 和 AES-256-GCM 实现必须保持相同的字节序、参数与 AAD。
+- 新增字段必须提升 `formatVersion`。实现须拒绝未知版本。
+- 设备包装格式和应用私有文件的外层结构遵循各平台的本地契约。
 
 ---
 

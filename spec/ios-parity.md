@@ -1,15 +1,15 @@
 # iOS 原生版与跨平台验收
 
-行为基准为 Android v0.5.3（e91ed34）。应用层继续分离界面、状态管理、仓储、平台服务和纯数据契约。iOS 采用 Swift、SwiftUI、LocalAuthentication、Security、AVFoundation、Vision、PhotosUI 和系统文件面板。UI 沿用 Quiet Ink 颜色与布局语义，支持简体中文、英文、深色模式和系统辅助功能。
+初版以 Android v0.5.3 为行为基准。当前迁移和发布行为遵循三端共用契约。应用层继续分离界面、状态管理、仓储、平台服务和纯数据契约。iOS 采用 Swift、SwiftUI、LocalAuthentication、Security、AVFoundation、Vision、PhotosUI 和系统文件面板。UI 沿用 Quiet Ink 颜色与布局语义，支持简体中文、英文、深色模式和系统辅助功能。
 
 迁移入口采用 Aegis、2FAS、逐行 `otpauth://` 和 Google Authenticator 二维码。沿用原有版本、字段、算法、大小限制及错误语义。设备包装与系统认证由各平台负责。iOS 沙盒内只保存经过认证加密的库，关闭应用自动云备份。iOS 使用系统认证、限时且仅本机的剪贴板和切后台遮挡。系统不提供应用级截屏拦截，录屏或镜像时遮挡敏感内容。已发布 Android 范围之外的 AutoFill 独立排期。
 
 验收覆盖隐私声明、建库、解锁与取消、自动锁定、清除确认、搜索排序、手输与二维码、计时和复制、条目编辑删除、主题设置、诊断与关于、备份预览及合并。对口令错误、文件损坏、取消、重复条目、并发请求和版本升级分别验证。专用硬件能力另列真机实测。
 
-iOS、Android 和 macOS 消费仓库内同一套 [公共协议测试集](conformance.md)，包括 `vectors.json`、`otpauth-cases.json`、`conformance-cases.json` 和 `fixtures/`。平台适配器逐个断言向量结果，并由独立 Python 参考实现验证跨端导出的内容。新增夹具由参考工具生成。GitHub Actions 执行 Android 检查、iOS XCTest、模拟器构建和打包与 GitHub Release。真机安装包需要 Apple 签名证书和相匹配的 provisioning profile。模拟器产物以明确的模拟器标签交付。
-iOS CI 同时归档并解包验证面向 iPhone 与 iPad 的 Release IPA。预览版提供明确标记的未签名真机产物，供使用者按自己的 Apple 分发方式签名。正式版须通过签名导出与验签。模拟器与真机包分别核对平台和架构。
+iOS、Android 和 macOS 消费仓库内同一套 [公共协议测试集](conformance.md)，包括 `vectors.json`、`otpauth-cases.json`、`conformance-cases.json` 和 `fixtures/`。平台适配器逐个断言向量结果，并由独立 Python 参考实现验证跨端导出的内容。新增夹具由参考工具生成。GitHub Actions 执行 Android 检查、iOS XCTest、模拟器构建和打包与 GitHub Release。真机安装包需要 Apple 签名证书和相匹配的 provisioning profile。模拟器 ZIP 与 iPhone/iPad IPA 随同一 `v{版本}` 的 Release 提供。
+iOS CI 同时归档并解包验证面向 iPhone 与 iPad 的 Release IPA。未启用分发签名的预览版提供明确标记的未签名 IPA，使用者可按自己的 Apple 分发方式签名。正式版须通过签名导出与验签。模拟器与真机包分别核对平台和架构。
 
-iOS、Android 和 macOS 导出同一个含三条公开账号的样本。对端的 InkOTP 原生备份须保留完整模型，包括图标、标签、网址和安全设置。外部格式须保留协议支持的 OTP 字段及顺序。各端写出的期望文件另外与公开样本对照。
+iOS、Android 和 macOS 用同一个含三条公开账号的样本验证五种交换文件。Android 分别与 iOS 和 macOS 互读实际导出文件，校对协议支持的 OTP 字段及顺序。各端生成的期望文件另与公开样本对照。Google Authenticator 迁移使用独立生成的二维码样本，真实设备互扫单独验收。
 
 ## 剪贴板与诊断
 

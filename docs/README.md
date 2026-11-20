@@ -1,27 +1,25 @@
 # InkOTP 文档
 
-标准流程与生态兼容原则见 [标准机制与互通](standards-and-interoperability.md)。M4 本轮范围见 [实施与验证记录](changes/2026-11-17-m4-standards-auth-performance.md)。
+## 使用 InkOTP
 
-当前安装和真机验收见 [0.5 Android 公测指南](testing/0.5-public-beta.md)，备份支持版本及独立验证依据见 [交换规格](../spec/interoperability.md)。
+- [下载安装](../README.md)与[隐私声明](https://inkotp.renhongchang.top/privacy/)
+- [TOTP 的工作原理](totp.md)
+- [备份格式与兼容矩阵](../spec/interoperability.md)及 [Google Authenticator 二维码迁移](../spec/google-authenticator-transfer.md)
+- [iOS 安装说明](../ios/README.md)与 [macOS 安装说明](../macos/README.md)
 
-0.4 手机反馈修复见 [系统指纹入口、闪屏与到期颜色](changes/2026-11-17-phone-feedback-fixes.md)，交互回归范围见 [Android 交互契约](../spec/android-interaction.md)。
+## 开发与发布
 
-每次修改、功能开发及问题排查都记录在 [开发与问题记录](changes/README.md)。当前 M3 交付方式和实现计划见 [M3 内测版记录](changes/2026-11-17-m3-local-beta.md)。
+- [开发指南](development.md)介绍仓库结构、构建和本地检查。
+- [工具链](toolchain.md)列出版本和环境要求。[CI 指南](testing/github-ci.md)说明自动检查及报告。
+- [发布指南](releasing.md)和[发布检查表](release-checklist.md)说明三端打包、签名和验证流程。
+- [协作规则](../AGENTS.md)和[例外登记](exceptions.md)说明文档与变更要求。
 
-| 文档 | 内容 |
-|---|---|
-| [design/2FA验证器-技术设计文档.md](design/2FA验证器-技术设计文档.md) | **唯一事实来源**：范围、架构、密钥体系、备份/库格式、UI 规范、测试、里程碑、工程约束 |
-| [toolchain.md](toolchain.md) | 实际构建工具链、版本锁定、升级流程 |
-| [threat-model.md](threat-model.md) | 资产、信任边界、威胁与缓解、明确不防御的场景 |
-| [platform-neutrality.md](platform-neutrality.md) | 跨端数据契约规则 + iOS Phase 2 检查清单 |
-| [exceptions.md](exceptions.md) | 例外/临时方案登记（未登记视为违规） |
-| [releasing.md](releasing.md) | tag 自动发布、固定签名与失败处理 |
-| [testing/github-ci.md](testing/github-ci.md) | 真实质量门禁与本地复现 |
-| [release-checklist.md](release-checklist.md) | 发布前检查表（构建/安全/设计/演练） |
+## 设计与规格
 
-## 文档规则（与设计文档 §18.3 一致）
+- [技术设计](design/2FA验证器-技术设计文档.md)记录架构、设计决策和工程约束。
+- [规格索引](../spec/README.md)汇总数据契约、平台行为和公共测试向量。[跨平台契约](platform-neutrality.md)说明本地库与交换文件的边界。
+- [威胁模型](threat-model.md)及[标准与互通原则](standards-and-interoperability.md)说明安全假设和格式选择。
 
-1. 先改文档，再改代码；格式/token/交互契约变更必须版本化。
-2. 例外必须登记到 `exceptions.md`，并带 `TODO(C-xx)`、关联任务、清理版本。
-3. `spec/` 是唯一的数据格式与测试向量来源；实现只能按 spec 写，不能反向定义 spec。
-4. 本目录中的设计文档为实施口径；Obsidian vault 里的副本是快照，不自动同步。
+## 变更历史
+
+[开发与问题记录](changes/README.md)保存改动原因、验证结果和仍待验证的范围。[版本发布](https://github.com/rhczz/ink-otp/releases)按版本提供说明和下载。
