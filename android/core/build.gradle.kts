@@ -34,6 +34,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // Restore the exchange fixtures with cached test results for the Python cross-check.
+    outputs.dir(layout.projectDirectory.dir("build/interoperability"))
     maxHeapSize = "1g"
     testLogging {
         events("failed", "skipped")
