@@ -3,6 +3,8 @@
 > 完全离线的两步验证器，设计语言 **Quiet Ink**。
 > Android、[iOS](ios/README.md) 和 [macOS](macos/README.md) 使用原生技术栈，并共用 [协议与测试合约](spec/conformance.md)。
 
+[InkOTP 官网](https://inkotp.renhongchang.top/)
+
 ## 下载安装
 
 进入 [GitHub Releases](https://github.com/rhczz/ink-otp/releases)，在同一个版本的 **Assets** 里按平台选择 Android APK、macOS 通用 DMG 或 iOS 安装包。iOS 同时提供模拟器 ZIP，iPhone/iPad 安装要求见 [iOS 说明](ios/README.md)。
