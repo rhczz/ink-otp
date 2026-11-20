@@ -4,7 +4,7 @@
 
 | 日期 | 记录 | 状态 |
 |---|---|---|
-| 2026-11-20 | [发布 Android 0.6.0-beta.2](2026-11-20-android-release-0.6.0-beta.2.md) | 发布验收待完成 |
+| 2026-11-20 | [发布 Android 0.6.0-beta.2](2026-11-20-android-release-0.6.0-beta.2.md) | 已公开发布，下载校验和签名复核通过 |
 | 2026-11-20 | [将迁移放进现有备份流程并加强卡片入场动画](2026-11-20-native-google-transfer-and-card-drop.md) | Android 本机 CI 通过，Google 真机互扫与动画观感待测 |
 | 2026-11-20 | [后续只维护 Android 版](2026-11-20-android-only.md) | Android 本机 CI 和四项发布资产复验通过 |
 | 2026-11-20 | [整理仓库文档与 TOTP 原理说明](2026-11-20-readme-and-totp-guide.md) | 链接、GitHub Markdown 预览和 TOTP 算例已核对 |
