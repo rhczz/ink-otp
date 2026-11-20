@@ -142,6 +142,67 @@ final class DesktopUpgradeTests: XCTestCase {
         let qrAccount = account(app, named: "me@example.com")
 
         @MainActor
+        func assertOriginalVault() {
+            expectAccountCount(initialCount, in: app)
+            XCTAssertTrue(account(app, named: legacyAccount).exists)
+            XCTAssertTrue(account(app, named: uriAccount).exists)
+            XCTAssertFalse(qrAccount.exists)
+            XCTAssertFalse(account(app, named: "alice").exists)
+            XCTAssertFalse(save.exists)
+        }
+
+        let picker = showQRImagePicker(in: app)
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        waitUntilAbsent(picker, "Cancel dismisses the native image picker")
+        assertOriginalVault()
+
+        chooseQRImage(single, expecting: save, in: app)
+        assertQRAccountPreview(in: app)
+        click(app.buttons["Cancel"].firstMatch)
+        waitUntilAbsent(save, "Cancel dismisses the account preview")
+        assertOriginalVault()
+
+        for (image, message) in [
+            (blank, "No verification QR code was found in the image."),
+            (multiple, "The image contains multiple verification QR codes. Choose an image with one account.")
+        ] {
+            let notice = staticText(message, in: app)
+            chooseQRImage(image, expecting: notice, in: app)
+            assertOriginalVault()
+            click(app.buttons["Dismiss"].firstMatch)
+            waitUntilAbsent(notice, "Dismiss closes the image error")
+        }
+
+        chooseQRImage(single, expecting: save, in: app)
+        assertQRAccountPreview(in: app)
+        click(save)
+        waitUntilAbsent(save, "Saving returns to the vault")
+        expectAccountCount(initialCount + 1, in: app)
+        XCTAssertTrue(qrAccount.waitForExistence(timeout: timeout))
+
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: timeout))
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: timeout))
+        XCTAssertTrue(unlocked.waitForExistence(timeout: timeout))
+        expectAccountCount(initialCount + 1, in: app)
+        XCTAssertTrue(account(app, named: legacyAccount).exists)
+        XCTAssertTrue(account(app, named: uriAccount).exists)
+        XCTAssertFalse(account(app, named: "alice").exists)
+        click(qrAccount)
+
+        let issuer = element("account-detail-issuer", in: app)
+        let name = element("account-detail-name", in: app)
+        XCTAssertTrue(name.waitForExistence(timeout: timeout))
+        XCTAssertTrue(issuer.label == "GitHub" || issuer.value as? String == "GitHub")
+        XCTAssertTrue(name.label == "me@example.com" || name.value as? String == "me@example.com")
+        for parameter in ["TOTP", "SHA1", "6", "30 seconds"] {
+            XCTAssertTrue(staticText(parameter, in: app).waitForExistence(timeout: timeout),
+                          "The relaunched app retained the imported \(parameter) parameter")
+        }
+    }
+
+    @MainActor
     func testGoogleTransferPreviewsEntireBatchBeforeImport() throws {
         continueAfterFailure = false
         let app = try launchInkOTP()
@@ -204,67 +265,6 @@ final class DesktopUpgradeTests: XCTestCase {
         expectAccountCount(1, in: app)
         XCTAssertTrue(account(app, named: hotpAccount).exists)
         XCTAssertFalse(account(app, named: legacyAccount).exists)
-    }
-
-    @MainActor
-        func assertOriginalVault() {
-            expectAccountCount(initialCount, in: app)
-            XCTAssertTrue(account(app, named: legacyAccount).exists)
-            XCTAssertTrue(account(app, named: uriAccount).exists)
-            XCTAssertFalse(qrAccount.exists)
-            XCTAssertFalse(account(app, named: "alice").exists)
-            XCTAssertFalse(save.exists)
-        }
-
-        let picker = showQRImagePicker(in: app)
-        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-        waitUntilAbsent(picker, "Cancel dismisses the native image picker")
-        assertOriginalVault()
-
-        chooseQRImage(single, expecting: save, in: app)
-        assertQRAccountPreview(in: app)
-        click(app.buttons["Cancel"].firstMatch)
-        waitUntilAbsent(save, "Cancel dismisses the account preview")
-        assertOriginalVault()
-
-        for (image, message) in [
-            (blank, "No verification QR code was found in the image."),
-            (multiple, "The image contains multiple verification QR codes. Choose an image with one account.")
-        ] {
-            let notice = staticText(message, in: app)
-            chooseQRImage(image, expecting: notice, in: app)
-            assertOriginalVault()
-            click(app.buttons["Dismiss"].firstMatch)
-            waitUntilAbsent(notice, "Dismiss closes the image error")
-        }
-
-        chooseQRImage(single, expecting: save, in: app)
-        assertQRAccountPreview(in: app)
-        click(save)
-        waitUntilAbsent(save, "Saving returns to the vault")
-        expectAccountCount(initialCount + 1, in: app)
-        XCTAssertTrue(qrAccount.waitForExistence(timeout: timeout))
-
-        app.terminate()
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: timeout))
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: timeout))
-        XCTAssertTrue(unlocked.waitForExistence(timeout: timeout))
-        expectAccountCount(initialCount + 1, in: app)
-        XCTAssertTrue(account(app, named: legacyAccount).exists)
-        XCTAssertTrue(account(app, named: uriAccount).exists)
-        XCTAssertFalse(account(app, named: "alice").exists)
-        click(qrAccount)
-
-        let issuer = element("account-detail-issuer", in: app)
-        let name = element("account-detail-name", in: app)
-        XCTAssertTrue(name.waitForExistence(timeout: timeout))
-        XCTAssertTrue(issuer.label == "GitHub" || issuer.value as? String == "GitHub")
-        XCTAssertTrue(name.label == "me@example.com" || name.value as? String == "me@example.com")
-        for parameter in ["TOTP", "SHA1", "6", "30 seconds"] {
-            XCTAssertTrue(staticText(parameter, in: app).waitForExistence(timeout: timeout),
-                          "The relaunched app retained the imported \(parameter) parameter")
-        }
     }
 
     @MainActor
