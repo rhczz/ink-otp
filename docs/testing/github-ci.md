@@ -1,6 +1,6 @@
 # GitHub CI 质量门禁
 
-分支推送和 PR 运行 Android 与 iOS 检查，包含两端实际导出文件的互读。在命中路径的分支推送与 PR 上，macOS 工作流运行双架构构建、Android 与 Mac 互读和 DMG 验收。发布标签复用这些工作流。 [Android 与 iOS 工作流](../../.github/workflows/ci.yaml) · [macOS 工作流](../../.github/workflows/macos.yaml)
+分支推送和 PR 运行 Android 单测、构建、Lint、权限与独立格式对拍。发布标签调用同一份 CI 验证，使用通过检查的未签名 APK 继续签名与发布。 [CI](../../.github/workflows/ci.yaml) · [发布工作流](../../.github/workflows/release.yaml)
 
 Android CI 以 `contents: read` 构建未签名的 Release APK。独立的发布工作流从同次运行取得产物并签名。Python 门禁 `tools/quality_gate.py` 读取 JSON 兼容的质量配置。 [发布指南](../releasing.md) · [质量配置](../../.github/ci.yaml)
 
@@ -39,6 +39,6 @@ Android 检查通过后上传 `inkotp-unsigned-apk`，包含 `app-release-unsign
 
 Actions 按各自上游的提交 SHA 锁定。升级时核对上游提交和 Action 的输入。 [checkout v4.2.2](https://github.com/actions/checkout/releases/tag/v4.2.2)、[setup-java v4.7.1](https://github.com/actions/setup-java/releases/tag/v4.7.1)、[setup-python v5.6.0](https://github.com/actions/setup-python/releases/tag/v5.6.0)、[setup-android v3.2.2](https://github.com/android-actions/setup-android/releases/tag/v3.2.2)、[upload-artifact v4.6.2](https://github.com/actions/upload-artifact/releases/tag/v4.6.2)。
 
-宿主性能 JSON 只记录 p50/p95 与分配趋势；确定性的缓存、ticker、锁定清理和解析预算由测试断言。CI 没有手机，不能据此声称相机、系统身份验证、文件选择器、前后台行为、卸载或安装升级已完成真机验收。设备结果按平台记录，包含安装、迁移及使用到的系统能力。 [Android 设备测试](m4-phone-test.md) · [iOS 设备测试](../../ios/README.md) · [发布检查表](../release-checklist.md)
+宿主性能 JSON 只记录 p50/p95 与分配趋势；确定性的缓存、ticker、锁定清理和解析预算由测试断言。CI 没有手机，不能据此声称相机、系统身份验证、文件选择器、前后台行为、卸载或安装升级已完成真机验收。真机结果包含安装和覆盖升级、迁移及使用到的系统能力。 [Android 设备测试](m4-phone-test.md) · [发布检查表](../release-checklist.md)
 
 PR 的合并条件以仓库设置的必需状态检查为准。

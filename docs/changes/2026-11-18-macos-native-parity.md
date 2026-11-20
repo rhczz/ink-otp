@@ -10,7 +10,7 @@ Android 有原生客户端和既有协议夹具。仓库尚无 macOS 应用、Ma
 
 ## 本次范围与验收
 
-以 [桌面规格](../../spec/macos-parity.md) 为准。GitHub Actions 负责编译、公共测试、应用打包和发布；本机只编写源码。按共同夹具验证双向交换、异常和资源边界。真实硬件检查独立记录。
+以 [桌面规格](https://github.com/rhczz/ink-otp/blob/2227cb28b3043fe30564196008fd1ef37e119abe/spec/macos-parity.md) 为准。GitHub Actions 负责编译、公共测试、应用打包和发布；本机只编写源码。按共同夹具验证双向交换、异常和资源边界。真实硬件检查独立记录。
 
 ## 现在怎样
 

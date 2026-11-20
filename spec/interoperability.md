@@ -1,6 +1,6 @@
 # 验证器数据交换规格
 
-本文定义 Android、iOS 和 macOS 的可移植备份与迁移契约。设备本地库的字节布局另见 [本地加密库](vault-format.md)。
+本文定义 InkOTP Android 与其他验证器交换可移植备份和迁移数据的契约。设备本地库的字节布局另见 [本地加密库](vault-format.md)。
 
 ## 契约
 
@@ -19,11 +19,11 @@
 | Aegis JSON | 外层 v1，库内容 v1–3，明文或口令加密 | 外层 v1 / 库内容 v3，明文或口令加密 | 官方 scrypt N=32768、r=8、p=1；AES-256-GCM 两层密钥包装；nonce/tag 按官方分别存储 |
 | 2FAS `.2fas` JSON | schema 1–4，明文或口令加密 | schema 4，明文或口令加密 | 官方 PBKDF2-HMAC-SHA256 / 10000 次 / 256 位；AES-GCM；不擅自增加迭代数以免破坏互通，也不将它描述为等同本机 Argon2id |
 | 多行 `otpauth://` 文本 | 每个非空行一个标准 URI | 每行一个 URI | 明文，使用 UTF-8 和百分号编码；支持 TOTP/HOTP，不接受缺少账号的裸密钥文件 |
-| Google Authenticator 迁移二维码 | 迁移负载 v1/v2，支持整批多码 | Google 兼容账号的迁移负载 v1 | 明文，仅经交互显示。限制见 [Google Authenticator 迁移规格](google-authenticator-transfer.md) |
+| Google Authenticator 迁移二维码 | 迁移负载 v1/v2，支持整批多码 | Google 兼容账号的迁移负载 v1 | 明文，可从导出备份逐页展示和保存 PNG。导入备份支持二维码图片及 UTF-8 迁移链接文本。见 [Google Authenticator 迁移规格](google-authenticator-transfer.md) |
 
 默认交换导出为 **Aegis 加密 JSON**。明文 JSON 与 URI 文本含完整账号种子，调用界面必须单独风险确认；格式层通过 `plaintext` 属性与警告标识。外部加密文件按来源口令原样解密，不做 NFC、trim 或大小写变换；本 App 使用当前恢复口令导出时，由调用层遵循本 App 的 NFC 规范。
 
-Android 系统文档导出按 MIME 和扩展名配套。Aegis 为 `application/json` / `.json`，URI 为 `text/plain` / `.txt`，2FAS 为 `application/octet-stream` / `.2fas`。2FAS 官方 [导出与分享](https://github.com/twofas/2fas-android/blob/2395e3782f0d098e1491c095ff45f8ea8a05e751/feature/backup/src/main/java/com/twofasapp/feature/backup/ui/export/BackupExportScreen.kt) 使用通用类型及 `.2fas`；不自行注册不存在的专用 MIME。将 `.2fas` 配成 JSON MIME 可能导致系统保存器追加 `.json`，本实现通过通用类型避免 AOSP 默认保存器的这类重命名；第三方文件提供器仍可能有自己的命名行为。
+Android 系统文档导出按 MIME 和扩展名配套。Aegis 为 `application/json` / `.json`，URI 为 `text/plain` / `.txt`，2FAS 为 `application/octet-stream` / `.2fas`，迁移二维码为 `image/png` / `.png`。2FAS 官方 [导出与分享](https://github.com/twofas/2fas-android/blob/2395e3782f0d098e1491c095ff45f8ea8a05e751/feature/backup/src/main/java/com/twofasapp/feature/backup/ui/export/BackupExportScreen.kt) 使用通用类型及 `.2fas`；不自行注册不存在的专用 MIME。将 `.2fas` 配成 JSON MIME 可能导致系统保存器追加 `.json`，本实现通过通用类型避免 AOSP 默认保存器的这类重命名；第三方文件提供器仍可能有自己的命名行为。
 
 ### 账号与字段边界
 
@@ -53,7 +53,7 @@ Android 系统文档导出按 MIME 和扩展名配套。Aegis 为 `application/j
 - 固定 Aegis 来源 commit：`d6f4e5925a97e4e91593f1542085eae03432a759`。[格式规范](https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/docs/vault.md)、[真实导出测试过程与口令](https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/test/java/com/beemdevelopment/aegis/importers/DatabaseImporterTest.java)。
 - 固定 2FAS 实现 commit：`2395e3782f0d098e1491c095ff45f8ea8a05e751`。[BackupContent](https://github.com/twofas/2fas-android/blob/2395e3782f0d098e1491c095ff45f8ea8a05e751/data/services/src/main/java/com/twofasapp/data/services/domain/BackupContent.kt)、[BackupService](https://github.com/twofas/2fas-android/blob/2395e3782f0d098e1491c095ff45f8ea8a05e751/data/services/src/main/java/com/twofasapp/data/services/domain/BackupService.kt)、[加密流程](https://github.com/twofas/2fas-android/blob/2395e3782f0d098e1491c095ff45f8ea8a05e751/core/cipher/src/main/java/com/twofasapp/cipher/backup/BackupCipherImpl.kt)、[KDF](https://github.com/twofas/2fas-android/blob/2395e3782f0d098e1491c095ff45f8ea8a05e751/core/cipher/src/main/java/com/twofasapp/cipher/backup/internal/BackupKeyGeneratorPbkdf.kt)。
 
-Android 分别与 iOS 和 macOS 互读实际导出的五种文件格式，Google Authenticator 迁移另有独立二维码夹具和界面回归。包含 7 位或 Steam 条目的官方样本用来验证整份拒绝和错误提示。最新三端测试范围与真机待测项见 [0.6 迁移与交互验证记录](../docs/changes/2026-11-20-transfer-and-motion.md)。
+Android 测试读取来自其他验证器的公开夹具，并由独立 Python 实现校验实际导出的五种文件。Google Authenticator 迁移使用独立二维码样本，包含 7 位或 Steam 条目的官方文件用于验证整份拒绝和错误提示。既有互读证据与设备验收范围见 [0.6 迁移记录](../docs/changes/2026-11-20-transfer-and-motion.md)。
 
 独立检查命令：
 

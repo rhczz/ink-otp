@@ -143,7 +143,9 @@ object AppTokens {
         const val SHEET_OPEN_MS = 260
         const val HIGHLIGHT_MS = 300
         const val SHEET_CLOSE_MS = 240
-        const val VAULT_ENTRY_STAGGER_MS = 16
+        const val VAULT_ENTRY_CARD_MS = 320
+        const val VAULT_ENTRY_STAGGER_MS = 56
         const val VAULT_ENTRY_CAP = 6
+        val vaultEntryDrop = 48.dp
     }
 }

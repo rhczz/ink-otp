@@ -33,6 +33,4 @@ Android 随包提供 Inter 4.1 的 400、500、600 字重子集，保留等宽�
 
 ## 本机和 CI 的验证范围
 
-Roborazzi 的 JDK 参数配置在 `android/app/build.gradle.kts`。截图在本机生成，CI 运行单测、覆盖率和 Lint。相机、生物识别及实际设备上的覆盖安装按各平台验收说明记录。 [CI 指南](testing/github-ci.md)
-
-Apple 平台工具链由 Actions 配置和脚本选择。参见 [iOS 检查](../.github/workflows/ios-ci.yaml) 和 [macOS 构建与打包](../.github/workflows/macos.yaml)。
+Roborazzi 的 JDK 参数配置在 `android/app/build.gradle.kts`。截图在本机生成，CI 运行单测、覆盖率和 Lint。相机、生物识别及实际设备上的覆盖安装按 Android 真机验收说明记录。 [CI 指南](testing/github-ci.md)

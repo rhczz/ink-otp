@@ -4,6 +4,8 @@
 
 | 日期 | 记录 | 状态 |
 |---|---|---|
+| 2026-11-20 | [将迁移放进现有备份流程并加强卡片入场动画](2026-11-20-native-google-transfer-and-card-drop.md) | Android 本机 CI 通过，Google 真机互扫与动画观感待测 |
+| 2026-11-20 | [后续只维护 Android 版](2026-11-20-android-only.md) | Android 本机 CI 和四项发布资产复验通过 |
 | 2026-11-20 | [整理仓库文档与 TOTP 原理说明](2026-11-20-readme-and-totp-guide.md) | 链接、GitHub Markdown 预览和 TOTP 算例已核对 |
 | 2026-11-20 | [在 GitHub 仓库添加官网入口](2026-11-20-official-website-link.md) | 官网 HTTPS 和 GitHub 链接核对通过 |
 | 2026-11-20 | [三端迁移与交互改进](2026-11-20-transfer-and-motion.md) | 三端已发布 0.6.0-beta.1，下载校验通过，Google 真机互扫待测 |

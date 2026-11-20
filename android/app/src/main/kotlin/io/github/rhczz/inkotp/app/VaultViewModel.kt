@@ -19,6 +19,7 @@ import io.github.rhczz.inkotp.core.time.DriftDetector
 import io.github.rhczz.inkotp.core.uri.GoogleMigrationBatch
 import io.github.rhczz.inkotp.core.uri.GoogleMigrationCodec
 import io.github.rhczz.inkotp.core.uri.GoogleMigrationException
+import io.github.rhczz.inkotp.core.uri.GoogleMigrationPage
 import io.github.rhczz.inkotp.core.uri.OtpauthException
 import io.github.rhczz.inkotp.core.vault.VaultException
 import io.github.rhczz.inkotp.data.VaultRepository
@@ -126,6 +127,7 @@ class VaultViewModel internal constructor(application: Application, private val 
     private var pickerGeneration: Long? = null
     private var pickerDeadline: Long? = null
     private var pickerForRestore = false
+    private var pickerForQrImage = false
     private val projection = OtpProjectionCache()
     private var tickerJob: Job? = null
     private var codeRecalculationJob: Job? = null
@@ -506,7 +508,13 @@ class VaultViewModel internal constructor(application: Application, private val 
         if (state.googleExportPageCount != 0) state = state.copy(googleExportPageCount = 0)
     }
 
-    fun ingestGoogleImport(input: String) {
+    fun ingestGoogleImport(input: String) = ingestGoogleImport(listOf(input))
+
+    fun ingestGoogleImport(inputs: List<String>) {
+        if (inputs.isEmpty() || inputs.size > GoogleMigrationCodec.MAX_ENTRIES) {
+            report("请选择包含 1 到 500 张迁移二维码的文件。")
+            return
+        }
         if (!state.passwordSet) {
             report("请先设置恢复口令，再合并迁移账号。")
             return
@@ -516,12 +524,18 @@ class VaultViewModel internal constructor(application: Application, private val 
             return
         }
         perform(kind = OperationKind.IMPORT, refreshAfter = false, decodingImport = true) { token ->
-            val page = GoogleMigrationCodec.decode(input)
-            if (token != generation) {
-                page.clear()
+            val pages = ArrayList<GoogleMigrationPage>(inputs.size)
+            try {
+                for (input in inputs) {
+                    checkGeneration(token)
+                    pages += GoogleMigrationCodec.decode(input)
+                }
                 checkGeneration(token)
+            } catch (error: Exception) {
+                pages.forEach(GoogleMigrationPage::clear)
+                throw error
             }
-            val progress = googleImportBatch.accept(page)
+            val progress = googleImportBatch.acceptAll(pages)
             if (!progress.complete) {
                 withContext(Dispatchers.Main) {
                     checkGeneration(token)
@@ -699,6 +713,7 @@ class VaultViewModel internal constructor(application: Application, private val 
         pickerGeneration = null
         pickerDeadline = null
         pickerForRestore = false
+        pickerForQrImage = false
         systemAuthenticationDeadline = null
         pendingExport?.bytes?.fill(0)
         pendingExport = null
@@ -758,10 +773,11 @@ class VaultViewModel internal constructor(application: Application, private val 
     fun isCurrentBackupRequest(token: Long, forRestore: Boolean): Boolean =
         token == generation && if (forRestore) state.backupRestoreActive && !state.unlocked else state.unlocked
 
-    fun beginPicker(forRestore: Boolean = false): Long {
+    fun beginPicker(forRestore: Boolean = false, forQrImage: Boolean = false): Long {
         check(if (forRestore) state.ready && !state.unlocked && !state.busy else state.unlocked)
         if (forRestore) state = state.copy(backupRestoreActive = true)
         pickerForRestore = forRestore
+        pickerForQrImage = forQrImage
         pickerInFlight = true
         pickerGeneration = generation
         pickerDeadline = SystemClock.elapsedRealtime() + 60_000L
@@ -779,6 +795,7 @@ class VaultViewModel internal constructor(application: Application, private val 
         pickerGeneration = null
         pickerDeadline = null
         pickerForRestore = false
+        pickerForQrImage = false
         backgroundAt = null
         backgroundJob?.cancel()
         reconcileTicker()
@@ -789,7 +806,8 @@ class VaultViewModel internal constructor(application: Application, private val 
         foreground = false
         googleExportVisibility++
         reconcileTicker()
-        discardGoogleExport()
+        // Keep the pages only while the explicitly requested system save picker owns the operation.
+        if (!pickerInFlight || !pickerForQrImage) discardGoogleExport()
     }
 
     fun onSystemAuthenticationBackground() {

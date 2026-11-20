@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent format/crypto check for public fixtures and native interchange exports.
+"""Independent format/crypto check for public fixtures and Android interchange exports.
 
 Uses Python hashlib and cryptography, never imports Kotlin or runs upstream scripts.
 The fixture password and export password below are public test-vector values only.
@@ -139,7 +139,7 @@ def verify_fixtures(folder: Path) -> None:
     print("[PASS] 10 upstream fixture hashes; Aegis and 2FAS crypto/URI profile cross-checks")
 
 
-def verify_exports(folder: Path, prefix: str, expected_vault: Path) -> None:
+def verify_exports(folder: Path, expected_vault: Path) -> None:
     expected = native_profiles(json.loads((folder / "expected.json").read_bytes()))
     golden = native_profiles(json.loads(expected_vault.read_bytes()))
     golden.append(profile("HOTP", "Public Counter", "sample", b"12345678901234567890", counter=10300))
@@ -152,9 +152,9 @@ def verify_exports(folder: Path, prefix: str, expected_vault: Path) -> None:
         "TWOFAS_PLAINTEXT": "2fas",
         "OTPAUTH_TEXT": "txt",
     }
-    files = {f"{prefix}-{format_id}.{extension}" for format_id, extension in formats.items()}
-    if {p.name for p in folder.glob(f"{prefix}-*")} != files:
-        raise ValueError(f"expected exactly five {prefix} export files")
+    files = {f"kotlin-{format_id}.{extension}" for format_id, extension in formats.items()}
+    if {p.name for p in folder.glob("kotlin-*")} != files:
+        raise ValueError("expected exactly five Kotlin export files")
     for filename in sorted(files):
         file = folder / filename
         raw = file.read_bytes()
@@ -176,11 +176,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, default=Path("spec/fixtures/interoperability"))
     parser.add_argument("--exports", type=Path)
-    parser.add_argument("--export-prefix", "--prefix", choices=["kotlin", "swift", "ios"], default="kotlin")
     args = parser.parse_args()
     verify_fixtures(args.fixtures)
     if args.exports:
-        verify_exports(args.exports, args.export_prefix, args.fixtures.parent / "backup-v1.expected.json")
+        verify_exports(args.exports, args.fixtures.parent / "backup-v1.expected.json")
     print("INTERCHANGE CROSSCHECK PASS")
 
 

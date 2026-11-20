@@ -24,6 +24,7 @@ import io.github.rhczz.inkotp.core.interchange.InterchangeCodec
 import io.github.rhczz.inkotp.core.interchange.InterchangeFormat
 import io.github.rhczz.inkotp.core.interchange.InterchangeException
 import io.github.rhczz.inkotp.core.uri.GoogleMigrationCodec
+import io.github.rhczz.inkotp.core.uri.GoogleMigrationException
 import io.github.rhczz.inkotp.platform.*
 import io.github.rhczz.inkotp.ui.components.*
 import io.github.rhczz.inkotp.ui.model.UnlockUiState
@@ -85,6 +86,10 @@ internal fun InkApp(
     var importFormat by rememberSaveable { mutableStateOf<InterchangeFormat?>(null) }
     var exportReviewToken by rememberSaveable { mutableStateOf<Long?>(null) }
     var googleExportReview by remember { mutableStateOf<GoogleExportReview?>(null) }
+    var googleExportPageIndex by remember { mutableIntStateOf(0) }
+    var savedQrPage by remember { mutableStateOf<Int?>(null) }
+    var qrExportPickerToken by remember { mutableStateOf<Long?>(null) }
+    var qrExportPickerPage by remember { mutableStateOf<Int?>(null) }
 
     fun cancelFileOperation() {
         fileRequest++
@@ -103,7 +108,13 @@ internal fun InkApp(
             try { operation() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
-                if (viewModel.isCurrentBackupRequest(token, forRestore)) viewModel.report(if (error is QrImageReadException || error is InterchangeException) error.message ?: failure else failure)
+                if (viewModel.isCurrentBackupRequest(token, forRestore)) {
+                    val detail = when (error) {
+                        is QrImageReadException, is InterchangeException, is GoogleMigrationException -> error.message
+                        else -> null
+                    }
+                    viewModel.report(detail ?: failure)
+                }
             } finally {
                 if (fileRequest == request) { fileBusy = false; fileJob = null }
             }
@@ -158,6 +169,63 @@ internal fun InkApp(
         }
     }
 
+    val saveQrImage = rememberLauncherForActivityResult(ExportDocumentContract()) { uri ->
+        val token = qrExportPickerToken
+        val page = qrExportPickerPage
+        qrExportPickerToken = null
+        qrExportPickerPage = null
+        val accepted = token != null && viewModel.endPicker(token)
+        if (uri != null && accepted && page != null) {
+            val input = viewModel.googleExportPage(page)
+            if (input == null) {
+                viewModel.report("二维码已失效，请重新导出")
+            } else {
+                launchFileOperation(token!!, "二维码图片未能保存，请检查保存位置后重试", cleanup = { input.fill(0) }) {
+                    withContext(Dispatchers.Default) {
+                        val png = encodeMigrationQrPng(input)
+                        try {
+                            withContext(Dispatchers.Main) {
+                                if (viewModel.isCurrentSession(token)) {
+                                    BackupFiles.write(context, uri, png)
+                                    savedQrPage = page
+                                }
+                            }
+                        } finally {
+                            png.fill(0)
+                        }
+                    }
+                }
+            }
+        } else if (uri != null) {
+            viewModel.report("这次二维码保存已失效，请重新导出")
+        }
+    }
+    fun launchQrSave(page: Int) {
+        if (!viewModel.isCurrentSession(sessionToken) || fileBusy || qrExportPickerToken != null ||
+            page !in 0 until viewModel.state.googleExportPageCount) return
+        val token = viewModel.beginPicker(forQrImage = true)
+        qrExportPickerToken = token
+        qrExportPickerPage = page
+        try {
+            saveQrImage.launch(ExportDocumentRequest("inkotp-qr-${LocalDate.now()}-${page + 1}.png", "image/png"))
+        } catch (_: RuntimeException) {
+            viewModel.endPicker(token)
+            qrExportPickerToken = null
+            qrExportPickerPage = null
+            viewModel.report("无法打开系统文件选择器，请检查系统文件应用")
+        }
+    }
+
+    fun acceptGoogleInputs(inputs: List<String>) = requirePassword {
+        if (screen != Screen.GoogleImport) {
+            if (stack.lastOrNull() == Screen.GoogleImport) stack.removeAt(stack.lastIndex)
+            else if (screen != Screen.Scan && screen != Screen.ManualAdd) stack.add(screen)
+            screen = Screen.GoogleImport
+        }
+        scannedInput = ""
+        viewModel.ingestGoogleImport(inputs)
+    }
+
     val chooseBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val token = importPickerToken
         importPickerToken = null
@@ -168,31 +236,38 @@ internal fun InkApp(
                 val bytes = BackupFiles.read(context, uri)
                 var transferred = false
                 try {
-                    val format = withContext(Dispatchers.Default) { InterchangeCodec.detect(bytes) }
-                    if (viewModel.isCurrentBackupRequest(token, forRestore)) {
-                        if (format.requiresPassword) { importUri = uri; importFormat = format; passwordTask = PasswordTask.Import }
-                        else { viewModel.previewImport(bytes, "", forRestore) { importUri = null; importFormat = null }; transferred = true }
+                    val links = withContext(Dispatchers.Default) { googleLinksFromBackup(bytes) }
+                    if (!viewModel.isCurrentBackupRequest(token, forRestore)) return@launchFileOperation
+                    if (links != null) {
+                        if (forRestore) {
+                            throw GoogleMigrationException("请先解锁或设置验证码库，再通过「导入备份」合并迁移账号。")
+                        }
+                        acceptGoogleInputs(links)
+                    } else {
+                        if (screen == Screen.GoogleImport) {
+                            throw GoogleMigrationException("请继续选择同一批迁移的二维码图片或链接文本，或先取消当前迁移。")
+                        }
+                        val format = withContext(Dispatchers.Default) { InterchangeCodec.detect(bytes) }
+                        if (!viewModel.isCurrentBackupRequest(token, forRestore)) return@launchFileOperation
+                        if (format.requiresPassword) {
+                            importUri = uri
+                            importFormat = format
+                            passwordTask = PasswordTask.Import
+                        } else {
+                            viewModel.previewImport(bytes, "", forRestore) { importUri = null; importFormat = null }
+                            transferred = true
+                        }
                     }
                 } finally { if (!transferred) bytes.fill(0) }
             }
         } else if (accepted && forRestore) viewModel.cancelImport()
         else if (uri != null) viewModel.report("这次文件选择已失效，请重新选择备份")
     }
-    fun acceptGoogleInput(input: String) {
-        if (!viewModel.isCurrentSession(sessionToken)) return
-        if (screen != Screen.GoogleImport) {
-            if (stack.lastOrNull() == Screen.GoogleImport) stack.removeAt(stack.lastIndex)
-            else if (screen != Screen.Scan && screen != Screen.ManualAdd) stack.add(screen)
-            screen = Screen.GoogleImport
-        }
-        scannedInput = ""
-        requirePassword { viewModel.ingestGoogleImport(input) }
-    }
     fun routeQr(input: String, fromCamera: Boolean) {
         if (!viewModel.isCurrentSession(sessionToken)) return
         if (input.trimStart().startsWith(GoogleMigrationCodec.SCHEME, ignoreCase = true) ||
             screen == Screen.GoogleImport || stack.lastOrNull() == Screen.GoogleImport) {
-            acceptGoogleInput(input)
+            acceptGoogleInputs(listOf(input))
         } else {
             scannedInput = input
             if (fromCamera) screen = Screen.ManualAdd else navigate(Screen.ManualAdd)
@@ -270,6 +345,10 @@ internal fun InkApp(
             scannedInput = ""; passwordTask = null; importUri = null; importFormat = null; replaceConfirm = false; chooseExportFormat = false; exportReviewToken = null
             exportPickerToken = null; importPickerToken = null; imagePickerToken = null
             googleExportReview = null
+            googleExportPageIndex = 0
+            savedQrPage = null
+            qrExportPickerToken = null
+            qrExportPickerPage = null
             observedSessionToken = sessionToken
         }
     }
@@ -345,14 +424,14 @@ internal fun InkApp(
                     onSave = { issuer, account, input ->
                         if (input.trimStart().startsWith(GoogleMigrationCodec.SCHEME, ignoreCase = true) ||
                             stack.lastOrNull() == Screen.GoogleImport) {
-                            acceptGoogleInput(input)
+                            acceptGoogleInputs(listOf(input))
                         } else viewModel.add(issuer, account, input) { scannedInput = ""; stack.clear(); screen = Screen.List }
                     })
                 Screen.Scan -> ScanScreen(onBack = ::back, onDetected = { routeQr(it, fromCamera = true) },
                     onGallery = ::gallery, onManual = { scannedInput = ""; screen = Screen.ManualAdd },
                     onPrivacy = openPrivacy)
                 Screen.GoogleImport -> GoogleImportScreen(session.googleImportProgress, session.busy || fileBusy, ::back,
-                    onScan = { navigate(Screen.Scan) }, onGallery = ::gallery,
+                    onScan = { navigate(Screen.Scan) }, onGallery = ::gallery, onFile = ::importBackup,
                     onPaste = { scannedInput = ""; navigate(Screen.ManualAdd) })
                 Screen.Settings -> SettingsScreen(state = session.settings, onBack = ::back,
                     onSystemAuthenticationChange = { viewModel.systemAuthentication(it, security) },
@@ -362,7 +441,6 @@ internal fun InkApp(
                     onDiagnostics = { navigate(Screen.Diagnostics) }, onAbout = { navigate(Screen.About) },
                     onOnboarding = { message = "添加账号可使用列表右下角的加号。设置恢复口令后可导出加密备份，换机时可在首次启动选择从备份恢复。" },
                     onPassword = { passwordTask = PasswordTask.Change }, onExport = { requirePassword { chooseExportFormat = true } }, onImport = ::importBackup,
-                    onGoogleExport = { requirePassword { viewModel.reviewGoogleExport { googleExportReview = it } } },
                     onLock = { security.clearClipboard(); viewModel.lock() },
                     onPrivacy = openPrivacy, onWithdrawPrivacy = onWithdrawPrivacy?.let { { confirmingWithdrawal = true } })
                 Screen.Diagnostics -> DiagnosticsScreen(
@@ -374,8 +452,7 @@ internal fun InkApp(
         }
         if (foreground && addSheet && session.unlocked) InkBottomSheet(onDismiss = { addSheet = false }) {
             AddSheetContent(onScan = { addSheet = false; navigate(Screen.Scan) }, onGallery = { addSheet = false; gallery() },
-                onManual = { addSheet = false; scannedInput = ""; navigate(Screen.ManualAdd) },
-                onGoogleImport = { addSheet = false; requirePassword { navigate(Screen.GoogleImport) } })
+                onManual = { addSheet = false; scannedInput = ""; navigate(Screen.ManualAdd) })
         }
         if (!foreground) Box(Modifier.fillMaxSize().background(colors.surface))
         OperationBusyOverlay(
@@ -451,6 +528,8 @@ internal fun InkApp(
                 }
                 PasswordTask.GoogleExport -> googleExportReview?.let { review ->
                     viewModel.exportGoogle(password, review, allowSubset = review.supported < review.total) {
+                        googleExportPageIndex = 0
+                        savedQrPage = null
                         passwordTask = null
                         googleExportReview = null
                     }
@@ -461,6 +540,10 @@ internal fun InkApp(
     if (foreground && chooseExportFormat && session.unlocked) BackupFormatDialog(
         onConfirm = { format -> exportFormat = format; chooseExportFormat = false; passwordTask = PasswordTask.Export },
         onDismiss = { chooseExportFormat = false },
+        onQrExport = {
+            chooseExportFormat = false
+            viewModel.reviewGoogleExport { googleExportReview = it }
+        },
     )
     exportReviewToken?.let { token ->
         val description = viewModel.describeExport(token)
@@ -479,7 +562,16 @@ internal fun InkApp(
                 onDismiss = { googleExportReview = null })
         }
         if (session.googleExportPageCount > 0) {
-            GoogleExportQrDialog(session.googleExportPageCount, viewModel::googleExportPage, viewModel::discardGoogleExport)
+            GoogleExportQrDialog(
+                pageIndex = googleExportPageIndex,
+                pageCount = session.googleExportPageCount,
+                pageAt = viewModel::googleExportPage,
+                onPageChange = { googleExportPageIndex = it },
+                saving = fileBusy || qrExportPickerToken != null,
+                saved = savedQrPage == googleExportPageIndex,
+                onSave = ::launchQrSave,
+                onClose = viewModel::discardGoogleExport,
+            )
         }
     }
 

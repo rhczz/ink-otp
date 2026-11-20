@@ -14,8 +14,6 @@
 ## 系统认证与文件选择
 
 - Android 使用系统 BiometricPrompt 或 Keyguard。Android 11+ 使用强生物识别或锁屏凭据，Android 8–10 使用系统锁屏凭据确认。文件通过 Storage Access Framework 的系统选择器打开与保存。 [Android 生物识别](https://developer.android.com/identity/sign-in/biometric-auth) · [系统文件选择器](https://developer.android.com/training/data-storage/shared/documents-files)
-- iOS 通过 LocalAuthentication 验证身份，用系统文件选择器打开和导出备份。导出时应用先在私有临时目录生成受文件保护的文件，供选择器转交。 [iOS 规格](../spec/ios-parity.md)
-- macOS 使用 LocalAuthentication、Keychain 和系统打开、保存面板。受保护钥匙串的可用性与签名方式有关。 [macOS 规格](../spec/macos-parity.md)
 
 设备锁屏凭据只在系统界面输入。应用恢复口令用于本机库恢复和备份加密。在 Android 上，开启每次进入验证后，文件选择器的暂时离开宽限为 60 秒，系统认证宽限为 120 秒。重复生命周期回调不会延长它们。 [Android 规格](design/2FA验证器-技术设计文档.md)
 

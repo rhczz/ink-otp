@@ -6,8 +6,8 @@
 
 - [ ] Android 的 JUnit、JaCoCo、Lint、独立格式对拍及权限和存储检查通过，报告已归档。 [CI 门禁](testing/github-ci.md)
 - [ ] Android Release 启用 R8 和资源压缩，APK 小于 15 MiB，ZIP 和 ELF 均通过 16 KiB 对齐检查。
-- [ ] 同一个 `v{版本}` 标签匹配三端的发布版本与已合入 `master` 的源码，构建号按平台规则递增。
-- [ ] iOS 与 macOS 工作流、三端互通和各自的安装包升级检查通过。
+- [ ] `v{版本}` 标签匹配 Android `versionName` 和已合入 `master` 的源码，版本名符合语义化格式，`versionCode` 递增。
+- [ ] Android 质量门禁和签名安装包覆盖升级检查通过。
 - [ ] 依赖变更已按设计文档 C-17 核对版本、校验和与许可证。
 
 ## 2. 安全
@@ -31,7 +31,7 @@
 
 ## 4. 真机验收
 
-按版本记录实际设备和系统、验证结果及未验证项。以下是 Android 核对项，Apple 端见 [iOS](../ios/README.md) 和 [macOS](../macos/README.md)。
+按版本记录实际设备和 Android 系统版本、验证结果及未验证项。
 
 - [ ] 首启 → 设口令 → 开生物识别 → 添加 5 个账号（含 8 位/SHA256/自定义 period）。
 - [ ] 扫码、相册导入、手动输入各成功一次；权限拒绝有引导。
@@ -46,8 +46,7 @@
 
 ## 5. 发布物与合规
 
-- [ ] 同一个 Release 提供签名 APK、通用 DMG、模拟器 ZIP、设备 IPA、构建信息和变更/安全说明。
-- [ ] Apple 端签名状态符合发布类型并在说明中标明。
+- [ ] Release 提供签名 APK、`SHA256SUMS`、`build-info.json` 和 `release-notes.md`。
 - [ ] 重新下载发布资产，使用 `SHA256SUMS` 逐个复核。
 - [ ] 隐私政策/权限文案/开源许可 notices（BC/AndroidX/ZXing/Inter/Material Symbols）。
 - [ ] 开发指南、安全政策、威胁模型和交换格式与本次发布一致。

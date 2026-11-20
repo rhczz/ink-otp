@@ -18,7 +18,7 @@ class VaultCodecTest {
     private val params = KdfParams(mKiB = 8_192, tIter = 1, pLanes = 1)
 
     @Test
-    fun readsIndependentWireExampleSharedWithSwift() {
+    fun readsIndependentWireExample() {
         val spec = checkNotNull(javaClass.getResourceAsStream("/vault-format.md")) {
             "spec/vault-format.md is missing from the test classpath"
         }.bufferedReader(Charsets.UTF_8).use { it.readText() }

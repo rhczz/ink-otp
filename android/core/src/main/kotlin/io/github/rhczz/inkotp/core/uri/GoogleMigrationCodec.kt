@@ -35,27 +35,35 @@ class GoogleMigrationBatch {
     private var entryCount = 0
     val progress: Progress? get() = pages.values.firstOrNull()?.let { Progress(pages.size, it.total) }
 
-    fun accept(page: GoogleMigrationPage): Progress {
-        var retained = false
+    fun accept(page: GoogleMigrationPage): Progress = acceptAll(listOf(page))
+
+    /** Validate all pages from a file before replacing the batch; consumes the supplied pages. */
+    fun acceptAll(incoming: List<GoogleMigrationPage>): Progress {
+        require(incoming.isNotEmpty())
+        val accepted = pages.toSortedMap()
+        var acceptedCount = entryCount
         try {
-            val first = pages.values.firstOrNull()
-            if (first != null && (first.version != page.version || first.batchId != page.batchId || first.total != page.total)) {
-                throw GoogleMigrationException("这张二维码属于另一批迁移，请继续扫描当前批次，或取消后重新开始。")
+            for (page in incoming) {
+                val first = accepted.values.firstOrNull()
+                if (first != null && (first.version != page.version || first.batchId != page.batchId || first.total != page.total)) {
+                    throw GoogleMigrationException("这张二维码属于另一批迁移，请继续扫描当前批次，或取消后重新开始。")
+                }
+                val duplicate = accepted[page.index]
+                if (duplicate != null) {
+                    if (duplicate != page) throw GoogleMigrationException("同一页二维码的账号内容不同，请核对来源后重试。")
+                    continue
+                }
+                acceptedCount += page.entries.size
+                if (acceptedCount > GoogleMigrationCodec.MAX_ENTRIES) {
+                    throw GoogleMigrationException("这批迁移超过 500 个账号，请在来源应用分批导出。")
+                }
+                accepted[page.index] = page
             }
-            val duplicate = pages[page.index]
-            if (duplicate != null) {
-                if (duplicate != page) throw GoogleMigrationException("同一页二维码的账号内容不同，请核对来源后重试。")
-                return checkNotNull(progress)
-            }
-            if (entryCount + page.entries.size > GoogleMigrationCodec.MAX_ENTRIES) {
-                throw GoogleMigrationException("这批迁移超过 500 个账号，请在来源应用分批导出。")
-            }
-            pages[page.index] = page
-            entryCount += page.entries.size
-            retained = true
+            pages.putAll(accepted)
+            entryCount = acceptedCount
             return checkNotNull(progress)
         } finally {
-            if (!retained && pages[page.index] !== page) page.clear()
+            incoming.forEach { if (pages[it.index] !== it) it.clear() }
         }
     }
 

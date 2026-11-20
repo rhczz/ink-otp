@@ -1,13 +1,14 @@
 # `tools/` — Python 参考实现与检查脚本
 
-这些脚本只在开发/CI 使用，**不随 App 发布**。它们是独立的第二实现：如果 Kotlin 与本文档/脚本不一致，以 RFC 向量和 `spec/` 为准。
+这些脚本只在开发/CI 使用，**不随 App 发布**。Python 参考实现用于独立验证 Android 的 Kotlin 实现。如果两者结果不同，以 RFC 向量和 `spec/` 为准。
 
 | 脚本 | 作用 |
 |---|---|
 | `reference_totp.py` | Base32 / HOTP / TOTP 独立实现；RFC 自测；生成 `spec/vectors.json` |
-| `reference_interchange.py` | Aegis、2FAS 与 otpauth 文件的独立验证 |
+| `reference_interchange.py` | 独立验证上游样本及 Android 生成的 Aegis、2FAS 与 otpauth 文件 |
 | `generate_google_transfer_fixture.py` | 生成、复核公共 Google Authenticator 迁移样本 |
 | `crosscheck.py` | 核对 OTP、URI 和本地库公开样本 |
+| `release_artifacts.py` | 验证构建证据、Android APK、版本及发布资产 |
 | `check_no_internet.py` | 检查 merged manifest 是否申请网络/存储权限 |
 | `check_design_tokens.py` | 扫描 Kotlin 里的硬编码颜色/字号/圆角 |
 | `fetch_material_symbols.py` | 开发期拉取 Material Symbols SVG 并生成 Android vector（生成物已提交） |

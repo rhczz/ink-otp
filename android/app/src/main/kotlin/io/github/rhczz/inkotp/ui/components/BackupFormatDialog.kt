@@ -34,9 +34,13 @@ fun InterchangeFormat.documentMime(): String = when (this) {
 }
 
 @Composable
-fun BackupFormatDialog(onConfirm: (InterchangeFormat) -> Unit, onDismiss: () -> Unit) {
+fun BackupFormatDialog(
+    onConfirm: (InterchangeFormat) -> Unit,
+    onDismiss: () -> Unit,
+    onQrExport: () -> Unit,
+) {
     val colors = LocalInkColors.current
-    var selected by remember { mutableStateOf(InterchangeFormat.AEGIS_ENCRYPTED) }
+    var selected by remember { mutableStateOf<InterchangeFormat?>(InterchangeFormat.AEGIS_ENCRYPTED) }
     AlertDialog(onDismissRequest = onDismiss, shape = RoundedCornerShape(AppTokens.Radius.sheet),
         containerColor = colors.surface,
         title = { Text("选择备份或迁移格式", style = AppType.section) },
@@ -54,8 +58,19 @@ fun BackupFormatDialog(onConfirm: (InterchangeFormat) -> Unit, onDismiss: () -> 
                     }
                 }
             }
+            Row(Modifier.clickable { selected = null }.padding(vertical = AppTokens.Spacing.s),
+                verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = selected == null, onClick = { selected = null })
+                Column {
+                    Text("迁移二维码（图片）", style = AppType.body)
+                    Text("显示二维码或保存 PNG，图片包含明文账号密钥",
+                        style = AppType.caption, color = colors.danger)
+                }
+            }
         } },
-        confirmButton = { TextButton(onClick = { onConfirm(selected) }) { Text("下一步", style = AppType.button) } },
+        confirmButton = {
+            TextButton(onClick = { selected?.let(onConfirm) ?: onQrExport() }) { Text("下一步", style = AppType.button) }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消", style = AppType.button) } },
     )
 }

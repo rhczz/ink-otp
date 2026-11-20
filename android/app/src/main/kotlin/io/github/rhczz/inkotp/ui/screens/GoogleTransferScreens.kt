@@ -17,10 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -30,13 +27,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
-import com.google.zxing.EncodeHintType
-import com.google.zxing.qrcode.QRCodeWriter
-import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
-import com.google.zxing.BarcodeFormat
 import io.github.rhczz.inkotp.app.GoogleExportReview
 import io.github.rhczz.inkotp.core.uri.GoogleMigrationBatch
 import io.github.rhczz.inkotp.core.uri.GoogleMigrationCodec
+import io.github.rhczz.inkotp.platform.migrationQrMatrix
 import io.github.rhczz.inkotp.ui.components.InkPrimaryButton
 import io.github.rhczz.inkotp.ui.components.InkSecondaryButton
 import io.github.rhczz.inkotp.ui.components.InkTextButton
@@ -47,9 +41,9 @@ import io.github.rhczz.inkotp.ui.theme.LocalInkColors
 
 @Composable
 internal fun GoogleImportScreen(progress: GoogleMigrationBatch.Progress?, busy: Boolean, onBack: () -> Unit,
-    onScan: () -> Unit, onGallery: () -> Unit, onPaste: () -> Unit,
+    onScan: () -> Unit, onGallery: () -> Unit, onFile: () -> Unit, onPaste: () -> Unit,
 ) {
-    ScreenScaffold(title = "Google Authenticator 导入", onBack = onBack) {
+    ScreenScaffold(title = "迁移账号", onBack = onBack) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = AppTokens.Spacing.xl),
             verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.m),
@@ -61,6 +55,7 @@ internal fun GoogleImportScreen(progress: GoogleMigrationBatch.Progress?, busy: 
             )
             InkPrimaryButton("扫描二维码", onScan, enabled = !busy)
             InkSecondaryButton("从图片读取", onGallery, enabled = !busy)
+            InkTextButton("选择迁移文件", onFile, enabled = !busy)
             InkTextButton("粘贴迁移链接", onPaste, enabled = !busy)
             InkTextButton("取消迁移", onBack, enabled = !busy)
         }
@@ -75,7 +70,7 @@ internal fun GoogleExportReviewDialog(review: GoogleExportReview, onContinue: ()
         properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
         shape = RoundedCornerShape(AppTokens.Radius.sheet),
         containerColor = LocalInkColors.current.surface,
-        title = { Text("迁移到 Google Authenticator", style = AppType.section) },
+        title = { Text("核对迁移二维码", style = AppType.section) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.s)) {
                 Text("二维码会明文展示账号密钥。请只在可信设备之间面对面扫码。", style = AppType.body)
@@ -101,37 +96,43 @@ internal fun GoogleExportReviewDialog(review: GoogleExportReview, onContinue: ()
 }
 
 @Composable
-internal fun GoogleExportQrDialog(pageCount: Int, pageAt: (Int) -> ByteArray?, onClose: () -> Unit) {
-    var index by remember { mutableIntStateOf(0) }
-    val matrix = remember(index, pageCount) {
-        pageAt(index)?.let { uri ->
-            try {
-                QRCodeWriter().encode(uri.decodeToString(), BarcodeFormat.QR_CODE, 1, 1,
-                    mapOf(EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M))
-            } catch (_: Exception) { null }
+internal fun GoogleExportQrDialog(
+    pageIndex: Int,
+    pageCount: Int,
+    pageAt: (Int) -> ByteArray?,
+    onPageChange: (Int) -> Unit,
+    saving: Boolean,
+    saved: Boolean,
+    onSave: (Int) -> Unit,
+    onClose: () -> Unit,
+) {
+    val matrix = remember(pageIndex, pageCount) {
+        pageAt(pageIndex)?.let { uri ->
+            try { migrationQrMatrix(uri, 1) }
+            catch (_: Exception) { null }
             finally { uri.fill(0) }
         }
     }
     DisposableEffect(matrix) { onDispose { matrix?.clear() } }
     AlertDialog(
-        onDismissRequest = onClose,
+        onDismissRequest = { if (!saving) onClose() },
         properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
         shape = RoundedCornerShape(AppTokens.Radius.sheet),
         containerColor = LocalInkColors.current.surface,
-        title = { Text("迁移二维码 ${index + 1} / $pageCount", style = AppType.section) },
+        title = { Text("迁移二维码 ${pageIndex + 1} / $pageCount", style = AppType.section) },
         text = {
             Column(
                 Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.m),
             ) {
-                Text("在目标设备选择导入验证码，按页扫描。", style = AppType.body)
+                Text("在目标设备选择导入验证码，按页扫描。也可保存图片，在另一台设备上打开供扫描。", style = AppType.body)
                 if (matrix == null) {
                     Text("这页二维码无法显示，请关闭后重试。", style = AppType.caption)
                 } else {
                     Canvas(
                         Modifier.size(AppTokens.Size.scanFrame).background(Color.White)
-                            .semantics { contentDescription = "Google Authenticator 迁移二维码，第 ${index + 1} 页" },
+                            .semantics { contentDescription = "Google Authenticator 迁移二维码，第 ${pageIndex + 1} 页" },
                     ) {
                         val module = (size.minDimension / matrix.width).toInt().coerceAtLeast(1).toFloat()
                         val left = (size.width - module * matrix.width) / 2
@@ -141,12 +142,16 @@ internal fun GoogleExportQrDialog(pageCount: Int, pageAt: (Int) -> ByteArray?, o
                         }
                     }
                 }
+                if (saved) Text("本页图片已保存。", style = AppType.caption)
                 if (pageCount > 1) Row(horizontalArrangement = Arrangement.spacedBy(AppTokens.Spacing.m)) {
-                    InkTextButton("上一页", { index-- }, enabled = index > 0)
-                    InkTextButton("下一页", { index++ }, enabled = index + 1 < pageCount)
+                    InkTextButton("上一页", { onPageChange(pageIndex - 1) }, enabled = !saving && pageIndex > 0)
+                    InkTextButton("下一页", { onPageChange(pageIndex + 1) }, enabled = !saving && pageIndex + 1 < pageCount)
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onClose) { Text("关闭") } },
+        confirmButton = {
+            TextButton(enabled = !saving && matrix != null, onClick = { onSave(pageIndex) }) { Text("保存本页图片") }
+        },
+        dismissButton = { TextButton(enabled = !saving, onClick = onClose) { Text("关闭") } },
     )
 }
